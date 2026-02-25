@@ -15,8 +15,8 @@ keywords = ["yocto", "bsp", "embedded", "linux", "build-system", "advantech"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Topic :: Software Development :: Build Tools",
-    "Topic :: System :: Embedded Systems",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: System :: Hardware",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
