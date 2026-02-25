@@ -1,8 +1,7 @@
 # bsp-registry-tools
 
 [![Tests](https://github.com/Advantech-EECC/bsp-registry-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/Advantech-EECC/bsp-registry-tools/actions/workflows/tests.yml)
-[![PyPI version](https://badge.fury.io/py/bsp-registry-tools.svg)](https://badge.fury.io/py/bsp-registry-tools)
-[![Python Versions](https://img.shields.io/pypi/pyversions/bsp-registry-tools.svg)](https://pypi.org/project/bsp-registry-tools/)
+[![PyPI version](https://badge.fury.io/py/bsp-registry-tools.svg?icon=si%3Apython)](https://badge.fury.io/py/bsp-registry-tools)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202-blue)](https://opensource.org/license/apache-2-0)
 
 Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](https://kas.readthedocs.io/) build system.
