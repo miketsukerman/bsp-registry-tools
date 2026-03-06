@@ -59,10 +59,12 @@ class Docker:
         image: Docker image name/tag for the build environment
         file: Path to Dockerfile for building custom images
         args: List of Docker build arguments (name=value pairs)
+        privileged: Run container in privileged mode (enables --isar for kas-container)
     """
     image: Optional[str]
     file: Optional[str]
     args: List[DockerArg] = field(default_factory=empty_list)
+    privileged: bool = False
 
 
 @dataclass

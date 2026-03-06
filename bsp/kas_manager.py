@@ -32,6 +32,7 @@ class KasManager:
     def __init__(self, kas_files: List[str], build_dir: str = "build", use_container: bool = False,
                  download_dir: str = None, sstate_dir: str = None,
                  container_engine: str = None, container_image: str = None,
+                 container_privileged: bool = False,
                  search_paths: List[str] = None, env_manager: EnvironmentManager = None):
         """
         Initialize KAS manager with configuration.
@@ -44,6 +45,7 @@ class KasManager:
             sstate_dir: Shared state cache directory for build acceleration
             container_engine: Container runtime (docker, podman)
             container_image: Custom container image for kas-container
+            container_privileged: Run container in privileged mode (enables --isar flag)
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
 
@@ -59,6 +61,7 @@ class KasManager:
         self.use_container = use_container
         self.container_engine = container_engine
         self.container_image = container_image
+        self.container_privileged = container_privileged
         self.search_paths = search_paths or []
         self.download_dir = download_dir
         self.sstate_dir = sstate_dir
@@ -80,9 +83,26 @@ class KasManager:
         resolver.ensure_directory(str(self.build_dir))
 
     def _get_kas_command(self) -> List[str]:
-        """Get the appropriate KAS command (native or container)."""
+        """
+        Get the appropriate KAS command (native or container).
+
+        For privileged container builds (e.g., ISAR), adds the --isar flag
+        which enables the --privileged Docker flag, granting the container
+        all capabilities including SYS_ADMIN and MKNOD.
+
+        Note: The --isar flag is a kas-container feature that enables privileged
+        Docker capabilities. Despite the name, it can be used for any build requiring
+        elevated container privileges, not just ISAR builds.
+
+        See: https://github.com/siemens/kas/blob/master/kas-container
+        """
         if self.use_container:
-            return ["kas-container"]
+            cmd = ["kas-container"]
+            # Add --isar flag for privileged builds, which sets --privileged
+            # (granting all capabilities including SYS_ADMIN and MKNOD)
+            if self.container_privileged:
+                cmd.append("--isar")
+            return cmd
         else:
             return ["kas"]
 

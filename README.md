@@ -311,7 +311,21 @@ containers:
       args:
         - name: "DISTRO"
           value: "ubuntu:20.04"
+  - isar-container:
+      image: "my-registry/isar/kas:4.7"
+      file: Dockerfile.isar
+      args: []
+      privileged: true    # Run container in privileged mode (required for ISAR builds)
 ```
+
+**Container fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image` | string | — | Docker image name/tag |
+| `file` | string | — | Path to Dockerfile for building the image |
+| `args` | list | `[]` | Docker build arguments (`name`/`value` pairs) |
+| `privileged` | boolean | `false` | Run container with elevated privileges. Required for ISAR (Debian-based) builds. Adds `--isar` to `kas-container`, which enables the `--privileged` Docker flag. |
 
 ### `registry.bsp`
 
@@ -542,7 +556,7 @@ python -m build
 | `BSP` | Single BSP definition |
 | `BuildSetup` | Build configuration (path, environment, KAS files) |
 | `BuildEnvironment` | Docker/container settings |
-| `Docker` | Docker image and build arg configuration |
+| `Docker` | Docker image, build arg, and privileged mode configuration |
 | `EnvironmentVariable` | Name/value pair with `$ENV{}` expansion support |
 
 ### Exceptions

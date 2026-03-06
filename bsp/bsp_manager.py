@@ -235,6 +235,7 @@ class BspManager:
             sstate_dir=sstate,
             use_container=use_container,
             container_image=container_config.image if use_container else None,
+            container_privileged=container_config.privileged if use_container else False,
             search_paths=[str(self.config_path.parent)],
             env_manager=self.env_manager
         )
