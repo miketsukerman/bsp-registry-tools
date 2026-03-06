@@ -25,6 +25,11 @@ jobs:
           pip install PyYAML dacite colorama
           pip install -e .
 
+      - name: Setup Git Config
+        uses: qoomon/actions--setup-git@v1
+        with:
+          user: bot
+
       - name: bsp --help
         run: bsp --help
 
