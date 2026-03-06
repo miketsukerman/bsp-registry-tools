@@ -98,7 +98,7 @@ class TestMainCliRemoteFlags:
         assert exit_code == 0
 
     def test_local_flag_skips_fetcher(self, registry_file):
-        """--local skips RegistryFetcher and uses the local bsp-registry.yml path."""
+        """--local skips RegistryFetcher and uses the local bsp-registry.yaml path."""
         with patch("sys.argv", ["bsp", "--local", "--registry", str(registry_file), "list"]):
             with patch(
                 "bsp.registry_fetcher.RegistryFetcher.fetch_registry"
@@ -120,7 +120,7 @@ class TestMainCliRemoteFlags:
         assert exit_code == 0
 
     def test_local_bsp_registry_in_cwd_skips_fetcher(self, registry_file, tmp_dir, monkeypatch):
-        """When bsp-registry.yml exists in the CWD, remote fetch is skipped."""
+        """When bsp-registry.yaml exists in the CWD, remote fetch is skipped."""
         # Change working directory so the file is auto-detected
         monkeypatch.chdir(tmp_dir)
         with patch("sys.argv", ["bsp", "list"]):

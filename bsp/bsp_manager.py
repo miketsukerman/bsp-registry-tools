@@ -28,7 +28,7 @@ class BspManager:
     and configuration export operations with container support.
     """
 
-    def __init__(self, config_path: str = "bsp-registry.yml"):
+    def __init__(self, config_path: str = "bsp-registry.yaml"):
         """
         Initialize BSP manager.
 

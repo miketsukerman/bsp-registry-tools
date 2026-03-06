@@ -48,8 +48,8 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/poky/scarthgap.yml
-          - kas/poky/qemu/qemuarm64.yml
+          - kas/poky/scarthgap.yaml
+          - kas/poky/qemu/qemuarm64.yaml
 
     - name: poky-qemuarm64-styhead
       description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
@@ -62,8 +62,8 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/poky/styhead.yml
-          - kas/poky/qemu/qemuarm64.yml
+          - kas/poky/styhead.yaml
+          - kas/poky/qemu/qemuarm64.yaml
 
     # =====================================
     # QEMU x86-64 BSPs
@@ -80,8 +80,8 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/poky/scarthgap.yml
-          - kas/poky/qemu/qemux86-64.yml
+          - kas/poky/scarthgap.yaml
+          - kas/poky/qemu/qemux86-64.yaml
 
     - name: poky-qemux86-64-styhead
       description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
@@ -94,8 +94,8 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/poky/styhead.yml
-          - kas/poky/qemu/qemux86-64.yml
+          - kas/poky/styhead.yaml
+          - kas/poky/qemu/qemux86-64.yaml
 
     # =====================================
     # QEMU ARM (32-bit) BSPs
@@ -112,8 +112,8 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/poky/scarthgap.yml
-          - kas/poky/qemu/qemuarm.yml
+          - kas/poky/scarthgap.yaml
+          - kas/poky/qemu/qemuarm.yaml
 
     # =====================================
     # Isar QEMU Ubuntu ARM64 BSPs

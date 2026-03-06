@@ -67,7 +67,7 @@ bsp --remote https://github.com/my-org/bsp-registry.git --branch dev list
 
 ### 1. Create a BSP Registry File
 
-Create a `bsp-registry.yml` file (see [examples/bsp-registry.yml](examples/bsp-registry.yml)):
+Create a `bsp-registry.yaml` file (see [examples/bsp-registry.yaml](examples/bsp-registry.yaml)):
 
 ```yaml
 specification:
@@ -98,17 +98,17 @@ registry:
         environment:
           container: "debian-bookworm"
         configuration:
-          - kas/scarthgap.yml
-          - kas/qemu/qemuarm64.yml
+          - kas/scarthgap.yaml
+          - kas/qemu/qemuarm64.yaml
 ```
 
 ### 2. List Available BSPs
 
 ```bash
 # With an explicit registry file
-bsp --registry bsp-registry.yml list
+bsp --registry bsp-registry.yaml list
 
-# Or simply if bsp-registry.yml is in the current directory
+# Or simply if bsp-registry.yaml is in the current directory
 bsp list
 ```
 
@@ -166,8 +166,8 @@ options:
 The tool determines which registry file to use in the following order:
 
 1. **`--registry <path>`** — explicit local file, remote fetch is skipped entirely.
-2. **`--local`** — use `./bsp-registry.yml` in the current directory; no network access.
-3. **`bsp-registry.yml` exists in the current directory** — backward-compatible auto-detect.
+2. **`--local`** — use `./bsp-registry.yaml` in the current directory; no network access.
+3. **`bsp-registry.yaml` exists in the current directory** — backward-compatible auto-detect.
 4. **Otherwise** — clone/update the remote registry into `~/.cache/bsp/registry` via `RegistryFetcher`.
 
 ### Global Options
@@ -188,7 +188,7 @@ The tool determines which registry file to use in the following order:
 
 ```bash
 bsp list
-bsp --registry my-registry.yml list
+bsp --registry my-registry.yaml list
 ```
 
 #### `containers` — List available container definitions
@@ -255,7 +255,7 @@ bsp export <bsp_name> [--output OUTPUT]
 bsp export poky-qemuarm64-scarthgap
 
 # Save to file
-bsp export poky-qemuarm64-scarthgap --output exported-config.yml
+bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
 
 ## Registry Configuration Reference
@@ -334,8 +334,8 @@ registry:
           # docker:
           #   image: "my-image:latest"
         configuration:            # KAS configuration files (in order)
-          - kas/scarthgap.yml
-          - kas/qemu/qemuarm64.yml
+          - kas/scarthgap.yaml
+          - kas/qemu/qemuarm64.yaml
 ```
 
 ## KAS Configuration Files
@@ -348,11 +348,11 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 
 | File | Description |
 |------|-------------|
-| `examples/kas/scarthgap.yml` | Yocto Scarthgap (5.0 LTS) base configuration |
-| `examples/kas/styhead.yml` | Yocto Styhead (5.1) base configuration |
-| `examples/kas/qemu/qemuarm64.yml` | QEMU ARM64 machine configuration |
-| `examples/kas/qemu/qemux86-64.yml` | QEMU x86-64 machine configuration |
-| `examples/kas/qemu/qemuarm.yml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
+| `examples/kas/styhead.yaml` | Yocto Styhead (5.1) base configuration |
+| `examples/kas/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
+| `examples/kas/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
+| `examples/kas/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
 
 ### KAS File Structure
 
@@ -360,7 +360,7 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 header:
   version: 14
   includes:            # Optional: include other KAS files
-    - base.yml
+    - base.yaml
 
 distro: poky
 machine: qemuarm64
@@ -418,7 +418,7 @@ print(env_manager.get_value("DL_DIR"))  # Expanded path
 
 # Use KasManager directly
 kas = KasManager(
-    kas_files=["kas/scarthgap.yml", "kas/qemu/qemuarm64.yml"],
+    kas_files=["kas/scarthgap.yaml", "kas/qemu/qemuarm64.yaml"],
     build_dir="build/my-bsp",
     use_container=False,
 )
@@ -476,18 +476,18 @@ bsp-registry-tools/
 │   ├── test_registry_fetcher.py
 │   └── ...
 ├── examples/
-│   ├── bsp-registry.yml      # Sample BSP registry for QEMU targets
+│   ├── bsp-registry.yaml      # Sample BSP registry for QEMU targets
 │   └── kas/
-│       ├── scarthgap.yml     # Yocto Scarthgap base config
-│       ├── styhead.yml       # Yocto Styhead base config
+│       ├── scarthgap.yaml     # Yocto Scarthgap base config
+│       ├── styhead.yaml       # Yocto Styhead base config
 │       └── qemu/
-│           ├── qemuarm64.yml  # QEMU ARM64 machine config
-│           ├── qemux86-64.yml # QEMU x86-64 machine config
-│           └── qemuarm.yml    # QEMU ARM machine config
+│           ├── qemuarm64.yaml  # QEMU ARM64 machine config
+│           ├── qemux86-64.yaml # QEMU x86-64 machine config
+│           └── qemuarm.yaml    # QEMU ARM machine config
 └── .github/
     └── workflows/
-        ├── tests.yml         # CI: run tests on push/PR
-        └── publish.yml       # CD: publish to PyPI on release
+        ├── tests.yaml         # CI: run tests on push/PR
+        └── publish.yaml       # CD: publish to PyPI on release
 ```
 
 ## Publishing to PyPI

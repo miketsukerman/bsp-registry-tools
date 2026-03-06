@@ -99,7 +99,7 @@ def tmp_dir():
 @pytest.fixture
 def registry_file(tmp_dir):
     """Create a minimal registry YAML file in a temp directory."""
-    registry_path = tmp_dir / "bsp-registry.yml"
+    registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(MINIMAL_REGISTRY_YAML)
     return registry_path
 
@@ -107,7 +107,7 @@ def registry_file(tmp_dir):
 @pytest.fixture
 def registry_with_env_file(tmp_dir):
     """Create a registry YAML file with environment variables."""
-    registry_path = tmp_dir / "bsp-registry.yml"
+    registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_ENV_YAML)
     return registry_path
 

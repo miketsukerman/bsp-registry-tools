@@ -119,10 +119,10 @@ def main() -> int:
         # Resolve registry file path
         # Priority:
         #   1. --registry explicitly provided  -> use that file (local override)
-        #   2. --local flag set                -> use local bsp-registry.yml (no remote)
-        #   3. bsp-registry.yml in current dir -> use that file (backward compat)
+        #   2. --local flag set                -> use local bsp-registry.yaml (no remote)
+        #   3. bsp-registry.yaml in current dir -> use that file (backward compat)
         #   4. Otherwise -> fetch from remote via RegistryFetcher
-        LOCAL_DEFAULT = "bsp-registry.yml"
+        LOCAL_DEFAULT = "bsp-registry.yaml"
         if args.registry is not None:
             registry_path = args.registry
             logging.info("Using explicitly provided registry: %s", registry_path)

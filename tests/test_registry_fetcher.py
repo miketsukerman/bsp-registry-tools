@@ -161,7 +161,7 @@ class TestFetchRegistryMissingFile:
 
 class TestCliRemoteRegistry:
     def test_cli_uses_remote_when_no_local_registry(self, tmp_dir, registry_file):
-        """When no local bsp-registry.yml exists, CLI should invoke RegistryFetcher."""
+        """When no local bsp-registry.yaml exists, CLI should invoke RegistryFetcher."""
         import bsp
 
         fetched_path = registry_file  # reuse existing minimal registry as the "fetched" file
@@ -190,7 +190,7 @@ class TestCliRemoteRegistry:
         assert exit_code == 0
 
     def test_cli_local_flag_skips_remote(self, tmp_dir):
-        """--local flag should fall back to local bsp-registry.yml, not fetch remote."""
+        """--local flag should fall back to local bsp-registry.yaml, not fetch remote."""
         import bsp
         from bsp import BspManager
 
