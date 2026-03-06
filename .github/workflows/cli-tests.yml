@@ -2,9 +2,9 @@ name: CLI Integration Tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, development]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, development]
 
 jobs:
   cli-test:
@@ -35,12 +35,15 @@ jobs:
           grep -q "poky-qemuarm64-scarthgap" list-output.txt
           grep -q "poky-qemux86-64-scarthgap" list-output.txt
           grep -q "poky-qemuarm-scarthgap" list-output.txt
+          grep -q "isar-qemuarm64" list-output.txt
+          grep -q "isar-qemux86-64" list-output.txt
 
       - name: bsp containers (example registry)
         working-directory: examples
         run: |
           bsp --registry bsp-registry.yml containers 2>&1 | tee containers-output.txt
           grep -q "debian-bookworm" containers-output.txt
+          grep -q "isar-debian-trixie" containers-output.txt
 
       - name: bsp export (example registry)
         working-directory: examples

@@ -100,7 +100,7 @@ def main() -> int:
         args = parser.parse_args()
 
         # Setup logging based on verbosity
-        log_level = logging.DEBUG if args.verbose else logging.INFO
+        log_level = logging.DEBUG if args.verbose else logging.WARNING
 
         # Setup logging colors
         if args.no_color or not COLORAMA_AVAILABLE:
