@@ -140,18 +140,34 @@ registry:
     # Isar QEMU Ubuntu X86_64 BSPs
     # =====================================
 
-    - name: isar-qemux86-64
-      description: "Isar QEMU Ubuntu X86_64 Isar (version 0.11)"
+    - name: isar-debian-qemux86-64
+      description: "Isar QEMU Debian Trixie X86_64 Isar (version 0.11)"
       os:
         name: linux
         build_system: isar
         version: "0.11"
       build:
-        path: build/qemu-x86-64-isar
+        path: build/qemu-x86-64-debian-trixie
         environment:
           container: "isar-debian-trixie"
         configuration:
           - kas/isar/isar.yaml
           - kas/isar/distro/debian-trixie.yaml
+          - kas/isar/qemu/common.yaml
+          - kas/isar/qemu/qemux86-64.yaml
+
+    - name: isar-ubuntu-qemux86-64
+      description: "Isar QEMU Ubuntu Noble X86_64 Isar (version 0.11)"
+      os:
+        name: linux
+        build_system: isar
+        version: "0.11"
+      build:
+        path: build/qemu-x86-64-ubuntu-noble
+        environment:
+          container: "isar-debian-trixie"
+        configuration:
+          - kas/isar/isar.yaml
+          - kas/isar/distro/ubuntu-noble.yaml
           - kas/isar/qemu/common.yaml
           - kas/isar/qemu/qemux86-64.yaml
