@@ -24,6 +24,7 @@ containers:
   - isar-debian-trixie:
       image: "bsp/registry/debian/isar/kas:5.2"
       file: Dockerfile.isar.debian
+      privileged: true    # Run container in privileged mode (required for ISAR builds)
       args:
         - name: "DISTRO"
           value: "debian-trixie"
