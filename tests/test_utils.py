@@ -76,7 +76,7 @@ class TestYamlParsing:
         result = get_registry_from_yaml_file(registry_file)
         device = result.registry.devices[0]
         assert device.build.path == "build/test"
-        assert "test.yml" in device.build.includes
+        assert "test.yaml" in device.build.includes
 
     def test_get_registry_missing_file(self, tmp_dir):
         with pytest.raises(SystemExit):

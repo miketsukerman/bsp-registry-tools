@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures and YAML constants for bsp-registry-tools tests.
+Shared pytest fixtures and YAML constants for bsp-registry-tools tests (v2.0 schema).
 """
 
 import tempfile
@@ -15,31 +15,36 @@ MINIMAL_REGISTRY_YAML = """
 specification:
   version: "2.0"
 containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args:
-        - name: "DISTRO"
-          value: "ubuntu:22.04"
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args:
+      - name: "DISTRO"
+        value: "ubuntu:22.04"
 registry:
   devices:
     - slug: test-device
       description: "Test Device"
       vendor: test-vendor
-      soc_vendor: test-soc-vendor
+      soc_vendor: test-soc
       build:
-        path: build/test
         container: "ubuntu-22.04"
+        path: build/test
         includes:
-          - test.yml
+          - test.yaml
   releases:
     - slug: test-release
       description: "Test Release"
+      yocto_version: "5.0"
+      includes:
+        - test-base.yaml
+  features: []
   bsp:
     - name: test-bsp
       description: "Test BSP"
       device: test-device
       release: test-release
+      features: []
 """
 
 REGISTRY_WITH_ENV_YAML = """
@@ -53,10 +58,10 @@ environment:
   - name: "GITCONFIG_FILE"
     value: "$ENV{HOME}/.gitconfig"
 containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
 registry:
   devices:
     - slug: qemu-arm64
@@ -64,32 +69,37 @@ registry:
       vendor: qemu
       soc_vendor: arm
       build:
-        path: build/qemu-arm64
         container: "ubuntu-22.04"
+        path: build/qemu-arm64
         includes:
-          - kas/qemu/qemuarm64.yml
+          - kas/qemu/qemuarm64.yaml
     - slug: qemu-x86-64
       description: "QEMU x86-64"
       vendor: qemu
       soc_vendor: intel
       build:
-        path: build/qemu-x86-64
         container: "ubuntu-22.04"
+        path: build/qemu-x86-64
         includes:
-          - kas/qemu/qemux86-64.yml
+          - kas/qemu/qemux86-64.yaml
   releases:
     - slug: scarthgap
-      description: "Scarthgap (Yocto 5.0 LTS)"
+      description: "Yocto 5.0 LTS (Scarthgap)"
       yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+  features: []
   bsp:
     - name: qemu-arm64
       description: "QEMU ARM64 BSP"
       device: qemu-arm64
       release: scarthgap
+      features: []
     - name: qemu-x86-64
       description: "QEMU x86-64 BSP"
       device: qemu-x86-64
       release: scarthgap
+      features: []
 """
 
 INVALID_YAML = """
@@ -103,6 +113,7 @@ specification:
 registry:
   devices: []
   releases: []
+  features: []
   bsp: []
 """
 
@@ -110,158 +121,219 @@ REGISTRY_WITH_FEATURES_YAML = """
 specification:
   version: "2.0"
 containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
+  debian-bookworm:
+    image: "test/debian:latest"
+    file: Dockerfile
+    args: []
 registry:
   devices:
-    - slug: test-device
-      description: "Test Device"
-      vendor: test-vendor
+    - slug: imx8-board
+      description: "i.MX8 Board"
+      vendor: advantech
       soc_vendor: nxp
       soc_family: imx8
       build:
-        path: build/test
-        container: "ubuntu-22.04"
+        container: "debian-bookworm"
+        path: build/imx8-board
         includes:
-          - device.yml
+          - kas/imx8.yaml
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      build:
+        container: "debian-bookworm"
+        path: build/qemuarm64
+        includes:
+          - kas/qemuarm64.yaml
   releases:
-    - slug: test-release
-      description: "Test Release"
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
       includes:
-        - release.yml
+        - kas/scarthgap.yaml
   features:
     - slug: ota
-      description: "OTA Update"
+      description: "Over-the-Air Update support"
       includes:
-        - ota.yml
+        - kas/features/ota.yaml
       local_conf:
-        - 'IMAGE_INSTALL += "swupdate"'
+        - "DISTRO_FEATURES:append = ' swupdate'"
     - slug: secure-boot
-      description: "Secure Boot"
+      description: "Secure Boot support"
       compatibility:
         soc_vendor:
           - nxp
       includes:
-        - secure-boot.yml
-    - slug: vendor-only
-      description: "Vendor Only Feature"
-      compatibility:
-        vendor:
-          - advantech
+        - kas/features/secure-boot.yaml
+      env:
+        - name: "SIGNING_KEY"
+          value: "$ENV{SIGNING_KEY}"
   bsp:
-    - name: test-bsp
-      description: "Test BSP"
-      device: test-device
-      release: test-release
+    - name: imx8-scarthgap-ota
+      description: "i.MX8 Scarthgap with OTA"
+      device: imx8-board
+      release: scarthgap
+      features:
+        - ota
 """
 
 REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML = """
 specification:
   version: "2.0"
-containers:
-  - poky-container:
-      image: "poky:latest"
-      file: Dockerfile.poky
-      args: []
-  - isar-container:
-      image: "isar:latest"
-      file: Dockerfile.isar
-      args: []
-      privileged: true
+
 environments:
   default:
-    container: poky-container
+    container: "debian-bookworm"
     variables:
-      - name: "YOCTO_ENV_VAR"
-        value: "default-value"
+      - name: "DL_DIR"
+        value: "/tmp/downloads"
+      - name: "SSTATE_DIR"
+        value: "/tmp/sstate"
   isar-env:
-    container: isar-container
+    container: "debian-bookworm-isar"
     variables:
-      - name: "ISAR_VAR"
-        value: "isar-value"
+      - name: "DL_DIR"
+        value: "/tmp/isar-downloads"
+
+containers:
+  debian-bookworm:
+    image: "test/debian:latest"
+    file: null
+    args: []
+  debian-bookworm-isar:
+    image: "test/debian-isar:latest"
+    file: null
+    args: []
+
 registry:
   devices:
-    - slug: test-device
-      description: "Test Device"
-      vendor: test-vendor
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
       soc_vendor: arm
       build:
-        path: build/test
+        path: build/qemuarm64
         includes:
-          - device.yml
+          - kas/qemuarm64.yaml
+    - slug: isar-board
+      description: "Isar Board"
+      vendor: acme
+      soc_vendor: arm
+      build:
+        path: build/isar-board
+        includes:
+          - kas/isar/board.yaml
   releases:
-    - slug: poky-release
-      description: "Poky Release"
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
       includes:
-        - poky.yml
-    - slug: isar-release
-      description: "Isar Release"
+        - kas/scarthgap.yaml
+    - slug: isar-v0.11
+      description: "Isar v0.11"
       environment: isar-env
       includes:
-        - isar.yml
+        - kas/isar/v0.11.yaml
+  features: []
+  bsp:
+    - name: qemu-scarthgap
+      description: "QEMU Scarthgap"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+    - name: isar-v0.11-build
+      description: "Isar v0.11 build"
+      device: isar-board
+      release: isar-v0.11
+      features: []
 """
 
 REGISTRY_WITH_COPY_YAML = """
 specification:
   version: "2.0"
 containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
+  debian-bookworm:
+    image: "test/debian:latest"
+    file: null
+    args: []
 registry:
   devices:
-    - slug: test-device
-      description: "Test Device"
-      vendor: test-vendor
+    - slug: isar-qemu
+      description: "QEMU Isar"
+      vendor: qemu
       soc_vendor: arm
       build:
-        path: build/test
-        container: "ubuntu-22.04"
+        container: "debian-bookworm"
+        path: build/isar-qemu
         includes:
-          - test.yml
+          - kas/isar/qemu.yaml
         copy:
-          - src/file.txt: dst/
+          - scripts/isar-runqemu.sh: build/isar-qemu/
   releases:
-    - slug: test-release
-      description: "Test Release"
+    - slug: isar-v0.11
+      description: "Isar v0.11"
+      includes:
+        - kas/isar/v0.11.yaml
+  features: []
   bsp:
-    - name: test-bsp
-      description: "Test BSP"
-      device: test-device
-      release: test-release
+    - name: isar-qemu-v0.11
+      description: "Isar QEMU v0.11"
+      device: isar-qemu
+      release: isar-v0.11
+      features: []
 """
 
 REGISTRY_WITH_RUNTIME_ARGS_YAML = """
 specification:
   version: "2.0"
 containers:
-  - net-container:
-      image: "net-build:latest"
-      file: Dockerfile.net
-      args: []
-      runtime_args: "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
+  isar-qemu-container:
+    image: "ghcr.io/ilbers/isar:latest"
+    file: null
+    args: []
+    runtime_args: "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
+  plain-container:
+    image: "test/plain:latest"
+    file: null
+    args: []
 registry:
   devices:
-    - slug: test-device
-      description: "Test Device"
-      vendor: test-vendor
+    - slug: isar-qemu
+      description: "QEMU Isar"
+      vendor: qemu
       soc_vendor: arm
       build:
-        path: build/test
-        container: "net-container"
+        container: "isar-qemu-container"
+        path: build/isar-qemu
         includes:
-          - test.yml
+          - kas/isar/qemu.yaml
+    - slug: plain-device
+      description: "Plain device"
+      vendor: test
+      soc_vendor: arm
+      build:
+        container: "plain-container"
+        path: build/plain
+        includes:
+          - kas/plain.yaml
   releases:
-    - slug: test-release
-      description: "Test Release"
+    - slug: isar-v0.11
+      description: "Isar v0.11"
+      includes:
+        - kas/isar/v0.11.yaml
+  features: []
   bsp:
-    - name: test-bsp
-      description: "Test BSP"
-      device: test-device
-      release: test-release
+    - name: isar-qemu-v0.11
+      description: "Isar QEMU v0.11"
+      device: isar-qemu
+      release: isar-v0.11
+      features: []
+    - name: plain-build
+      description: "Plain build"
+      device: plain-device
+      release: isar-v0.11
+      features: []
 """
 
 
@@ -294,14 +366,14 @@ def registry_with_env_file(tmp_dir):
 
 @pytest.fixture
 def registry_with_features_file(tmp_dir):
-    """Create a registry YAML file with features."""
+    """Create a registry YAML file with features and compatibility rules."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_FEATURES_YAML)
     return registry_path
 
 
 @pytest.fixture
-def registry_with_named_environments_file(tmp_dir):
+def registry_with_named_env_file(tmp_dir):
     """Create a registry YAML file with named environments."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML)
@@ -310,7 +382,7 @@ def registry_with_named_environments_file(tmp_dir):
 
 @pytest.fixture
 def registry_with_copy_file(tmp_dir):
-    """Create a registry YAML file with copy entries."""
+    """Create a registry YAML file with copy entries in device build config."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_COPY_YAML)
     return registry_path
@@ -318,7 +390,7 @@ def registry_with_copy_file(tmp_dir):
 
 @pytest.fixture
 def registry_with_runtime_args_file(tmp_dir):
-    """Create a registry YAML file with container runtime_args."""
+    """Create a registry YAML file with runtime_args on a container definition."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_RUNTIME_ARGS_YAML)
     return registry_path
@@ -337,7 +409,7 @@ machine: qemuarm64
 target:
   - core-image-minimal
 """
-    kas_path = tmp_dir / "test.yml"
+    kas_path = tmp_dir / "test.yaml"
     kas_path.write_text(kas_content)
     return kas_path
 
@@ -349,7 +421,7 @@ def kas_config_with_includes(tmp_dir):
 header:
   version: 14
   includes:
-    - include.yml
+    - include.yaml
 
 machine: qemuarm64
 """
@@ -359,8 +431,8 @@ header:
 
 distro: poky
 """
-    base_path = tmp_dir / "base.yml"
-    include_path = tmp_dir / "include.yml"
+    base_path = tmp_dir / "base.yaml"
+    include_path = tmp_dir / "include.yaml"
     base_path.write_text(base_content)
     include_path.write_text(include_content)
     return base_path, include_path
