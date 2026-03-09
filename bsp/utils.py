@@ -18,6 +18,8 @@ from .models import Docker, DockerArg, RegistryRoot
 # YAML Configuration Parser with Container Support
 # =============================================================================
 
+SUPPORTED_REGISTRY_VERSION = "2.0"
+
 
 def read_yaml_file(filename: Path) -> str:
     """
@@ -96,6 +98,7 @@ def convert_containers_list_to_dict(containers_list: List[Dict[str, Any]]) -> Di
                     file=container_config.get('file'),
                     args=[DockerArg(name=arg['name'], value=arg['value'])
                           for arg in container_config.get('args', [])],
+                    runtime_args=container_config.get('runtime_args'),
                     privileged=container_config.get('privileged', False)
                 )
             else:
@@ -122,6 +125,18 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     """
     yaml_string = read_yaml_file(filename)
     yaml_dict = parse_yaml_file(yaml_string)
+
+    # Fail fast if the registry version is not supported
+    spec = yaml_dict.get('specification') or {}
+    version = spec.get('version') if isinstance(spec, dict) else None
+    if version != SUPPORTED_REGISTRY_VERSION:
+        logging.error(
+            f"Unsupported registry version '{version}' in {filename}. "
+            f"This tool requires version '{SUPPORTED_REGISTRY_VERSION}'. "
+            f"See docs/migration-v1-to-v2.md in the bsp-registry-tools repository "
+            f"for upgrade instructions."
+        )
+        sys.exit(1)
 
     # Pre-process containers list to dictionary format if needed
     if 'containers' in yaml_dict and isinstance(yaml_dict['containers'], list):

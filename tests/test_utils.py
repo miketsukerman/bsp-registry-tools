@@ -1,5 +1,5 @@
 """
-Tests for YAML parsing utilities and container list-to-dict conversion.
+Tests for YAML parsing utilities and container list-to-dict conversion (v2.0).
 """
 
 import pytest
@@ -12,7 +12,7 @@ from bsp import (
     get_registry_from_yaml_file,
     convert_containers_list_to_dict,
 )
-from .conftest import INVALID_YAML
+from .conftest import INVALID_YAML, MINIMAL_REGISTRY_YAML, REGISTRY_WITH_ENV_YAML
 
 
 # =============================================================================
@@ -48,9 +48,9 @@ class TestYamlParsing:
     def test_get_registry_from_yaml_file(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
         assert isinstance(result, RegistryRoot)
-        assert result.specification.version == "1.0"
-        assert len(result.registry.bsp) == 1
-        assert result.registry.bsp[0].name == "test-bsp"
+        assert result.specification.version == "2.0"
+        assert len(result.registry.devices) == 1
+        assert result.registry.devices[0].slug == "test-device"
 
     def test_get_registry_from_yaml_file_with_env(self, registry_with_env_file):
         result = get_registry_from_yaml_file(registry_with_env_file)
@@ -66,15 +66,17 @@ class TestYamlParsing:
         assert isinstance(container, Docker)
         assert container.image == "test/ubuntu-22.04:latest"
 
-    def test_get_registry_bsp_has_description(self, registry_file):
+    def test_get_registry_presets(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
+        assert len(result.registry.bsp) == 1
+        assert result.registry.bsp[0].name == "test-bsp"
         assert result.registry.bsp[0].description == "Test BSP"
 
-    def test_get_registry_bsp_build_config(self, registry_file):
+    def test_get_registry_device_build_config(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
-        bsp_obj = result.registry.bsp[0]
-        assert bsp_obj.build.path == "build/test"
-        assert bsp_obj.build.configuration == ["test.yml"]
+        device = result.registry.devices[0]
+        assert device.build.path == "build/test"
+        assert "test.yml" in device.build.includes
 
     def test_get_registry_missing_file(self, tmp_dir):
         with pytest.raises(SystemExit):
@@ -85,6 +87,30 @@ class TestYamlParsing:
         invalid_file.write_text(INVALID_YAML)
         with pytest.raises(SystemExit):
             get_registry_from_yaml_file(invalid_file)
+
+    def test_get_registry_unsupported_version_exits(self, tmp_dir):
+        """Registry files with unsupported version should exit immediately."""
+        v1_yaml = """
+specification:
+  version: "1.0"
+registry:
+  bsp: []
+"""
+        v1_file = tmp_dir / "v1-registry.yaml"
+        v1_file.write_text(v1_yaml)
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(v1_file)
+
+    def test_get_registry_no_version_exits(self, tmp_dir):
+        """Registry files without a version should exit immediately."""
+        no_ver_yaml = """
+registry:
+  devices: []
+"""
+        no_ver_file = tmp_dir / "no-ver.yaml"
+        no_ver_file.write_text(no_ver_yaml)
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(no_ver_file)
 
 
 # =============================================================================
@@ -163,3 +189,24 @@ class TestConvertContainersListToDict:
         ]
         result = convert_containers_list_to_dict(containers_list)
         assert result["isar-container"].privileged is True
+
+    def test_container_runtime_args_default_none(self):
+        containers_list = [
+            {"my-container": {"image": "my-image:latest", "file": "Dockerfile", "args": []}},
+        ]
+        result = convert_containers_list_to_dict(containers_list)
+        assert result["my-container"].runtime_args is None
+
+    def test_container_runtime_args_set(self):
+        containers_list = [
+            {
+                "net-container": {
+                    "image": "net:latest",
+                    "file": "Dockerfile",
+                    "args": [],
+                    "runtime_args": "-p 2222:2222 --cap-add=NET_ADMIN",
+                }
+            },
+        ]
+        result = convert_containers_list_to_dict(containers_list)
+        assert result["net-container"].runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"

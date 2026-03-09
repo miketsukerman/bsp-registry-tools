@@ -1,5 +1,5 @@
 specification:
-  version: "1.0"
+  version: "2.0"
 
 # Global environment variables for all builds
 # Use $ENV{VAR_NAME} syntax to reference system environment variables
@@ -32,142 +32,136 @@ containers:
           value: "5.2"
 
 registry:
-  bsp:
-
-    # =====================================
-    # QEMU ARM64 BSPs
-    # =====================================
-
-    - name: poky-qemuarm64-scarthgap
-      description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
+  # =====================================
+  # Hardware Devices
+  # =====================================
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
       build:
-        path: build/qemu-arm64-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
+        path: build/qemu-arm64
+        container: "debian-bookworm"
+        includes:
           - kas/poky/qemu/qemuarm64.yaml
 
-    - name: poky-qemuarm64-styhead
-      description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.1"
+    - slug: qemu-x86-64
+      description: "QEMU x86-64 (emulated)"
+      vendor: qemu
+      soc_vendor: intel
       build:
-        path: build/qemu-arm64-styhead
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/styhead.yaml
-          - kas/poky/qemu/qemuarm64.yaml
-
-    # =====================================
-    # QEMU x86-64 BSPs
-    # =====================================
-
-    - name: poky-qemux86-64-scarthgap
-      description: "Poky QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/qemu-x86-64-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
+        path: build/qemu-x86-64
+        container: "debian-bookworm"
+        includes:
           - kas/poky/qemu/qemux86-64.yaml
 
-    - name: poky-qemux86-64-styhead
-      description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.1"
+    - slug: qemu-arm
+      description: "QEMU ARM 32-bit (emulated)"
+      vendor: qemu
+      soc_vendor: arm
       build:
-        path: build/qemu-x86-64-styhead
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/styhead.yaml
-          - kas/poky/qemu/qemux86-64.yaml
-
-    # =====================================
-    # QEMU ARM (32-bit) BSPs
-    # =====================================
-
-    - name: poky-qemuarm-scarthgap
-      description: "Poky QEMU ARM (32-bit) Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/qemu-arm-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
+        path: build/qemu-arm
+        container: "debian-bookworm"
+        includes:
           - kas/poky/qemu/qemuarm.yaml
 
-    # =====================================
-    # Isar QEMU Ubuntu ARM64 BSPs
-    # =====================================
-
-    - name: isar-qemuarm64
-      description: "Isar QEMU Ubuntu ARM64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
+    - slug: qemu-arm64-isar
+      description: "QEMU ARM64 for Isar (emulated)"
+      vendor: qemu
+      soc_vendor: arm
       build:
         path: build/qemu-arm64-isar
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/debian-trixie.yaml
+        container: "isar-debian-trixie"
+        includes:
           - kas/isar/qemu/common.yaml
           - kas/isar/qemu/qemuarm64.yaml
 
-    # =====================================
-    # Isar QEMU Ubuntu X86_64 BSPs
-    # =====================================
-
-    - name: isar-debian-qemux86-64
-      description: "Isar QEMU Debian Trixie X86_64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
+    - slug: qemu-x86-64-isar
+      description: "QEMU x86-64 for Isar (emulated)"
+      vendor: qemu
+      soc_vendor: intel
       build:
-        path: build/qemu-x86-64-debian-trixie
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/debian-trixie.yaml
+        path: build/qemu-x86-64-isar
+        container: "isar-debian-trixie"
+        includes:
           - kas/isar/qemu/common.yaml
           - kas/isar/qemu/qemux86-64.yaml
 
-    - name: isar-ubuntu-qemux86-64
-      description: "Isar QEMU Ubuntu Noble X86_64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
-      build:
-        path: build/qemu-x86-64-ubuntu-noble
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/ubuntu-noble.yaml
-          - kas/isar/qemu/common.yaml
-          - kas/isar/qemu/qemux86-64.yaml
+  # =====================================
+  # Releases
+  # =====================================
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap (Yocto 5.0 LTS)"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+
+    - slug: styhead
+      description: "Styhead (Yocto 5.1)"
+      yocto_version: "5.1"
+      includes:
+        - kas/poky/styhead.yaml
+
+    - slug: isar-debian-trixie
+      description: "Isar with Debian Trixie"
+      isar_version: "0.11"
+      includes:
+        - kas/isar/isar.yaml
+        - kas/isar/distro/debian-trixie.yaml
+
+    - slug: isar-ubuntu-noble
+      description: "Isar with Ubuntu Noble"
+      isar_version: "0.11"
+      includes:
+        - kas/isar/isar.yaml
+        - kas/isar/distro/ubuntu-noble.yaml
+
+  # =====================================
+  # BSP Presets (shortcuts)
+  # =====================================
+  bsp:
+    # Poky QEMU ARM64 BSPs
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
+      device: qemu-arm64
+      release: scarthgap
+
+    - name: poky-qemuarm64-styhead
+      description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
+      device: qemu-arm64
+      release: styhead
+
+    # Poky QEMU x86-64 BSPs
+    - name: poky-qemux86-64-scarthgap
+      description: "Poky QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
+      device: qemu-x86-64
+      release: scarthgap
+
+    - name: poky-qemux86-64-styhead
+      description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
+      device: qemu-x86-64
+      release: styhead
+
+    # Poky QEMU ARM (32-bit) BSPs
+    - name: poky-qemuarm-scarthgap
+      description: "Poky QEMU ARM (32-bit) Scarthgap (Yocto 5.0 LTS)"
+      device: qemu-arm
+      release: scarthgap
+
+    # Isar QEMU BSPs
+    - name: isar-qemuarm64-debian-trixie
+      description: "Isar QEMU ARM64 Debian Trixie"
+      device: qemu-arm64-isar
+      release: isar-debian-trixie
+
+    - name: isar-qemux86-64-debian-trixie
+      description: "Isar QEMU x86-64 Debian Trixie"
+      device: qemu-x86-64-isar
+      release: isar-debian-trixie
+
+    - name: isar-qemux86-64-ubuntu-noble
+      description: "Isar QEMU x86-64 Ubuntu Noble"
+      device: qemu-x86-64-isar
+      release: isar-ubuntu-noble

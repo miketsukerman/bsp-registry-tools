@@ -12,7 +12,7 @@ from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
 
 # =============================================================================
-# Main Entry Point with Enhanced Commands
+# Main Entry Point with Enhanced Commands (v2.0)
 # =============================================================================
 
 
@@ -29,72 +29,153 @@ def main() -> int:
     try:
         # Parse command line arguments
         parser = argparse.ArgumentParser(description="Advantech Board Support Package Registry")
-        parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
-        parser.add_argument('--registry', '-r', default=None, help='BSP Registry file (local path)')
-        parser.add_argument('--no-color', action='store_true', help='Disable colored output')
-        parser.add_argument('--remote', default=DEFAULT_REMOTE_URL,
-                            help='Remote registry git URL (default: %(default)s)')
-        parser.add_argument('--branch', default=DEFAULT_BRANCH,
-                            help='Remote registry branch (default: %(default)s)')
-        parser.add_argument('--update', dest='update', action='store_true', default=True,
-                            help='Update the cached registry clone before use (default)')
-        parser.add_argument('--no-update', dest='update', action='store_false',
-                            help='Skip updating the cached registry clone')
-        parser.add_argument('--local', action='store_true',
-                            help='Force local registry lookup only (do not use remote)')
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--registry", "-r", default=None, help="BSP Registry file (local path)")
+        parser.add_argument("--no-color", action="store_true", help="Disable colored output")
+        parser.add_argument("--remote", default=DEFAULT_REMOTE_URL,
+                            help="Remote registry git URL (default: %(default)s)")
+        parser.add_argument("--branch", default=DEFAULT_BRANCH,
+                            help="Remote registry branch (default: %(default)s)")
+        parser.add_argument("--update", dest="update", action="store_true", default=True,
+                            help="Update the cached registry clone before use (default)")
+        parser.add_argument("--no-update", dest="update", action="store_false",
+                            help="Skip updating the cached registry clone")
+        parser.add_argument("--local", action="store_true",
+                            help="Force local registry lookup only (do not use remote)")
 
         # Create subparsers for different commands
-        subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=True)
+        subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=True)
 
+        # ----------------------------------------------------------------
         # Build command
-        build_parser = subparsers.add_parser('build', help='Build an image for BSP')
+        # ----------------------------------------------------------------
+        build_parser = subparsers.add_parser("build", help="Build an image for BSP")
         build_parser.add_argument(
-            'bsp_name',
+            "bsp_name",
+            nargs="?",
             type=str,
-            help='Name of the BSP to build'
+            help="Name of the BSP preset to build (mutually exclusive with --device/--release)"
         )
         build_parser.add_argument(
-            '--clean',
-            action='store_true',
-            help='Clean before building'
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based build)"
         )
         build_parser.add_argument(
-            '--checkout',
-            action='store_true',
-            help='Checkout and validate build configuration without building (fast)'
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based build)"
+        )
+        build_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        )
+        build_parser.add_argument(
+            "--clean",
+            action="store_true",
+            help="Clean before building"
+        )
+        build_parser.add_argument(
+            "--checkout",
+            action="store_true",
+            help="Checkout and validate build configuration without building (fast)"
         )
 
-        # List command
-        subparsers.add_parser('list', help='List available BSPs')
+        # ----------------------------------------------------------------
+        # List command (with optional subtype)
+        # ----------------------------------------------------------------
+        list_parser = subparsers.add_parser("list", help="List available BSPs and components")
+        list_parser.add_argument(
+            "list_type",
+            nargs="?",
+            choices=["devices", "releases", "features"],
+            default=None,
+            help="Component type to list (omit to list BSP presets)"
+        )
+        list_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help='Filter releases by device slug (only used with "releases")'
+        )
 
         # List containers command
-        subparsers.add_parser('containers', help='List available containers')
+        subparsers.add_parser("containers", help="List available containers")
 
+        # ----------------------------------------------------------------
         # Export command
-        export_parser = subparsers.add_parser('export', help='Export BSP configuration')
+        # ----------------------------------------------------------------
+        export_parser = subparsers.add_parser("export", help="Export BSP configuration")
         export_parser.add_argument(
-            'bsp_name',
+            "bsp_name",
+            nargs="?",
             type=str,
-            help='Name of the BSP'
+            help="Name of the BSP preset to export (mutually exclusive with --device/--release)"
         )
         export_parser.add_argument(
-            '--output', '-o',
+            "--device", "-d",
             type=str,
-            help='Output file path (default: stdout)'
+            dest="device",
+            help="Device slug"
+        )
+        export_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug"
+        )
+        export_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        )
+        export_parser.add_argument(
+            "--output", "-o",
+            type=str,
+            help="Output file path (default: stdout)"
         )
 
+        # ----------------------------------------------------------------
         # Shell command
-        shell_parser = subparsers.add_parser('shell', help='Enter interactive shell for BSP')
+        # ----------------------------------------------------------------
+        shell_parser = subparsers.add_parser("shell", help="Enter interactive shell for BSP")
         shell_parser.add_argument(
-            'bsp_name',
+            "bsp_name",
+            nargs="?",
             type=str,
-            help='Name of the BSP'
+            help="Name of the BSP preset (mutually exclusive with --device/--release)"
         )
         shell_parser.add_argument(
-            '--command', '-c',
+            "--device", "-d",
             type=str,
-            dest='shell_command',
-            help='Command to execute in shell (optional, if not provided starts interactive shell)'
+            dest="device",
+            help="Device slug"
+        )
+        shell_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug"
+        )
+        shell_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        )
+        shell_parser.add_argument(
+            "--command", "-c",
+            type=str,
+            dest="shell_command",
+            help="Command to execute in shell (optional, if not provided starts interactive shell)"
         )
 
         args = parser.parse_args()
@@ -106,23 +187,17 @@ def main() -> int:
         if args.no_color or not COLORAMA_AVAILABLE:
             logging.basicConfig(
                 level=log_level,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
         else:
             logging.basicConfig(level=log_level)
             logger = logging.getLogger()
             handler = logger.handlers[0]
             handler.setFormatter(ColoramaFormatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             ))
 
         # Resolve registry file path
-        # Priority:
-        #   1. --registry explicitly provided      -> use that file (local override)
-        #   2. --local flag set                    -> use local bsp-registry.yaml/yml (no remote)
-        #   3. bsp-registry.yaml in current dir   -> use that file (preferred extension)
-        #   4. bsp-registry.yml in current dir    -> use that file (alternate extension)
-        #   5. Otherwise -> fetch from remote via RegistryFetcher
         LOCAL_DEFAULTS = ["bsp-registry.yaml", "bsp-registry.yml"]
         local_registry = next((name for name in LOCAL_DEFAULTS if Path(name).is_file()), None)
         if args.registry is not None:
@@ -147,28 +222,102 @@ def main() -> int:
         bsp_mgr = BspManager(registry_path)
         bsp_mgr.initialize()
 
-        # Execute requested command
-        if args.command == 'build':
-            checkout_only = getattr(args, 'checkout', False)
-            bsp_mgr.build_bsp(args.bsp_name, checkout_only=checkout_only)
-        elif args.command == 'list':
-            bsp_mgr.list_bsp()
-        elif args.command == 'containers':
+        # ----------------------------------------------------------------
+        # Dispatch commands
+        # ----------------------------------------------------------------
+        def _check_exclusive(bsp_name, device, release, parser):
+            """Return True and log error if bsp_name and device/release are both set."""
+            if bsp_name and (device or release):
+                logging.error(
+                    "Cannot mix a positional preset name with --device/--release. "
+                    "Use either '<command> <preset>' or "
+                    "'<command> --device <d> --release <r>'."
+                )
+                return True
+            return False
+
+        if args.command == "build":
+            checkout_only = getattr(args, "checkout", False)
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+
+            if _check_exclusive(bsp_name, device, release, build_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+            elif device and release:
+                bsp_mgr.build_by_components(
+                    device, release, features, checkout_only=checkout_only
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                build_parser.print_help()
+                return 1
+
+        elif args.command == "list":
+            list_type = getattr(args, "list_type", None)
+            device = getattr(args, "device", None)
+            if list_type == "devices":
+                bsp_mgr.list_devices()
+            elif list_type == "releases":
+                bsp_mgr.list_releases(device_slug=device)
+            elif list_type == "features":
+                bsp_mgr.list_features()
+            else:
+                bsp_mgr.list_bsp()
+
+        elif args.command == "containers":
             bsp_mgr.list_containers()
-        elif args.command == 'export':
-            bsp_mgr.export_bsp_config(
-                bsp_name=args.bsp_name,
-                output_file=args.output
-            )
-        elif args.command == 'shell':
-            # Use getattr to safely access the shell_command attribute
-            shell_command = getattr(args, 'shell_command', None)
-            bsp_mgr.shell_into_bsp(
-                bsp_name=args.bsp_name,
-                command=shell_command
-            )
+
+        elif args.command == "export":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            output = getattr(args, "output", None)
+
+            if _check_exclusive(bsp_name, device, release, export_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.export_bsp_config(bsp_name=bsp_name, output_file=output)
+            elif device and release:
+                bsp_mgr.export_by_components(
+                    device, release, features, output_file=output
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                export_parser.print_help()
+                return 1
+
+        elif args.command == "shell":
+            shell_command = getattr(args, "shell_command", None)
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+
+            if _check_exclusive(bsp_name, device, release, shell_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.shell_into_bsp(bsp_name=bsp_name, command=shell_command)
+            elif device and release:
+                bsp_mgr.shell_by_components(
+                    device, release, features, command=shell_command
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                shell_parser.print_help()
+                return 1
+
         else:
-            # This should not happen since subparsers are required=True
             logging.error(f"Unknown command: {args.command}")
             parser.print_help()
             return 1

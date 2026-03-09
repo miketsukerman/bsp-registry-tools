@@ -183,3 +183,46 @@ class TestKasManager:
         # kas should be available in the test environment (installed via pip)
         result = manager.check_kas_available()
         assert isinstance(result, bool)
+
+    def test_container_runtime_args_stored(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_runtime_args="-p 2222:2222 --cap-add=NET_ADMIN"
+        )
+        assert manager.container_runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
+
+    def test_container_runtime_args_default_none(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+        )
+        assert manager.container_runtime_args is None
+
+    def test_container_runtime_args_set_in_env_when_using_container(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_runtime_args="-p 2222:2222 --device=/dev/net/tun"
+        )
+        env = manager._get_environment_with_container_vars()
+        assert env.get("KAS_CONTAINER_ARGS") == "-p 2222:2222 --device=/dev/net/tun"
+
+    def test_container_runtime_args_not_set_when_none(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+        )
+        env = manager._get_environment_with_container_vars()
+        assert "KAS_CONTAINER_ARGS" not in env
+
+    def test_container_privileged_stored(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            container_privileged=True
+        )
+        assert manager.container_privileged is True
