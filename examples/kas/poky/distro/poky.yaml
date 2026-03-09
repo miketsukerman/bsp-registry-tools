@@ -1,0 +1,20 @@
+header:
+  version: 14
+
+distro: poky
+
+repos:
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+    layers:
+      meta:
+      meta-poky:
+
+  meta-openembedded:
+    url: "https://github.com/openembedded/meta-openembedded.git"
+    path: "layers/meta-openembedded"
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:

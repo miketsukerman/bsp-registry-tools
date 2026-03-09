@@ -107,18 +107,38 @@ registry:
           - kas/isar/qemu/qemux86-64.yaml
 
   # =====================================
+  # Distributions
+  # =====================================
+
+  distro:
+    
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+
+    - slug: isar
+      description: "Isar (Siemens build system)"
+      vendor: siemens
+      includes:
+        - kas/isar/isar.yaml
+
+  # =====================================
   # Releases
   # =====================================
 
   releases:
 
     - slug: scarthgap
+      distro: poky
       description: "Yocto 5.0 LTS (Scarthgap)"
       yocto_version: "5.0"
       includes:
         - kas/poky/scarthgap.yaml
 
     - slug: styhead
+      distro: poky
       description: "Yocto 5.1 (Styhead)"
       yocto_version: "5.1"
       includes:
@@ -126,6 +146,7 @@ registry:
 
     # Isar v0.11 – uses the isar-build named environment (Debian container + isar download cache)
     - slug: ubuntu-noble
+      distro: isar
       description: "Ubuntu Noble (Isar v0.11)"
       isar_version: "0.11"
       environment: isar-build
@@ -133,6 +154,7 @@ registry:
         - kas/isar/distro/ubuntu-noble.yaml
 
     - slug: debian-trixie-isar
+      distro: isar
       description: "Debian Trixie (Isar v0.11)"
       isar_version: "0.11"
       environment: isar-build
