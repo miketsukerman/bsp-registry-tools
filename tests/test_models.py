@@ -11,6 +11,7 @@ from bsp import (
     DeviceBuild,
     Device,
     VendorIncludes,
+    Distro,
     Release,
     FeatureCompatibility,
     Feature,
@@ -229,3 +230,37 @@ class TestV2DataClasses:
         assert root.containers == {}
         assert root.environment == []
         assert root.environments == {}
+
+    def test_distro_defaults(self):
+        distro = Distro(slug="poky", description="Poky reference distro", vendor="yocto")
+        assert distro.slug == "poky"
+        assert distro.description == "Poky reference distro"
+        assert distro.vendor == "yocto"
+        assert distro.includes == []
+
+    def test_distro_with_includes(self):
+        distro = Distro(
+            slug="isar",
+            description="Isar build system",
+            vendor="siemens",
+            includes=["kas/isar/isar.yaml"],
+        )
+        assert distro.includes == ["kas/isar/isar.yaml"]
+
+    def test_release_distro_field_defaults_to_none(self):
+        release = Release(slug="scarthgap", description="Scarthgap")
+        assert release.distro is None
+
+    def test_release_with_distro(self):
+        release = Release(slug="scarthgap", description="Scarthgap", distro="poky")
+        assert release.distro == "poky"
+
+    def test_registry_distro_defaults_to_empty(self):
+        reg = Registry()
+        assert reg.distro == []
+
+    def test_registry_with_distros(self):
+        distro = Distro(slug="poky", description="Poky", vendor="yocto")
+        reg = Registry(distro=[distro])
+        assert len(reg.distro) == 1
+        assert reg.distro[0].slug == "poky"

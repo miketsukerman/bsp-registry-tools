@@ -197,6 +197,17 @@ class BspManager:
                     compat = f" [requires {', '.join(parts)}]"
             print(f"- {feature.slug}: {feature.description}{compat}")
 
+    def list_distros(self) -> None:
+        """List all distribution/build-system definitions in the registry."""
+        distros = self.model.registry.distro if self.model else []
+        if not distros:
+            print("No distros found in registry")
+            return
+
+        print("Available distros:")
+        for distro in distros:
+            print(f"- {distro.slug}: {distro.description} (vendor: {distro.vendor})")
+
     def list_containers(self) -> None:
         """List all available containers in the registry."""
         if not self.containers:

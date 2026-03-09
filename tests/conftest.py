@@ -336,6 +336,52 @@ registry:
       features: []
 """
 
+REGISTRY_WITH_DISTRO_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+    - slug: isar
+      description: "Isar (Siemens build system)"
+      vendor: siemens
+      includes:
+        - kas/isar/isar.yaml
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      build:
+        container: "debian-bookworm"
+        path: build/qemu-arm64
+        includes:
+          - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+  features: []
+  bsp:
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+"""
+
 
 # =============================================================================
 # Fixtures
@@ -393,6 +439,14 @@ def registry_with_runtime_args_file(tmp_dir):
     """Create a registry YAML file with runtime_args on a container definition."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_RUNTIME_ARGS_YAML)
+    return registry_path
+
+
+@pytest.fixture
+def registry_with_distro_file(tmp_dir):
+    """Create a registry YAML file with distro definitions."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_DISTRO_YAML)
     return registry_path
 
 

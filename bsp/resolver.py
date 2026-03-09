@@ -13,6 +13,7 @@ import yaml
 from .models import (
     BspPreset,
     Device,
+    Distro,
     Docker,
     EnvironmentVariable,
     Feature,
@@ -169,6 +170,25 @@ class V2Resolver:
         self.logger.info(f"Available features: {available or '(none)'}")
         sys.exit(1)
 
+    def get_distro(self, slug: str) -> Distro:
+        """
+        Retrieve a distro definition by slug.
+
+        Raises:
+            SystemExit: If distro slug is not found
+        """
+        for distro in self.model.registry.distro:
+            if distro.slug == slug:
+                return distro
+        self.logger.error(f"Distro not found: '{slug}'")
+        available = ", ".join(d.slug for d in self.model.registry.distro)
+        self.logger.info(f"Available distros: {available or '(none)'}")
+        sys.exit(1)
+
+    def list_distros(self) -> List[Distro]:
+        """Return all distro definitions in the registry."""
+        return list(self.model.registry.distro)
+
     # ------------------------------------------------------------------
     # Compatibility check
     # ------------------------------------------------------------------
@@ -229,7 +249,7 @@ class V2Resolver:
         """
         Resolve device + release + features into a ResolvedConfig.
 
-        Merging order for KAS files: release.includes -> device.includes -> feature.includes
+        Merging order for KAS files: distro.includes -> release.includes -> device.includes -> feature.includes
         Merging order for local_conf:  device.local_conf -> feature.local_conf (in order)
 
         Args:
@@ -280,7 +300,11 @@ class V2Resolver:
                 sys.exit(1)
 
         # Build ordered KAS file list
+        # Order: distro.includes -> release.includes -> device.includes -> feature.includes
         kas_files: List[str] = []
+        if release.distro:
+            distro_obj = self.get_distro(release.distro)
+            kas_files.extend(distro_obj.includes)
         kas_files.extend(release.includes)
         kas_files.extend(device.build.includes)
         for feature in features:

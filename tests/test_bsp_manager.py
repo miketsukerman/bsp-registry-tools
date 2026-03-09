@@ -697,3 +697,56 @@ class TestRuntimeArgs:
         env = kas_mgr._get_environment_with_container_vars()
         assert "KAS_CONTAINER_ARGS" not in env
         manager._cleanup_temp_kas_file()
+
+
+class TestDistros:
+    """Tests for registry.distro support."""
+
+    def test_list_distros_output(self, registry_with_distro_file, capsys):
+        manager = BspManager(config_path=str(registry_with_distro_file))
+        manager.initialize()
+        manager.list_distros()
+        captured = capsys.readouterr()
+        assert "poky" in captured.out
+        assert "isar" in captured.out
+
+    def test_list_distros_empty(self, registry_file, capsys):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        manager.list_distros()
+        captured = capsys.readouterr()
+        assert "No distros found" in captured.out
+
+    def test_resolver_get_distro(self, registry_with_distro_file):
+        manager = BspManager(config_path=str(registry_with_distro_file))
+        manager.initialize()
+        distro = manager.resolver.get_distro("poky")
+        assert distro.slug == "poky"
+        assert distro.vendor == "yocto"
+
+    def test_resolver_get_distro_not_found(self, registry_with_distro_file):
+        manager = BspManager(config_path=str(registry_with_distro_file))
+        manager.initialize()
+        import pytest
+        with pytest.raises(SystemExit):
+            manager.resolver.get_distro("nonexistent-distro")
+
+    def test_resolver_list_distros(self, registry_with_distro_file):
+        manager = BspManager(config_path=str(registry_with_distro_file))
+        manager.initialize()
+        distros = manager.resolver.list_distros()
+        assert len(distros) == 2
+        slugs = [d.slug for d in distros]
+        assert "poky" in slugs
+        assert "isar" in slugs
+
+    def test_resolve_includes_distro_files(self, registry_with_distro_file):
+        manager = BspManager(config_path=str(registry_with_distro_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "scarthgap")
+        # distro.includes should come before release.includes
+        assert "kas/poky/distro/poky.yaml" in resolved.kas_files
+        assert "kas/poky/scarthgap.yaml" in resolved.kas_files
+        distro_idx = resolved.kas_files.index("kas/poky/distro/poky.yaml")
+        release_idx = resolved.kas_files.index("kas/poky/scarthgap.yaml")
+        assert distro_idx < release_idx

@@ -93,7 +93,7 @@ def main() -> int:
         list_parser.add_argument(
             "list_type",
             nargs="?",
-            choices=["devices", "releases", "features"],
+            choices=["devices", "releases", "features", "distros"],
             default=None,
             help="Component type to list (omit to list BSP presets)"
         )
@@ -267,6 +267,8 @@ def main() -> int:
                 bsp_mgr.list_releases(device_slug=device)
             elif list_type == "features":
                 bsp_mgr.list_features()
+            elif list_type == "distros":
+                bsp_mgr.list_distros()
             else:
                 bsp_mgr.list_bsp()
 

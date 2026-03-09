@@ -210,3 +210,22 @@ class TestConvertContainersListToDict:
         ]
         result = convert_containers_list_to_dict(containers_list)
         assert result["net-container"].runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
+
+    def test_get_registry_distro_section(self, registry_with_distro_file):
+        result = get_registry_from_yaml_file(registry_with_distro_file)
+        assert len(result.registry.distro) == 2
+        distro_slugs = [d.slug for d in result.registry.distro]
+        assert "poky" in distro_slugs
+        assert "isar" in distro_slugs
+
+    def test_get_registry_release_distro_field(self, registry_with_distro_file):
+        result = get_registry_from_yaml_file(registry_with_distro_file)
+        release = result.registry.releases[0]
+        assert release.slug == "scarthgap"
+        assert release.distro == "poky"
+
+    def test_get_registry_distro_vendor(self, registry_with_distro_file):
+        result = get_registry_from_yaml_file(registry_with_distro_file)
+        poky = next(d for d in result.registry.distro if d.slug == "poky")
+        assert poky.vendor == "yocto"
+        assert "kas/poky/distro/poky.yaml" in poky.includes

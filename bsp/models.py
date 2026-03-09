@@ -170,6 +170,28 @@ class VendorIncludes:
 
 
 @dataclass
+class Distro:
+    """
+    Linux distribution / build-system definition.
+
+    A ``Distro`` groups the KAS configuration files that set up a particular
+    build system or Linux distribution (e.g. Poky, Isar).  Releases reference
+    a distro by its ``slug`` via the ``Release.distro`` field so that the
+    resolver can prepend the distro includes before the release includes.
+
+    Attributes:
+        slug: Unique identifier for the distro (e.g., 'poky', 'isar')
+        description: Human-readable description
+        vendor: Distro vendor/maintainer name (e.g., 'yocto', 'siemens')
+        includes: KAS configuration files that configure this distro
+    """
+    slug: str
+    description: str
+    vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
 class Release:
     """
     Yocto/Isar release definition.
@@ -186,6 +208,9 @@ class Release:
                      When omitted the ``"default"`` named environment is used
                      if one is defined, otherwise the global environment list
                      and device container apply.
+        distro: Optional slug of the distro this release belongs to
+                (references ``Registry.distro``).  When set the resolver
+                prepends the distro's includes before the release includes.
     """
     slug: str
     description: str
@@ -194,6 +219,7 @@ class Release:
     isar_version: Optional[str] = None
     vendor_includes: List[VendorIncludes] = field(default_factory=empty_list)
     environment: Optional[str] = None
+    distro: Optional[str] = None
 
 
 @dataclass
@@ -256,18 +282,20 @@ class BspPreset:
 @dataclass
 class Registry:
     """
-    Main v2.0 registry containing devices, releases, features, and presets.
+    Main v2.0 registry containing devices, releases, features, distros, and presets.
 
     Attributes:
         devices: List of hardware device definitions
         releases: List of Yocto/Isar release definitions
         features: List of optional feature definitions
         bsp: Optional list of named BSP presets (shortcuts)
+        distro: Optional list of distribution/build-system definitions
     """
     devices: List[Device] = field(default_factory=empty_list)
     releases: List[Release] = field(default_factory=empty_list)
     features: List[Feature] = field(default_factory=empty_list)
     bsp: Optional[List[BspPreset]] = field(default_factory=empty_list)
+    distro: List[Distro] = field(default_factory=empty_list)
 
 
 @dataclass
