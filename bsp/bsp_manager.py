@@ -362,7 +362,6 @@ class BspManager:
                 prefix="bsp_composed_", suffix=".yml"
             )
             os.close(temp_fd)
-            self._resolver_ref = self.resolver  # keep a ref
             self.resolver.generate_kas_yaml(
                 resolved,
                 temp_path,
