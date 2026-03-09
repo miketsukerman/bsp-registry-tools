@@ -60,42 +60,30 @@ registry:
       description: "QEMU ARM64 (emulated)"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "debian-bookworm"
-        path: build/qemu-arm64
-        includes:
-          - kas/devices/qemu/qemuarm64.yaml
+      includes:
+        - kas/devices/qemu/qemuarm64.yaml
 
     - slug: qemuarm
       description: "QEMU ARM (32-bit, emulated)"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "debian-bookworm"
-        path: build/qemu-arm
-        includes:
-          - kas/devices/qemu/qemuarm.yaml
+      includes:
+        - kas/devices/qemu/qemuarm.yaml
 
     - slug: qemux86-64
       description: "QEMU x86-64 (emulated)"
       vendor: qemu
       soc_vendor: intel
-      build:
-        container: "debian-bookworm"
-        path: build/qemux86-64
-        includes:
-          - kas/devices/qemu/qemux86-64.yaml
-
+      includes:
+        - kas/devices/qemu/qemux86-64.yaml
+  
     - slug: qemuamd64
       description: "QEMU AMD64 (X86-64) (emulated)"
       vendor: qemu
       soc_vendor: amd
-      build:
-        container: "debian-bookworm"
-        path: build/qemuamd64
-        includes:
-          - kas/devices/qemu/qemuamd64.yaml
-
+      includes:
+        - kas/devices/qemu/qemuamd64.yaml
+  
   # =====================================
   # Distributions
   # =====================================
@@ -174,12 +162,18 @@ registry:
       device: qemuarm64
       release: scarthgap
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
 
     - name: poky-qemuarm64-styhead
       description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
       device: qemuarm64
       release: styhead
       features: []
+      build:  
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-styhead
 
     # --- QEMU x86-64 ---
     - name: poky-qemux86-64-scarthgap
@@ -187,12 +181,18 @@ registry:
       device: qemux86-64
       release: scarthgap
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemux86-64-scarthgap
 
     - name: poky-qemux86-64-styhead
       description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
       device: qemux86-64
       release: styhead
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemux86-64-styhead
 
     # --- QEMU ARM (32-bit) ---
     - name: poky-qemuarm-scarthgap
@@ -200,6 +200,9 @@ registry:
       device: qemuarm
       release: scarthgap
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm-scarthgap
 
     # --- QEMU ARM64 Isar ---
     - name: isar-qemuarm64-ubuntu-noble
@@ -207,6 +210,9 @@ registry:
       device: qemuarm64
       release: ubuntu-noble
       features: [users]
+      build:
+        container: "isar-debian-trixie"
+        path: build/isar-qemuarm64-ubuntu-noble
 
     # --- QEMU X86-64 Isar ---
     - name: isar-qemuamd64-ubuntu-noble
@@ -214,15 +220,24 @@ registry:
       device: qemuamd64
       release: ubuntu-noble
       features: [users]
+      build:
+        container: "isar-debian-trixie"
+        path: build/isar-qemuamd64-ubuntu-noble
 
     - name: isar-qemuamd64-debian-trixie
       description: "Isar v0.11 QEMU x86-64 (Debian Trixie)"
       device: qemuamd64
       release: debian-trixie-isar
       features: [users]
+      build:
+        container: "isar-debian-trixie"
+        path: build/isar-qemuamd64-debian-trixie
 
     - name: isar-qemuarm64-debian-trixie
       description: "Isar v0.11 QEMU ARM64 (Debian Trixie)"
       device: qemuarm64
       release: debian-trixie-isar
       features: [users]
+      build:
+        container: "isar-debian-trixie"
+        path: build/isar-qemuarm64-debian-trixie
