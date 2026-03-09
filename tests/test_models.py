@@ -9,6 +9,7 @@ from bsp import (
     Specification,
     NamedEnvironment,
     DeviceBuild,
+    BspBuild,
     Device,
     VendorIncludes,
     Distro,
@@ -125,40 +126,79 @@ class TestV2DataClasses:
         assert len(env.variables) == 1
 
     def test_device_build_defaults(self):
-        build = DeviceBuild(path="build/test")
-        assert build.path == "build/test"
+        build = DeviceBuild()
+        assert build.path == ""
         assert build.container is None
         assert build.includes == []
         assert build.local_conf == []
         assert build.copy == []
 
+    def test_device_build_with_path(self):
+        build = DeviceBuild(path="build/test")
+        assert build.path == "build/test"
+
     def test_device_build_with_container(self):
         build = DeviceBuild(path="build/test", container="my-container")
         assert build.container == "my-container"
 
+    def test_bsp_build_defaults(self):
+        bsp_build = BspBuild()
+        assert bsp_build.container is None
+        assert bsp_build.path is None
+
+    def test_bsp_build_with_container(self):
+        bsp_build = BspBuild(container="debian-bookworm")
+        assert bsp_build.container == "debian-bookworm"
+
+    def test_bsp_build_with_path(self):
+        bsp_build = BspBuild(path="build/my-preset")
+        assert bsp_build.path == "build/my-preset"
+
     def test_device(self):
-        build = DeviceBuild(path="build/test")
         dev = Device(
             slug="qemu-arm64",
             description="QEMU ARM64",
             vendor="qemu",
             soc_vendor="arm",
-            build=build,
         )
         assert dev.slug == "qemu-arm64"
         assert dev.soc_family is None
+        assert dev.includes == []
+        assert dev.local_conf == []
+        assert dev.copy == []
+        assert dev.build is None
+
+    def test_device_with_includes(self):
+        dev = Device(
+            slug="qemu-arm64",
+            description="QEMU ARM64",
+            vendor="qemu",
+            soc_vendor="arm",
+            includes=["kas/qemu/qemuarm64.yaml"],
+        )
+        assert dev.includes == ["kas/qemu/qemuarm64.yaml"]
 
     def test_device_with_soc_family(self):
-        build = DeviceBuild(path="build/test")
         dev = Device(
             slug="imx8-board",
             description="iMX8 Board",
             vendor="advantech",
             soc_vendor="nxp",
-            build=build,
             soc_family="imx8",
         )
         assert dev.soc_family == "imx8"
+
+    def test_device_with_legacy_build(self):
+        build = DeviceBuild(path="build/test", includes=["test.yaml"])
+        dev = Device(
+            slug="legacy-device",
+            description="Legacy Device",
+            vendor="test",
+            soc_vendor="arm",
+            build=build,
+        )
+        assert dev.build is not None
+        assert dev.build.path == "build/test"
 
     def test_vendor_includes(self):
         vi = VendorIncludes(vendor="advantech", includes=["adv.yml"])
@@ -205,6 +245,20 @@ class TestV2DataClasses:
         )
         assert preset.name == "my-preset"
         assert preset.features == []
+        assert preset.build is None
+
+    def test_bsp_preset_with_build(self):
+        bsp_build = BspBuild(container="debian-bookworm", path="build/my-preset")
+        preset = BspPreset(
+            name="my-preset",
+            description="My Preset",
+            device="qemu-arm64",
+            release="scarthgap",
+            build=bsp_build,
+        )
+        assert preset.build is not None
+        assert preset.build.container == "debian-bookworm"
+        assert preset.build.path == "build/my-preset"
 
     def test_bsp_preset_with_features(self):
         preset = BspPreset(

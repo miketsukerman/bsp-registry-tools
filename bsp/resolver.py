@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 from .models import (
+    BspBuild,
     BspPreset,
     Device,
     Distro,
@@ -278,10 +279,14 @@ class V2Resolver:
         named_env: Optional[NamedEnvironment] = self.get_named_environment(release)
 
         # Resolve container configuration.
-        # Priority: device.build.container > named_env.container > None
+        # Priority (new-style, preset-based): handled in resolve_preset().
+        # For direct resolve() calls the legacy device.build.container is
+        # used as the first fallback, then the named-env container.
         container: Optional[Docker] = None
         named_env_name = release.environment or ("default" if "default" in (self.model.environments or {}) else None)
-        container_name = device.build.container or (
+        # Legacy device.build.container takes precedence over named env
+        legacy_container = device.build.container if device.build else None
+        container_name = legacy_container or (
             named_env.container if named_env else None
         )
         if container_name:
@@ -290,7 +295,7 @@ class V2Resolver:
             else:
                 source = (
                     f"named environment '{named_env_name}'"
-                    if not device.build.container
+                    if not legacy_container
                     else f"device '{device_slug}'"
                 )
                 self.logger.error(
@@ -301,18 +306,26 @@ class V2Resolver:
 
         # Build ordered KAS file list
         # Order: distro.includes -> release.includes -> device.includes -> feature.includes
+        # Prefer device.includes (new style); fall back to device.build.includes (legacy).
         kas_files: List[str] = []
         if release.distro:
             distro_obj = self.get_distro(release.distro)
             kas_files.extend(distro_obj.includes)
         kas_files.extend(release.includes)
-        kas_files.extend(device.build.includes)
+        device_includes = device.includes if device.includes else (
+            device.build.includes if device.build else []
+        )
+        kas_files.extend(device_includes)
         for feature in features:
             kas_files.extend(feature.includes)
 
         # Build merged local_conf
+        # Prefer device.local_conf (new style); fall back to device.build.local_conf (legacy).
         local_conf: List[str] = []
-        local_conf.extend(device.build.local_conf)
+        device_local_conf = device.local_conf if device.local_conf else (
+            device.build.local_conf if device.build else []
+        )
+        local_conf.extend(device_local_conf)
         for feature in features:
             local_conf.extend(feature.local_conf)
 
@@ -324,21 +337,69 @@ class V2Resolver:
         for feature in features:
             env.extend(feature.env)
 
+        # Build path: from legacy device.build.path when present, otherwise
+        # empty (resolve_preset will fill it in, or caller must set it).
+        build_path = device.build.path if device.build else ""
+
+        # Copy entries: prefer device.copy (new style); fall back to device.build.copy (legacy).
+        device_copy = device.copy if device.copy else (
+            device.build.copy if device.build else []
+        )
+
         return ResolvedConfig(
             device=device,
             release=release,
             features=features,
             kas_files=kas_files,
-            build_path=device.build.path,
+            build_path=build_path,
             container=container,
             local_conf=local_conf,
             env=env,
-            copy=list(device.build.copy),
+            copy=list(device_copy),
         )
+
+    def _compose_build_path(self, resolved: ResolvedConfig) -> str:
+        """
+        Auto-compose a build output directory path from the resolved config.
+
+        The path is built as ``build/<parts>`` where *parts* is a
+        dash-separated sequence of:
+
+        1. Distro slug (from ``release.distro``), if set
+        2. Device slug
+        3. Release slug
+        4. Feature slugs (in order), if any
+
+        Args:
+            resolved: Resolved build configuration.
+
+        Returns:
+            Auto-composed path string (e.g. ``build/poky-qemuarm64-scarthgap``).
+        """
+        parts: List[str] = []
+        if resolved.release.distro:
+            parts.append(resolved.release.distro)
+        parts.append(resolved.device.slug)
+        parts.append(resolved.release.slug)
+        for feature in resolved.features:
+            parts.append(feature.slug)
+        return "build/" + "-".join(p for p in parts if p)
 
     def resolve_preset(self, preset_name: str) -> Tuple[ResolvedConfig, BspPreset]:
         """
         Resolve a named BSP preset to a ResolvedConfig.
+
+        After resolving the underlying device + release + features the
+        preset's ``build`` section (if present) is applied:
+
+        * ``build.container`` overrides the container resolved from the
+          named environment.
+        * ``build.path`` sets the output directory; if absent the path is
+          auto-composed via :meth:`_compose_build_path`.
+
+        When no ``build`` section is present the container comes from the
+        release's named environment (or ``"default"``) and the path is
+        auto-composed.
 
         Args:
             preset_name: Name of the preset in registry.bsp
@@ -364,6 +425,31 @@ class V2Resolver:
             sys.exit(1)
 
         resolved = self.resolve(preset.device, preset.release, preset.features)
+
+        # Apply preset build overrides
+        preset_build: Optional[BspBuild] = preset.build
+        if preset_build:
+            # Container override from the preset build section
+            if preset_build.container:
+                container_name = preset_build.container
+                if container_name in self.containers:
+                    resolved.container = self.containers[container_name]
+                else:
+                    self.logger.error(
+                        f"Container '{container_name}' not found in registry "
+                        f"containers (referenced by preset '{preset_name}')"
+                    )
+                    sys.exit(1)
+            # Build path: explicit or auto-composed
+            resolved.build_path = (
+                preset_build.path or self._compose_build_path(resolved)
+            )
+        else:
+            # No build section – auto-compose path if not already set from
+            # legacy device.build.path.
+            if not resolved.build_path:
+                resolved.build_path = self._compose_build_path(resolved)
+
         return resolved, preset
 
     # ------------------------------------------------------------------

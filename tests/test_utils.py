@@ -75,8 +75,12 @@ class TestYamlParsing:
     def test_get_registry_device_build_config(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
         device = result.registry.devices[0]
-        assert device.build.path == "build/test"
-        assert "test.yaml" in device.build.includes
+        assert "test.yaml" in device.includes
+        # Build path and container are now in the BSP preset
+        preset = result.registry.bsp[0]
+        assert preset.build is not None
+        assert preset.build.path == "build/test"
+        assert preset.build.container == "ubuntu-22.04"
 
     def test_get_registry_missing_file(self, tmp_dir):
         with pytest.raises(SystemExit):

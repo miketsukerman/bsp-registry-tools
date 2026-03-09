@@ -114,7 +114,13 @@ class NamedEnvironment:
 @dataclass
 class DeviceBuild:
     """
-    Build configuration for a hardware device.
+    Build configuration for a hardware device (legacy – kept for backward
+    compatibility with older registry files that still use the nested
+    ``build:`` block inside a device entry).
+
+    New registries should place device-level KAS includes directly on the
+    ``Device`` and use ``BspPreset.build`` for the container and output
+    path.
 
     Attributes:
         path: Build output directory for Yocto artifacts
@@ -128,11 +134,35 @@ class DeviceBuild:
               (destination) before the build starts.  Both paths are
               resolved relative to the registry file's parent directory.
     """
-    path: str
+    path: str = ""
     container: Optional[str] = None
     includes: List[str] = field(default_factory=empty_list)
     local_conf: List[str] = field(default_factory=empty_list)
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
+
+
+@dataclass
+class BspBuild:
+    """
+    Build configuration for a BSP preset.
+
+    When present on a ``BspPreset``, this section controls the container
+    used for the build and the output directory.  Both fields are optional:
+
+    * If ``container`` is omitted the container is taken from the release's
+      named environment (or the ``"default"`` environment as a fallback).
+    * If ``path`` is omitted the resolver auto-composes a path from the
+      distro slug, device slug, release slug, and any feature slugs under
+      the top-level ``build/`` directory.
+
+    Attributes:
+        container: Optional container name (references the top-level
+                   ``containers`` dict).
+        path: Optional build output directory.  When ``None`` the resolver
+              derives the path automatically.
+    """
+    container: Optional[str] = None
+    path: Optional[str] = None
 
 
 @dataclass
@@ -145,15 +175,25 @@ class Device:
         description: Human-readable description
         vendor: Board vendor name (e.g., 'advantech', 'qemu')
         soc_vendor: Silicon vendor name (e.g., 'nxp', 'intel', 'arm')
-        build: Build configuration for this device
+        includes: List of device-specific KAS configuration files
+        local_conf: List of local.conf lines to append for this device
+        copy: List of ``{source: destination}`` file-copy entries executed
+              before the build.  Both paths resolve relative to the
+              registry file's parent directory.
         soc_family: Optional SoC family identifier (e.g., 'imx8', 'cortex-a57')
+        build: Deprecated – legacy nested build block.  Use ``includes`` /
+               ``local_conf`` / ``copy`` directly and ``BspPreset.build``
+               for container and path.
     """
     slug: str
     description: str
     vendor: str
     soc_vendor: str
-    build: DeviceBuild
+    includes: List[str] = field(default_factory=empty_list)
+    local_conf: List[str] = field(default_factory=empty_list)
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
     soc_family: Optional[str] = None
+    build: Optional[DeviceBuild] = None
 
 
 @dataclass
@@ -271,12 +311,17 @@ class BspPreset:
         device: Device slug (references a device in registry.devices)
         release: Release slug (references a release in registry.releases)
         features: List of feature slugs to enable (references registry.features)
+        build: Optional build configuration (container + output path).  When
+               absent the container is taken from the release's named
+               environment and the path is auto-composed from the distro,
+               device, release, and feature slugs.
     """
     name: str
     description: str
     device: str
     release: str
     features: List[str] = field(default_factory=empty_list)
+    build: Optional[BspBuild] = None
 
 
 @dataclass

@@ -27,11 +27,8 @@ registry:
       description: "Test Device"
       vendor: test-vendor
       soc_vendor: test-soc
-      build:
-        container: "ubuntu-22.04"
-        path: build/test
-        includes:
-          - test.yaml
+      includes:
+        - test.yaml
   releases:
     - slug: test-release
       description: "Test Release"
@@ -45,6 +42,9 @@ registry:
       device: test-device
       release: test-release
       features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/test
 """
 
 REGISTRY_WITH_ENV_YAML = """
@@ -68,20 +68,14 @@ registry:
       description: "QEMU ARM64"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "ubuntu-22.04"
-        path: build/qemu-arm64
-        includes:
-          - kas/qemu/qemuarm64.yaml
+      includes:
+        - kas/qemu/qemuarm64.yaml
     - slug: qemu-x86-64
       description: "QEMU x86-64"
       vendor: qemu
       soc_vendor: intel
-      build:
-        container: "ubuntu-22.04"
-        path: build/qemu-x86-64
-        includes:
-          - kas/qemu/qemux86-64.yaml
+      includes:
+        - kas/qemu/qemux86-64.yaml
   releases:
     - slug: scarthgap
       description: "Yocto 5.0 LTS (Scarthgap)"
@@ -95,11 +89,17 @@ registry:
       device: qemu-arm64
       release: scarthgap
       features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/qemu-arm64
     - name: qemu-x86-64
       description: "QEMU x86-64 BSP"
       device: qemu-x86-64
       release: scarthgap
       features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/qemu-x86-64
 """
 
 INVALID_YAML = """
@@ -132,20 +132,14 @@ registry:
       vendor: advantech
       soc_vendor: nxp
       soc_family: imx8
-      build:
-        container: "debian-bookworm"
-        path: build/imx8-board
-        includes:
-          - kas/imx8.yaml
+      includes:
+        - kas/imx8.yaml
     - slug: qemu-arm64
       description: "QEMU ARM64"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "debian-bookworm"
-        path: build/qemuarm64
-        includes:
-          - kas/qemuarm64.yaml
+      includes:
+        - kas/qemuarm64.yaml
   releases:
     - slug: scarthgap
       description: "Yocto 5.0 LTS"
@@ -176,6 +170,9 @@ registry:
       release: scarthgap
       features:
         - ota
+      build:
+        container: "debian-bookworm"
+        path: build/imx8-board
 """
 
 REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML = """
@@ -212,18 +209,14 @@ registry:
       description: "QEMU ARM64"
       vendor: qemu
       soc_vendor: arm
-      build:
-        path: build/qemuarm64
-        includes:
-          - kas/qemuarm64.yaml
+      includes:
+        - kas/qemuarm64.yaml
     - slug: isar-board
       description: "Isar Board"
       vendor: acme
       soc_vendor: arm
-      build:
-        path: build/isar-board
-        includes:
-          - kas/isar/board.yaml
+      includes:
+        - kas/isar/board.yaml
   releases:
     - slug: scarthgap
       description: "Yocto 5.0 LTS"
@@ -242,11 +235,15 @@ registry:
       device: qemu-arm64
       release: scarthgap
       features: []
+      build:
+        path: build/qemuarm64
     - name: isar-v0.11-build
       description: "Isar v0.11 build"
       device: isar-board
       release: isar-v0.11
       features: []
+      build:
+        path: build/isar-board
 """
 
 REGISTRY_WITH_COPY_YAML = """
@@ -263,13 +260,10 @@ registry:
       description: "QEMU Isar"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "debian-bookworm"
-        path: build/isar-qemu
-        includes:
-          - kas/isar/qemu.yaml
-        copy:
-          - scripts/isar-runqemu.sh: build/isar-qemu/
+      includes:
+        - kas/isar/qemu.yaml
+      copy:
+        - scripts/isar-runqemu.sh: build/isar-qemu/
   releases:
     - slug: isar-v0.11
       description: "Isar v0.11"
@@ -282,6 +276,9 @@ registry:
       device: isar-qemu
       release: isar-v0.11
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/isar-qemu
 """
 
 REGISTRY_WITH_RUNTIME_ARGS_YAML = """
@@ -303,20 +300,14 @@ registry:
       description: "QEMU Isar"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "isar-qemu-container"
-        path: build/isar-qemu
-        includes:
-          - kas/isar/qemu.yaml
+      includes:
+        - kas/isar/qemu.yaml
     - slug: plain-device
       description: "Plain device"
       vendor: test
       soc_vendor: arm
-      build:
-        container: "plain-container"
-        path: build/plain
-        includes:
-          - kas/plain.yaml
+      includes:
+        - kas/plain.yaml
   releases:
     - slug: isar-v0.11
       description: "Isar v0.11"
@@ -329,11 +320,17 @@ registry:
       device: isar-qemu
       release: isar-v0.11
       features: []
+      build:
+        container: "isar-qemu-container"
+        path: build/isar-qemu
     - name: plain-build
       description: "Plain build"
       device: plain-device
       release: isar-v0.11
       features: []
+      build:
+        container: "plain-container"
+        path: build/plain
 """
 
 REGISTRY_WITH_DISTRO_YAML = """
@@ -361,11 +358,8 @@ registry:
       description: "QEMU ARM64"
       vendor: qemu
       soc_vendor: arm
-      build:
-        container: "debian-bookworm"
-        path: build/qemu-arm64
-        includes:
-          - kas/qemu/qemuarm64.yaml
+      includes:
+        - kas/qemu/qemuarm64.yaml
   releases:
     - slug: scarthgap
       distro: poky
@@ -380,6 +374,9 @@ registry:
       device: qemu-arm64
       release: scarthgap
       features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
 """
 
 

@@ -55,6 +55,7 @@ from .models import (
     Specification,
     NamedEnvironment,
     DeviceBuild,
+    BspBuild,
     Device,
     VendorIncludes,
     Distro,
@@ -102,6 +103,7 @@ __all__ = [
     "Specification",
     # v2.0 data classes
     "DeviceBuild",
+    "BspBuild",
     "Device",
     "NamedEnvironment",
     "VendorIncludes",

@@ -604,12 +604,12 @@ class TestNamedEnvironmentsInResolver:
 
 class TestCopyFiles:
     def test_copy_field_parsed(self, registry_with_copy_file):
-        """DeviceBuild.copy is parsed from YAML."""
+        """Device.copy is parsed from YAML."""
         manager = BspManager(config_path=str(registry_with_copy_file))
         manager.initialize()
         device = manager.resolver.get_device("isar-qemu")
-        assert len(device.build.copy) == 1
-        assert device.build.copy[0] == {"scripts/isar-runqemu.sh": "build/isar-qemu/"}
+        assert len(device.copy) == 1
+        assert device.copy[0] == {"scripts/isar-runqemu.sh": "build/isar-qemu/"}
 
     def test_copy_propagated_to_resolved(self, registry_with_copy_file):
         """ResolvedConfig.copy contains the device build copy entries."""
@@ -680,7 +680,7 @@ class TestRuntimeArgs:
         """runtime_args from container is forwarded to KasManager as KAS_CONTAINER_ARGS."""
         manager = BspManager(config_path=str(registry_with_runtime_args_file))
         manager.initialize()
-        resolved = manager.resolver.resolve("isar-qemu", "isar-v0.11")
+        resolved, _ = manager.resolver.resolve_preset("isar-qemu-v0.11")
         kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=True)
         env = kas_mgr._get_environment_with_container_vars()
         assert env.get("KAS_CONTAINER_ARGS") == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
