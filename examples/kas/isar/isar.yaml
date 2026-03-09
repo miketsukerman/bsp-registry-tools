@@ -3,6 +3,9 @@ header:
 
 build_system: isar
 
+target:
+  - isar-image-base
+
 repos:
   isar:
     url: "https://github.com/ilbers/isar.git"

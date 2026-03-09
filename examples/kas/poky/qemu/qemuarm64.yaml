@@ -1,5 +1,0 @@
-# KAS machine configuration for QEMU ARM64 target
-header:
-  version: 14
-
-machine: qemuarm64

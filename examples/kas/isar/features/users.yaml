@@ -1,9 +1,6 @@
 header:
   version: 14
 
-target:
-  - isar-image-base
-
 local_conf_header:
   wks-file: |
     # Set the default WKS_FILE to use for image generation

@@ -64,7 +64,7 @@ registry:
         container: "debian-bookworm"
         path: build/qemu-arm64
         includes:
-          - kas/poky/qemu/qemuarm64.yaml
+          - kas/devices/qemu/qemuarm64.yaml
 
     - slug: qemuarm
       description: "QEMU ARM (32-bit, emulated)"
@@ -74,7 +74,7 @@ registry:
         container: "debian-bookworm"
         path: build/qemu-arm
         includes:
-          - kas/poky/qemu/qemuarm.yaml
+          - kas/devices/qemu/qemuarm.yaml
 
     - slug: qemux86-64
       description: "QEMU x86-64 (emulated)"
@@ -84,27 +84,17 @@ registry:
         container: "debian-bookworm"
         path: build/qemux86-64
         includes:
-          - kas/poky/qemu/qemux86-64.yaml
+          - kas/devices/qemu/qemux86-64.yaml
 
-    # Isar QEMU ARM64 – uses the isar-build environment (set at release level)
-    - slug: qemuarm64-isar
-      description: "QEMU ARM64 (Isar / Debian-based)"
+    - slug: qemuamd64
+      description: "QEMU AMD64 (X86-64) (emulated)"
       vendor: qemu
-      soc_vendor: arm
+      soc_vendor: amd
       build:
-        path: build/isar-qemu-arm64
+        container: "debian-bookworm"
+        path: build/qemuamd64
         includes:
-          - kas/isar/qemu/qemuarm64.yaml
-
-    # Isar QEMU x86-64 – uses the isar-build environment (set at release level)
-    - slug: qemux86-64-isar
-      description: "QEMU x86-64 (Isar / Debian-based)"
-      vendor: qemu
-      soc_vendor: intel
-      build:
-        path: build/isar-qemux86-64
-        includes:
-          - kas/isar/qemu/qemux86-64.yaml
+          - kas/devices/qemu/qemuamd64.yaml
 
   # =====================================
   # Distributions
@@ -165,7 +155,12 @@ registry:
   # Features (optional add-ons)
   # =====================================
 
-  features: []
+  features: 
+  
+    - slug: users
+      description: "Add sample non-root user accounts to the image"
+      includes:
+        - kas/isar/features/users.yaml
 
   # =====================================
   # BSP Presets (named shortcuts)
@@ -207,27 +202,27 @@ registry:
       features: []
 
     # --- QEMU ARM64 Isar ---
-    - name: isar-qemuarm64-v0.11
+    - name: isar-qemuarm64-ubuntu-noble
       description: "Isar v0.11 QEMU ARM64"
-      device: qemuarm64-isar
+      device: qemuarm64
       release: ubuntu-noble
-      features: []
+      features: [users]
 
     # --- QEMU X86-64 Isar ---
-    - name: isar-ubuntu-qemux86-64
+    - name: isar-qemuamd64-ubuntu-noble
       description: "Isar v0.11 QEMU x86-64 (Ubuntu Noble)"
-      device: qemux86-64-isar
+      device: qemuamd64
       release: ubuntu-noble
-      features: []
+      features: [users]
 
-    - name: isar-debian-qemux86-64
+    - name: isar-qemuamd64-debian-trixie
       description: "Isar v0.11 QEMU x86-64 (Debian Trixie)"
-      device: qemux86-64-isar
-      release: isar-debian-trixie
-      features: []
+      device: qemuamd64
+      release: debian-trixie-isar
+      features: [users]
 
-    - name: isar-qemuarm64-debian-trixie-v0.11
+    - name: isar-qemuarm64-debian-trixie
       description: "Isar v0.11 QEMU ARM64 (Debian Trixie)"
-      device: qemuarm64-isar
-      release: isar-debian-trixie
-      features: []
+      device: qemuarm64
+      release: debian-trixie-isar
+      features: [users]
