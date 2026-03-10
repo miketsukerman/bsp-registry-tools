@@ -2,10 +2,6 @@ header:
   version: 14
 
 local_conf_header:
-  wks-file: |
-    # Set the default WKS_FILE to use for image generation
-    WKS_FILE = "qemudefault.wks"
-
   # INFO: To set up a proper user use mkpasswd -m sha-512 yourpassword and add the output to USER_<name>[password]
   add-root-user: |
     GROUPS += "qemu"

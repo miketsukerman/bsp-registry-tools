@@ -9,19 +9,19 @@ target:
 repos:
   isar:
     url: "https://github.com/ilbers/isar.git"
-    tag: "v0.11"
-    commit: "f8558fcf3ecf98e58853b82d89645bcedb24b853"
     path: "layers/isar"
     layers:
       meta:
       meta-isar:
       meta-test:
 
-local_conf_header:
-  image: |
-    IMAGE_FSTYPES = "wic"
-
 bblayers_conf_header:
   standard: |
     BBPATH = "${TOPDIR}"
     BBFILES ?= ""
+
+# Default QEMU WKS_FILE for image generation, can be overridden by features
+local_conf_header:
+  wks-file: |
+    # Set the default WKS_FILE to use for image generation
+    WKS_FILE = "qemudefault.wks"

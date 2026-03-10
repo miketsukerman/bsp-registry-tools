@@ -1,8 +1,6 @@
 header:
   version: 14
 
-distro: poky
-
 repos:
   poky:
     url: "https://git.yoctoproject.org/poky"
@@ -18,3 +16,11 @@ repos:
       meta-oe:
       meta-python:
       meta-networking:
+
+  meta-security:
+    url: "https://git.yoctoproject.org/meta-security"
+    path: "layers/meta-security"
+    layers:
+      meta-security:
+      meta-security-extra:
+      meta-hardening:

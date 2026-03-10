@@ -77,13 +77,36 @@ registry:
       includes:
         - kas/devices/qemu/qemux86-64.yaml
   
+    # Isar project uses qemuamd64 as the name for the x86-64 QEMU machine
     - slug: qemuamd64
       description: "QEMU AMD64 (X86-64) (emulated)"
       vendor: qemu
       soc_vendor: amd
       includes:
         - kas/devices/qemu/qemuamd64.yaml
+
+  # =====================================
+  # Build System Frameworks
+  # (e.g. Yocto, Isar)
+  # =====================================
   
+  frameworks:
+
+    - slug: yocto
+      description: | 
+        Yocto Project build system
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+
+    - slug: isar
+      description: | 
+        Set of scripts for building software packages and repeatable 
+        generation of Debian-based root filesystems with customizations
+      vendor: "Ilbers GmbH"
+      includes:
+        - kas/isar/isar.yaml
+
   # =====================================
   # Distributions
   # =====================================
@@ -92,15 +115,21 @@ registry:
     
     - slug: poky
       description: "Poky (Yocto Project reference distro)"
-      vendor: yocto
+      framework: yocto
       includes:
-        - kas/poky/distro/poky.yaml
+        - kas/yocto/distro/poky.yaml
+
+    - slug: poky-harden
+      description: "Hardened Poky (Yocto Project reference distro)"
+      framework: yocto
+      includes:
+        - kas/yocto/distro/harden.yaml
 
     - slug: isar
-      description: "Isar (Siemens build system)"
-      vendor: siemens
+      description: "Isar v0.11 (Siemens build system)"
+      framework: isar
       includes:
-        - kas/isar/isar.yaml
+        - kas/isar/isar-v0.11.yaml
 
   # =====================================
   # Releases
@@ -113,27 +142,34 @@ registry:
       description: "Yocto 5.0 LTS (Scarthgap)"
       yocto_version: "5.0"
       includes:
-        - kas/poky/scarthgap.yaml
+        - kas/yocto/releases/scarthgap.yaml
+
+    - slug: scarthgap-harden
+      distro: poky-harden
+      description: "Yocto 5.0 LTS (Scarthgap Hardened)"
+      yocto_version: "5.0"
+      includes:
+        - kas/yocto/releases/scarthgap.yaml
 
     - slug: styhead
       distro: poky
       description: "Yocto 5.1 (Styhead)"
       yocto_version: "5.1"
       includes:
-        - kas/poky/styhead.yaml
+        - kas/yocto/releases/styhead.yaml
 
     # Isar v0.11 – uses the isar-build named environment (Debian container + isar download cache)
     - slug: ubuntu-noble
       distro: isar
-      description: "Ubuntu Noble (Isar v0.11)"
+      description: "Ubuntu Noble (Isar)"
       isar_version: "0.11"
       environment: isar-build
       includes:
         - kas/isar/distro/ubuntu-noble.yaml
 
-    - slug: isar-debian-trixie
+    - slug: debian-trixie
       distro: isar
-      description: "Debian Trixie (Isar v0.11)"
+      description: "Debian Trixie (Isar)"
       isar_version: "0.11"
       environment: isar-build
       includes:
@@ -150,6 +186,30 @@ registry:
       includes:
         - kas/isar/features/users.yaml
 
+    - slug: systemd
+      description: "Enable systemd as the init system"
+      compatible_with: [poky]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/systemd.yaml
+
+    - slug: yocto-ssh
+      description: "Enable SSH server in the Yocto image"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/ssh.yaml
+
+    - slug: isar-ssh
+      description: "Enable SSH server in the Isar image"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
+      includes:
+        - kas/isar/features/ssh.yaml
+
+    - slug: debug
+      description: "Enable debug features in the image"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/debug.yaml
+
   # =====================================
   # BSP Presets (named shortcuts)
   # =====================================
@@ -161,26 +221,32 @@ registry:
       description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
       device: qemuarm64
       release: scarthgap
-      features: []
-      build:
-        container: "debian-bookworm"
-        path: build/poky-qemuarm64-scarthgap
+      features: [systemd, debug, yocto-ssh]
 
     - name: poky-qemuarm64-styhead
       description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
       device: qemuarm64
       release: styhead
-      features: []
+      features: [systemd]
       build:  
         container: "debian-bookworm"
         path: build/poky-qemuarm64-styhead
 
     # --- QEMU x86-64 ---
+    - name: poky-harden-qemux86-64-scarthgap
+      description: "Poky Hardened QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
+      device: qemux86-64
+      release: scarthgap
+      features: [systemd, yocto-ssh]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-harden-qemux86-64-scarthgap
+
     - name: poky-qemux86-64-scarthgap
       description: "Poky QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
       device: qemux86-64
       release: scarthgap
-      features: []
+      features: [systemd, debug, yocto-ssh]
       build:
         container: "debian-bookworm"
         path: build/poky-qemux86-64-scarthgap
@@ -189,7 +255,7 @@ registry:
       description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
       device: qemux86-64
       release: styhead
-      features: []
+      features: [systemd]
       build:
         container: "debian-bookworm"
         path: build/poky-qemux86-64-styhead
@@ -199,7 +265,7 @@ registry:
       description: "Poky QEMU ARM (32-bit) Scarthgap (Yocto 5.0 LTS)"
       device: qemuarm
       release: scarthgap
-      features: []
+      features: [systemd]
       build:
         container: "debian-bookworm"
         path: build/poky-qemuarm-scarthgap
@@ -209,7 +275,7 @@ registry:
       description: "Isar v0.11 QEMU ARM64"
       device: qemuarm64
       release: ubuntu-noble
-      features: [users]
+      features: [users, wic, isar-ssh]
       build:
         container: "isar-debian-trixie"
         path: build/isar-qemuarm64-ubuntu-noble
@@ -219,7 +285,7 @@ registry:
       description: "Isar v0.11 QEMU x86-64 (Ubuntu Noble)"
       device: qemuamd64
       release: ubuntu-noble
-      features: [users]
+      features: [users, wic, isar-ssh]
       build:
         container: "isar-debian-trixie"
         path: build/isar-ubuntu-qemux86-64
@@ -227,8 +293,8 @@ registry:
     - name: isar-debian-qemux86-64
       description: "Isar v0.11 QEMU x86-64 (Debian Trixie)"
       device: qemuamd64
-      release: isar-debian-trixie
-      features: [users]
+      release: debian-trixie
+      features: [users, wic, isar-ssh]
       build:
         container: "isar-debian-trixie"
         path: build/isar-debian-qemux86-64
@@ -236,8 +302,8 @@ registry:
     - name: isar-qemuarm64-debian-trixie
       description: "Isar v0.11 QEMU ARM64 (Debian Trixie)"
       device: qemuarm64
-      release: isar-debian-trixie
-      features: [users]
+      release: debian-trixie
+      features: [users, wic, isar-ssh]
       build:
         container: "isar-debian-trixie"
         path: build/isar-qemuarm64-debian-trixie
