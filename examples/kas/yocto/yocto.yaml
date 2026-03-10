@@ -21,6 +21,5 @@ repos:
     url: "https://git.yoctoproject.org/meta-security"
     path: "layers/meta-security"
     layers:
-      meta-security:
-      meta-security-extra:
+      .:
       meta-hardening:
