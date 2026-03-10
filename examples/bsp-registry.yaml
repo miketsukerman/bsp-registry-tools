@@ -205,6 +205,12 @@ registry:
       includes:
         - kas/isar/features/ssh.yaml
 
+    - slug: wic
+      description: "Enable WIC image creation in the Isar image"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
+      includes:
+        - kas/isar/features/wic.yaml
+
     - slug: debug
       description: "Enable debug features in the image"
       compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
