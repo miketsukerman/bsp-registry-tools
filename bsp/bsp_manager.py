@@ -195,7 +195,10 @@ class BspManager:
                     parts.append(f"soc_family: {feature.compatibility.soc_family}")
                 if parts:
                     compat = f" [requires {', '.join(parts)}]"
-            print(f"- {feature.slug}: {feature.description}{compat}")
+            fw_compat = ""
+            if feature.compatible_with:
+                fw_compat = f" [compatible_with: {', '.join(feature.compatible_with)}]"
+            print(f"- {feature.slug}: {feature.description}{compat}{fw_compat}")
 
     def list_distros(self) -> None:
         """List all distribution/build-system definitions in the registry."""
@@ -206,7 +209,19 @@ class BspManager:
 
         print("Available distros:")
         for distro in distros:
-            print(f"- {distro.slug}: {distro.description} (vendor: {distro.vendor})")
+            fw_str = f", framework: {distro.framework}" if distro.framework else ""
+            print(f"- {distro.slug}: {distro.description} (vendor: {distro.vendor}{fw_str})")
+
+    def list_frameworks(self) -> None:
+        """List all build-system framework definitions in the registry."""
+        frameworks = self.model.registry.frameworks if self.model else []
+        if not frameworks:
+            print("No frameworks found in registry")
+            return
+
+        print("Available frameworks:")
+        for framework in frameworks:
+            print(f"- {framework.slug}: {framework.description} (vendor: {framework.vendor})")
 
     def list_containers(self) -> None:
         """List all available containers in the registry."""

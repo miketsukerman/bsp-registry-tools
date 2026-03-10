@@ -18,6 +18,7 @@ from .models import (
     Docker,
     EnvironmentVariable,
     Feature,
+    Framework,
     NamedEnvironment,
     Release,
     RegistryRoot,
@@ -190,6 +191,25 @@ class V2Resolver:
         """Return all distro definitions in the registry."""
         return list(self.model.registry.distro)
 
+    def get_framework(self, slug: str) -> Framework:
+        """
+        Retrieve a framework definition by slug.
+
+        Raises:
+            SystemExit: If framework slug is not found
+        """
+        for framework in self.model.registry.frameworks:
+            if framework.slug == slug:
+                return framework
+        self.logger.error(f"Framework not found: '{slug}'")
+        available = ", ".join(f.slug for f in self.model.registry.frameworks)
+        self.logger.info(f"Available frameworks: {available or '(none)'}")
+        sys.exit(1)
+
+    def list_frameworks(self) -> List[Framework]:
+        """Return all framework definitions in the registry."""
+        return list(self.model.registry.frameworks)
+
     # ------------------------------------------------------------------
     # Compatibility check
     # ------------------------------------------------------------------
@@ -237,6 +257,58 @@ class V2Resolver:
 
         return True
 
+    def check_feature_framework_compatibility(
+        self, feature: Feature, release: Release
+    ) -> bool:
+        """
+        Check whether a feature is compatible with the framework/distro of the
+        given release, based on the feature's ``compatible_with`` list.
+
+        A feature is considered compatible when **any** of the following is true:
+
+        * ``feature.compatible_with`` is empty (no restriction).
+        * The release's distro slug appears in ``compatible_with``.
+        * The release's distro's ``framework`` slug appears in ``compatible_with``.
+
+        When ``compatible_with`` is non-empty but the release has no distro, the
+        feature is treated as incompatible and an error is logged.
+
+        Args:
+            feature: Feature to check.
+            release: Release being resolved.
+
+        Returns:
+            True if compatible, False otherwise (also logs a clear error).
+        """
+        if not feature.compatible_with:
+            return True
+
+        if not release.distro:
+            self.logger.error(
+                f"Feature '{feature.slug}' has compatible_with={feature.compatible_with} "
+                f"but release '{release.slug}' does not specify a distro – "
+                f"framework/distro compatibility cannot be determined"
+            )
+            return False
+
+        distro_slug = release.distro
+
+        # Accept if the distro slug itself is listed
+        if distro_slug in feature.compatible_with:
+            return True
+
+        # Accept if the distro's framework slug is listed
+        distro_obj = self.get_distro(distro_slug)
+        if distro_obj.framework and distro_obj.framework in feature.compatible_with:
+            return True
+
+        self.logger.error(
+            f"Feature '{feature.slug}' is not compatible with distro '{distro_slug}' "
+            f"(framework: '{distro_obj.framework}'). "
+            f"Compatible frameworks/distros: {feature.compatible_with}"
+        )
+        return False
+
     # ------------------------------------------------------------------
     # Core resolver
     # ------------------------------------------------------------------
@@ -273,6 +345,8 @@ class V2Resolver:
         # Check compatibility for every requested feature
         for feature in features:
             if not self.check_feature_compatibility(feature, device):
+                sys.exit(1)
+            if not self.check_feature_framework_compatibility(feature, release):
                 sys.exit(1)
 
         # Resolve named environment for the release

@@ -379,6 +379,101 @@ registry:
         path: build/poky-qemuarm64-scarthgap
 """
 
+REGISTRY_WITH_FRAMEWORKS_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+  isar-container:
+    image: "test/isar:latest"
+    file: null
+    args: []
+registry:
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+    - slug: isar
+      description: "Isar build system"
+      vendor: "Ilbers GmbH"
+      includes:
+        - kas/isar/isar.yaml
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+    - slug: isar
+      description: "Isar (Siemens build system)"
+      vendor: siemens
+      framework: isar
+      includes:
+        - kas/isar/isar.yaml
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+    - slug: isar-v0.11
+      distro: isar
+      description: "Isar v0.11"
+      includes:
+        - kas/isar/v0.11.yaml
+  features:
+    - slug: yocto-only
+      description: "Feature only for Yocto framework"
+      compatible_with: [yocto]
+      includes:
+        - kas/features/yocto-only.yaml
+    - slug: isar-only
+      description: "Feature only for Isar framework"
+      compatible_with: [isar]
+      includes:
+        - kas/features/isar-only.yaml
+    - slug: poky-distro-only
+      description: "Feature only for poky distro"
+      compatible_with: [poky]
+      includes:
+        - kas/features/poky-only.yaml
+    - slug: all-frameworks
+      description: "Feature for all frameworks"
+      includes:
+        - kas/features/all.yaml
+  bsp:
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
+    - name: isar-qemuarm64-v0.11
+      description: "Isar QEMU ARM64 v0.11"
+      device: qemu-arm64
+      release: isar-v0.11
+      features: []
+      build:
+        container: "isar-container"
+        path: build/isar-qemuarm64-v0.11
+"""
+
 
 # =============================================================================
 # Fixtures
@@ -444,6 +539,14 @@ def registry_with_distro_file(tmp_dir):
     """Create a registry YAML file with distro definitions."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_DISTRO_YAML)
+    return registry_path
+
+
+@pytest.fixture
+def registry_with_frameworks_file(tmp_dir):
+    """Create a registry YAML file with framework definitions and compatible_with features."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_FRAMEWORKS_YAML)
     return registry_path
 
 

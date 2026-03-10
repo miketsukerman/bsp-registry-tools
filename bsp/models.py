@@ -210,6 +210,28 @@ class VendorIncludes:
 
 
 @dataclass
+class Framework:
+    """
+    Build-system framework definition (e.g. Yocto, Isar).
+
+    A ``Framework`` describes a top-level build system that one or more
+    distros are built on.  Distros reference a framework by its ``slug``
+    via the ``Distro.framework`` field.  Features can restrict themselves
+    to specific frameworks via ``Feature.compatible_with``.
+
+    Attributes:
+        slug: Unique identifier for the framework (e.g., 'yocto', 'isar')
+        description: Human-readable description
+        vendor: Framework vendor/maintainer name
+        includes: KAS configuration files that configure this framework
+    """
+    slug: str
+    description: str
+    vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
 class Distro:
     """
     Linux distribution / build-system definition.
@@ -224,11 +246,15 @@ class Distro:
         description: Human-readable description
         vendor: Distro vendor/maintainer name (e.g., 'yocto', 'siemens')
         includes: KAS configuration files that configure this distro
+        framework: Optional slug of the build-system framework this distro
+                   is based on (references ``Registry.frameworks``).  Used
+                   by ``Feature.compatible_with`` checks.
     """
     slug: str
     description: str
-    vendor: str
+    vendor: str = ""
     includes: List[str] = field(default_factory=empty_list)
+    framework: Optional[str] = None
 
 
 @dataclass
@@ -287,7 +313,13 @@ class Feature:
     Attributes:
         slug: Unique identifier for the feature
         description: Human-readable description
-        compatibility: Device compatibility constraints
+        compatibility: Device compatibility constraints (vendor / SoC-level).
+        compatible_with: Optional list of framework or distro slugs this
+                         feature is restricted to.  An empty list means no
+                         framework/distro restriction.  When non-empty the
+                         resolver checks that the release's distro slug **or**
+                         the distro's framework slug appears in this list; if
+                         neither matches the build exits with an error.
         includes: KAS configuration files that enable this feature
         local_conf: local.conf lines to append when feature is enabled
         env: Environment variables required/set by this feature
@@ -295,6 +327,7 @@ class Feature:
     slug: str
     description: str
     compatibility: Optional[FeatureCompatibility] = None
+    compatible_with: List[str] = field(default_factory=empty_list)
     includes: List[str] = field(default_factory=empty_list)
     local_conf: List[str] = field(default_factory=empty_list)
     env: List[EnvironmentVariable] = field(default_factory=empty_list)
@@ -334,12 +367,14 @@ class Registry:
         releases: List of Yocto/Isar release definitions
         features: List of optional feature definitions
         bsp: Optional list of named BSP presets (shortcuts)
+        frameworks: Optional list of build-system framework definitions
         distro: Optional list of distribution/build-system definitions
     """
     devices: List[Device] = field(default_factory=empty_list)
     releases: List[Release] = field(default_factory=empty_list)
     features: List[Feature] = field(default_factory=empty_list)
     bsp: Optional[List[BspPreset]] = field(default_factory=empty_list)
+    frameworks: List[Framework] = field(default_factory=empty_list)
     distro: List[Distro] = field(default_factory=empty_list)
 
 

@@ -183,6 +183,7 @@ registry:
   
     - slug: users
       description: "Add sample non-root user accounts to the image"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
       includes:
         - kas/isar/features/users.yaml
 

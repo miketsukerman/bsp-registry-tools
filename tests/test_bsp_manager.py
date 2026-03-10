@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from bsp import BspManager, BspPreset, Docker, V2Resolver
-from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML
+from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML
 
 
 class TestBspManagerInit:
@@ -239,6 +239,111 @@ class TestBspManagerResolver:
         resolved = manager.resolver.resolve("imx8-board", "scarthgap", ["secure-boot"])
         env_names = [e.name for e in resolved.env]
         assert "SIGNING_KEY" in env_names
+
+
+class TestBspManagerFrameworks:
+    def test_resolver_get_framework(self, registry_with_frameworks_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        fw = manager.resolver.get_framework("yocto")
+        assert fw.slug == "yocto"
+        assert fw.vendor == "Yocto Project"
+
+    def test_resolver_get_framework_not_found(self, registry_with_frameworks_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        with pytest.raises(SystemExit):
+            manager.resolver.get_framework("nonexistent-fw")
+
+    def test_resolver_list_frameworks(self, registry_with_frameworks_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        frameworks = manager.resolver.list_frameworks()
+        slugs = [f.slug for f in frameworks]
+        assert "yocto" in slugs
+        assert "isar" in slugs
+
+    def test_registry_frameworks_loaded(self, registry_with_frameworks_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        assert len(manager.model.registry.frameworks) == 2
+
+    def test_distro_framework_field_loaded(self, registry_with_frameworks_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        poky = manager.resolver.get_distro("poky")
+        assert poky.framework == "yocto"
+        isar = manager.resolver.get_distro("isar")
+        assert isar.framework == "isar"
+
+    def test_feature_compatible_with_framework_ok(self, registry_with_frameworks_file):
+        """yocto-only feature is compatible with scarthgap (distro=poky, framework=yocto)."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "scarthgap", ["yocto-only"])
+        assert len(resolved.features) == 1
+
+    def test_feature_compatible_with_framework_fails(self, registry_with_frameworks_file):
+        """isar-only feature is incompatible with scarthgap (framework=yocto)."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        with pytest.raises(SystemExit):
+            manager.resolver.resolve("qemu-arm64", "scarthgap", ["isar-only"])
+
+    def test_feature_compatible_with_isar_ok(self, registry_with_frameworks_file):
+        """isar-only feature is compatible with isar-v0.11 (distro=isar, framework=isar)."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "isar-v0.11", ["isar-only"])
+        assert len(resolved.features) == 1
+
+    def test_feature_compatible_with_distro_slug_ok(self, registry_with_frameworks_file):
+        """poky-distro-only feature matches via distro slug 'poky'."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "scarthgap", ["poky-distro-only"])
+        assert len(resolved.features) == 1
+
+    def test_feature_compatible_with_distro_slug_fails(self, registry_with_frameworks_file):
+        """poky-distro-only feature is incompatible with isar-v0.11 (distro=isar)."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        with pytest.raises(SystemExit):
+            manager.resolver.resolve("qemu-arm64", "isar-v0.11", ["poky-distro-only"])
+
+    def test_feature_no_compatible_with_works_everywhere(self, registry_with_frameworks_file):
+        """Feature without compatible_with works with any framework."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        # Should work for both yocto and isar releases
+        r1 = manager.resolver.resolve("qemu-arm64", "scarthgap", ["all-frameworks"])
+        r2 = manager.resolver.resolve("qemu-arm64", "isar-v0.11", ["all-frameworks"])
+        assert len(r1.features) == 1
+        assert len(r2.features) == 1
+
+    def test_list_frameworks_output(self, registry_with_frameworks_file, capsys):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        manager.list_frameworks()
+        captured = capsys.readouterr()
+        assert "yocto" in captured.out
+        assert "isar" in captured.out
+
+    def test_list_features_shows_compatible_with(self, registry_with_frameworks_file, capsys):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        manager.list_features()
+        captured = capsys.readouterr()
+        assert "compatible_with" in captured.out
+        assert "yocto" in captured.out
+
+    def test_list_distros_shows_framework(self, registry_with_frameworks_file, capsys):
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        manager.list_distros()
+        captured = capsys.readouterr()
+        assert "framework" in captured.out
+        assert "yocto" in captured.out
 
 
 class TestBspManagerBuildByComponents:

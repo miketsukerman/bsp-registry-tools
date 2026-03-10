@@ -12,6 +12,7 @@ from bsp import (
     BspBuild,
     Device,
     VendorIncludes,
+    Framework,
     Distro,
     Release,
     FeatureCompatibility,
@@ -291,6 +292,7 @@ class TestV2DataClasses:
         assert distro.description == "Poky reference distro"
         assert distro.vendor == "yocto"
         assert distro.includes == []
+        assert distro.framework is None
 
     def test_distro_with_includes(self):
         distro = Distro(
@@ -300,6 +302,15 @@ class TestV2DataClasses:
             includes=["kas/isar/isar.yaml"],
         )
         assert distro.includes == ["kas/isar/isar.yaml"]
+
+    def test_distro_with_framework(self):
+        distro = Distro(
+            slug="poky",
+            description="Poky",
+            vendor="yocto",
+            framework="yocto",
+        )
+        assert distro.framework == "yocto"
 
     def test_release_distro_field_defaults_to_none(self):
         release = Release(slug="scarthgap", description="Scarthgap")
@@ -318,3 +329,50 @@ class TestV2DataClasses:
         reg = Registry(distro=[distro])
         assert len(reg.distro) == 1
         assert reg.distro[0].slug == "poky"
+
+    def test_framework_defaults(self):
+        framework = Framework(slug="yocto", description="Yocto Project", vendor="Yocto Project")
+        assert framework.slug == "yocto"
+        assert framework.description == "Yocto Project"
+        assert framework.vendor == "Yocto Project"
+        assert framework.includes == []
+
+    def test_framework_with_includes(self):
+        framework = Framework(
+            slug="isar",
+            description="Isar build system",
+            vendor="Ilbers GmbH",
+            includes=["kas/isar/isar.yaml"],
+        )
+        assert framework.includes == ["kas/isar/isar.yaml"]
+
+    def test_registry_frameworks_defaults_to_empty(self):
+        reg = Registry()
+        assert reg.frameworks == []
+
+    def test_registry_with_frameworks(self):
+        fw = Framework(slug="yocto", description="Yocto", vendor="Yocto Project")
+        reg = Registry(frameworks=[fw])
+        assert len(reg.frameworks) == 1
+        assert reg.frameworks[0].slug == "yocto"
+
+    def test_feature_compatible_with_defaults_to_empty(self):
+        feat = Feature(slug="ssh", description="SSH server")
+        assert feat.compatible_with == []
+
+    def test_feature_with_compatible_with(self):
+        feat = Feature(
+            slug="isar-ssh",
+            description="SSH server for Isar",
+            compatible_with=["isar"],
+        )
+        assert feat.compatible_with == ["isar"]
+
+    def test_feature_compatible_with_multiple(self):
+        feat = Feature(
+            slug="multi-fw",
+            description="Multi-framework feature",
+            compatible_with=["yocto", "isar"],
+        )
+        assert "yocto" in feat.compatible_with
+        assert "isar" in feat.compatible_with
