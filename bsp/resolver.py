@@ -322,7 +322,7 @@ class V2Resolver:
         """
         Resolve device + release + features into a ResolvedConfig.
 
-        Merging order for KAS files: distro.includes -> release.includes -> device.includes -> feature.includes
+        Merging order for KAS files: framework.includes -> distro.includes -> release.includes -> device.includes -> feature.includes
         Merging order for local_conf:  device.local_conf -> feature.local_conf (in order)
 
         Args:
@@ -379,11 +379,14 @@ class V2Resolver:
                 sys.exit(1)
 
         # Build ordered KAS file list
-        # Order: distro.includes -> release.includes -> device.includes -> feature.includes
+        # Order: framework.includes -> distro.includes -> release.includes -> device.includes -> feature.includes
         # Prefer device.includes (new style); fall back to device.build.includes (legacy).
         kas_files: List[str] = []
         if release.distro:
             distro_obj = self.get_distro(release.distro)
+            if distro_obj.framework:
+                framework_obj = self.get_framework(distro_obj.framework)
+                kas_files.extend(framework_obj.includes)
             kas_files.extend(distro_obj.includes)
         kas_files.extend(release.includes)
         device_includes = device.includes if device.includes else (

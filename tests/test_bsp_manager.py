@@ -276,6 +276,27 @@ class TestBspManagerFrameworks:
         isar = manager.resolver.get_distro("isar")
         assert isar.framework == "isar"
 
+    def test_framework_includes_in_kas_files(self, registry_with_frameworks_file):
+        """framework.includes must appear before distro.includes in resolved kas_files."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "scarthgap")
+        # framework includes: kas/yocto/yocto.yaml
+        # distro includes:    kas/poky/distro/poky.yaml
+        assert "kas/yocto/yocto.yaml" in resolved.kas_files
+        assert "kas/poky/distro/poky.yaml" in resolved.kas_files
+        assert resolved.kas_files.index("kas/yocto/yocto.yaml") < resolved.kas_files.index("kas/poky/distro/poky.yaml")
+
+    def test_framework_includes_isar_in_kas_files(self, registry_with_frameworks_file):
+        """isar framework.includes must appear in kas_files for isar release."""
+        manager = BspManager(config_path=str(registry_with_frameworks_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemu-arm64", "isar-v0.11")
+        # Both the isar framework and isar distro include kas/isar/isar.yaml in the
+        # fixture, so the file appears twice (framework first, then distro).
+        assert resolved.kas_files.count("kas/isar/isar.yaml") == 2
+        assert resolved.kas_files[0] == "kas/isar/isar.yaml"
+
     def test_feature_compatible_with_framework_ok(self, registry_with_frameworks_file):
         """yocto-only feature is compatible with scarthgap (distro=poky, framework=yocto)."""
         manager = BspManager(config_path=str(registry_with_frameworks_file))
