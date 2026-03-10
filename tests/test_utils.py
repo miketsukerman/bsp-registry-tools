@@ -14,7 +14,7 @@ from bsp import (
     get_registry_from_yaml_file,
     convert_containers_list_to_dict,
 )
-from bsp.utils import build_docker
+from bsp.utils import build_docker, _deep_merge_yaml_dicts
 from .conftest import INVALID_YAML, MINIMAL_REGISTRY_YAML, REGISTRY_WITH_ENV_YAML
 
 
@@ -327,3 +327,406 @@ class TestBuildDocker:
         """A missing Dockerfile inside an existing directory causes SystemExit."""
         with pytest.raises(SystemExit):
             build_docker(str(tmp_path), "Dockerfile", "test:latest")
+
+
+# =============================================================================
+# Tests for _deep_merge_yaml_dicts
+# =============================================================================
+
+class TestDeepMergeYamlDicts:
+    def test_merge_disjoint_keys(self):
+        base = {"a": 1}
+        override = {"b": 2}
+        result = _deep_merge_yaml_dicts(base, override)
+        assert result == {"a": 1, "b": 2}
+
+    def test_override_wins_for_scalars(self):
+        base = {"a": 1}
+        override = {"a": 99}
+        result = _deep_merge_yaml_dicts(base, override)
+        assert result["a"] == 99
+
+    def test_lists_are_concatenated_base_first(self):
+        base = {"items": [1, 2]}
+        override = {"items": [3, 4]}
+        result = _deep_merge_yaml_dicts(base, override)
+        assert result["items"] == [1, 2, 3, 4]
+
+    def test_nested_dicts_merged_recursively(self):
+        base = {"registry": {"devices": ["dev-a"], "releases": ["rel-x"]}}
+        override = {"registry": {"devices": ["dev-b"]}}
+        result = _deep_merge_yaml_dicts(base, override)
+        assert result["registry"]["devices"] == ["dev-a", "dev-b"]
+        assert result["registry"]["releases"] == ["rel-x"]
+
+    def test_base_not_mutated(self):
+        base = {"items": [1]}
+        override = {"items": [2]}
+        _deep_merge_yaml_dicts(base, override)
+        assert base["items"] == [1]
+
+    def test_override_not_mutated(self):
+        base = {"items": [1]}
+        override = {"items": [2]}
+        _deep_merge_yaml_dicts(base, override)
+        assert override["items"] == [2]
+
+    def test_empty_base(self):
+        result = _deep_merge_yaml_dicts({}, {"key": "val"})
+        assert result == {"key": "val"}
+
+    def test_empty_override(self):
+        result = _deep_merge_yaml_dicts({"key": "val"}, {})
+        assert result == {"key": "val"}
+
+
+# =============================================================================
+# Tests for include directive in get_registry_from_yaml_file
+# =============================================================================
+
+# Minimal included file (no specification block required)
+INCLUDED_DEVICES_YAML = """
+registry:
+  devices:
+    - slug: extra-device
+      description: "Extra Device"
+      vendor: extra-vendor
+      soc_vendor: extra-soc
+      includes:
+        - extra.yaml
+  releases: []
+  features: []
+"""
+
+INCLUDED_RELEASES_YAML = """
+registry:
+  devices: []
+  releases:
+    - slug: extra-release
+      description: "Extra Release"
+      yocto_version: "5.0"
+      includes:
+        - extra-base.yaml
+  features: []
+"""
+
+
+class TestRegistryInclude:
+    def test_include_merges_devices(self, tmp_dir):
+        """Devices from an included file are added to the main registry."""
+        included = tmp_dir / "devices.yaml"
+        included.write_text(INCLUDED_DEVICES_YAML)
+
+        main_yaml = f"""
+specification:
+  version: "2.0"
+include:
+  - devices.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        device_slugs = [d.slug for d in result.registry.devices]
+        assert "extra-device" in device_slugs
+
+    def test_include_merges_releases(self, tmp_dir):
+        """Releases from an included file are combined with main-file releases."""
+        included = tmp_dir / "releases.yaml"
+        included.write_text(INCLUDED_RELEASES_YAML)
+
+        main_yaml = f"""
+specification:
+  version: "2.0"
+include:
+  - releases.yaml
+registry:
+  devices: []
+  releases:
+    - slug: main-release
+      description: "Main Release"
+      yocto_version: "4.0"
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        slugs = [r.slug for r in result.registry.releases]
+        assert "extra-release" in slugs
+        assert "main-release" in slugs
+
+    def test_include_order_included_before_main(self, tmp_dir):
+        """Items from included files appear before items from the main file."""
+        included = tmp_dir / "devices.yaml"
+        included.write_text(INCLUDED_DEVICES_YAML)
+
+        main_yaml = f"""
+specification:
+  version: "2.0"
+include:
+  - devices.yaml
+registry:
+  devices:
+    - slug: main-device
+      description: "Main Device"
+      vendor: main-vendor
+      soc_vendor: main-soc
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        slugs = [d.slug for d in result.registry.devices]
+        assert slugs.index("extra-device") < slugs.index("main-device")
+
+    def test_include_multiple_files(self, tmp_dir):
+        """Multiple includes are all processed and merged."""
+        dev_file = tmp_dir / "devices.yaml"
+        dev_file.write_text(INCLUDED_DEVICES_YAML)
+        rel_file = tmp_dir / "releases.yaml"
+        rel_file.write_text(INCLUDED_RELEASES_YAML)
+
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - devices.yaml
+  - releases.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        assert any(d.slug == "extra-device" for d in result.registry.devices)
+        assert any(r.slug == "extra-release" for r in result.registry.releases)
+
+    def test_include_relative_to_including_file(self, tmp_dir):
+        """Include paths are resolved relative to the file that contains them."""
+        sub_dir = tmp_dir / "sub"
+        sub_dir.mkdir()
+
+        dev_file = sub_dir / "devices.yaml"
+        dev_file.write_text(INCLUDED_DEVICES_YAML)
+
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - sub/devices.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        assert any(d.slug == "extra-device" for d in result.registry.devices)
+
+    def test_include_nested(self, tmp_dir):
+        """Includes can themselves contain further include directives."""
+        inner_yaml = """
+registry:
+  devices:
+    - slug: inner-device
+      description: "Inner Device"
+      vendor: inner-vendor
+      soc_vendor: inner-soc
+  releases: []
+  features: []
+"""
+        inner_file = tmp_dir / "inner.yaml"
+        inner_file.write_text(inner_yaml)
+
+        outer_yaml = """
+include:
+  - inner.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        outer_file = tmp_dir / "outer.yaml"
+        outer_file.write_text(outer_yaml)
+
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - outer.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        assert any(d.slug == "inner-device" for d in result.registry.devices)
+
+    def test_include_circular_detection(self, tmp_dir):
+        """Circular includes are detected and cause SystemExit."""
+        circular_a_yaml = """
+include:
+  - b.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        circular_b_yaml = """
+include:
+  - a.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        file_a = tmp_dir / "a.yaml"
+        file_b = tmp_dir / "b.yaml"
+        file_a.write_text(circular_a_yaml)
+        file_b.write_text(circular_b_yaml)
+
+        main_yaml = f"""
+specification:
+  version: "2.0"
+include:
+  - a.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(main_file)
+
+    def test_include_missing_file_exits(self, tmp_dir):
+        """A missing include target causes SystemExit."""
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - nonexistent.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(main_file)
+
+    def test_include_non_list_value_exits(self, tmp_dir):
+        """A non-list 'include' value causes SystemExit."""
+        main_yaml = """
+specification:
+  version: "2.0"
+include: not-a-list
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(main_file)
+
+    def test_include_specification_ignored_in_included_file(self, tmp_dir):
+        """A 'specification' block in an included file is silently ignored."""
+        included_yaml = """
+specification:
+  version: "1.0"
+registry:
+  devices:
+    - slug: included-device
+      description: "Included Device"
+      vendor: v
+      soc_vendor: s
+  releases: []
+  features: []
+"""
+        included_file = tmp_dir / "partial.yaml"
+        included_file.write_text(included_yaml)
+
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - partial.yaml
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        # Should NOT raise even though included file has an old version
+        result = get_registry_from_yaml_file(main_file)
+        assert any(d.slug == "included-device" for d in result.registry.devices)
+
+    def test_include_merges_containers(self, tmp_dir):
+        """Containers defined in an included file are available in the merged registry."""
+        included_yaml = """
+containers:
+  extra-container:
+    image: "extra/image:latest"
+    file: null
+    args: []
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        included_file = tmp_dir / "containers.yaml"
+        included_file.write_text(included_yaml)
+
+        main_yaml = """
+specification:
+  version: "2.0"
+include:
+  - containers.yaml
+containers:
+  main-container:
+    image: "main/image:latest"
+    file: null
+    args: []
+registry:
+  devices: []
+  releases: []
+  features: []
+"""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(main_yaml)
+
+        result = get_registry_from_yaml_file(main_file)
+        assert "extra-container" in result.containers
+        assert "main-container" in result.containers
+
+    def test_no_include_key_still_works(self, tmp_dir):
+        """Registry files without an 'include' key are parsed normally."""
+        main_file = tmp_dir / "registry.yaml"
+        main_file.write_text(MINIMAL_REGISTRY_YAML)
+
+        result = get_registry_from_yaml_file(main_file)
+        assert isinstance(result, RegistryRoot)
