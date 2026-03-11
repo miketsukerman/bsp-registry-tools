@@ -16,9 +16,14 @@ Schema v2.0 separates the registry into independent sections:
 | `bsp`          | Optional named presets (device + release + features)          |
 | `frameworks`   | Optional build-system framework definitions (Yocto, Isar, …) |
 | `distro`       | Optional distribution definitions (Poky, Isar distro, …)     |
+| `include`      | Optional list of additional registry files to merge in        |
 
 Builds can be driven either by a **named preset** (`bsp build my-preset`) or by
 composing components directly (`bsp build --device <d> --release <r>`).
+
+Large registries can be **split across multiple files** using the top-level
+`include` directive.  Each included file is merged into the root registry before
+the root file's own content is applied.
 
 ---
 
@@ -27,6 +32,10 @@ composing components directly (`bsp build --device <d> --release <r>`).
 ```yaml
 specification:
   version: "2.0"          # required
+
+include:                  # optional – list of additional registry files to merge in
+  - devices/boards.yaml
+  - releases/scarthgap.yaml
 
 environment:              # optional – global env vars for all builds
   - name: "DL_DIR"
@@ -66,6 +75,75 @@ specification:
 ```
 
 The tool will exit with a clear error if `version` is not `"2.0"`.
+
+---
+
+## `include` (optional)
+
+The `include` directive splits a registry across multiple YAML files.  It is a
+top-level list of paths (relative to the file that contains the directive).
+Each referenced file is loaded and merged **before** the current file's content
+is applied, so entries in the including file always take precedence.
+
+```yaml
+# registry.yaml  ← main file (must contain specification)
+specification:
+  version: "2.0"
+
+include:
+  - devices/boards.yaml      # relative to the directory of this file
+  - releases/scarthgap.yaml
+
+registry:
+  features: []
+  bsp:
+    - name: my-bsp
+      description: "My BSP"
+      device: my-board
+      release: scarthgap
+      features: []
+```
+
+```yaml
+# devices/boards.yaml  ← included file (no specification required)
+registry:
+  devices:
+    - slug: my-board
+      description: "My Board"
+      vendor: acme
+      soc_vendor: nxp
+      includes:
+        - kas/boards/my-board.yaml
+  releases: []
+  features: []
+```
+
+### Merging rules
+
+| Data type | Merge behaviour |
+|-----------|-----------------|
+| Lists (e.g. `devices`, `releases`, `features`, `environment`) | Concatenated — included items appear **before** the including file's items |
+| Dicts (e.g. `containers`, `environments`) | Merged recursively — including file wins on conflicting keys |
+| Scalars | Including file wins |
+
+> **Note:** `environment` (global variable list) is a **list** and is
+> concatenated.  `environments` (named environment dict) is a **dict** and is
+> merged recursively.
+
+### Nested includes
+
+Included files can themselves contain `include` directives.  Paths are always
+resolved **relative to the file that contains the directive**.
+
+### Circular include detection
+
+Circular includes are detected at load time.  The tool exits immediately with a
+clear error message if the same file is visited twice.
+
+### `specification` in included files
+
+The `specification` block is silently stripped from included files — version
+validation is performed only once on the root registry file.
 
 ---
 
@@ -479,6 +557,10 @@ and finally any optional feature additions.
 ---
 
 ## Full Example
+
+The example below keeps everything in a single file.  See the
+[`include` section](#include-optional) above for how to split it across multiple
+files.
 
 ```yaml
 specification:

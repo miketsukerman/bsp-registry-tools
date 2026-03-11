@@ -16,6 +16,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 🔄 **Environment variable expansion** (`$ENV{VAR}` syntax)
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
+- 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 
 ## Installation
 
@@ -309,6 +310,26 @@ The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v
 specification:
   version: "2.0"
 ```
+
+### `include` (optional)
+
+Split a large registry across multiple files using the `include` directive.
+Paths are relative to the file that contains the directive.
+
+```yaml
+include:
+  - devices/boards.yaml
+  - releases/scarthgap.yaml
+```
+
+Each included file is merged before the root file's own content.  Lists
+(e.g. `devices`, `releases`, `features`, `environment`) are concatenated; dicts
+(e.g. `containers`, `environments`) are merged recursively; scalars use the root
+file's value.
+Included files can themselves contain further `include` directives, and
+circular references are detected at load time.
+
+See [docs/registry-v2.md](docs/registry-v2.md#include-optional) for full details.
 
 ### `environment`
 
