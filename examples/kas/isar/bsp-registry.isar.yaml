@@ -131,5 +131,12 @@ registry:
       device: qemuamd64
       releases: [ubuntu-noble, debian-trixie]
       features: [users, wic, isar-ssh]
-      build:
-        container: "isar-debian-trixie"
+
+    # Multi-release preset for QEMU AMD64 (x86-64): expands into
+    # isar-qemuamd64-ubuntu-noble and isar-qemuamd64-debian-trixie,
+    # eliminating duplicate entries for each supported target OS release.
+    - name: isar-qemuarm64
+      description: "Isar v0.11 QEMU ARM64 (aarch64)"
+      device: qemuarm64
+      releases: [ubuntu-noble, debian-trixie]
+      features: [users, wic, isar-ssh]
