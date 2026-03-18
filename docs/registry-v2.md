@@ -622,14 +622,17 @@ The resolver selects the `soc_vendors` entry whose `vendor` field matches the
 
 ```
 framework.includes
-  → distro.includes             (uses SocVendorOverride.distro if set, else VendorOverride.distro, else release.distro)
+  → distro.includes                        (uses SocVendorOverride.distro if set, else VendorOverride.distro, else release.distro)
   → vendors[device.vendor].includes
   → release.includes
-  → VendorOverride.includes     (common for every SoC family)
-  → SocVendorOverride.includes  (specific to the matched SoC vendor)
-  → VendorRelease.includes      (sub-release, if vendor_release is set)
+  → VendorOverride.includes                (common for every SoC family)
+  → SocVendorOverride.includes             (specific to the matched SoC vendor)
+  → VendorRelease.includes                 (sub-release, if vendor_release is set)
   → device.includes
-  → feature.includes
+  → feature.includes                       (base feature KAS files)
+  → feature.VendorOverride.includes        (feature vendor-specific includes, if vendor matches)
+  → feature.SocVendorOverride.includes     (feature SoC-vendor-specific includes, if soc_vendor matches)
+  → feature.VendorRelease.includes         (feature vendor sub-release, if vendor_release is set)
 ```
 
 **Distro resolution priority (highest → lowest):**
@@ -884,6 +887,82 @@ or its framework appears in the list before allowing the feature.
 | Release's distro's `framework` slug is in `compatible_with` | Compatible |
 | Neither the distro nor its framework is in the list | Build exits with error |
 | `compatible_with` is set but the release has no distro | Build exits with error |
+
+### Vendor-specific feature includes (`vendor_overrides`)
+
+A feature can carry its own `vendor_overrides` list using **exactly the same
+structure** as `releases[*].vendor_overrides`.  This lets a feature add
+vendor-specific (and SoC-vendor-specific) KAS files on top of its base
+`includes` without requiring separate feature definitions per vendor.
+
+**Include ordering for a feature with `vendor_overrides`:**
+
+```
+feature.includes                        (always applied)
+  → feature.VendorOverride.includes     (applied when device.vendor matches)
+  → feature.SocVendorOverride.includes  (applied when device.soc_vendor matches, inside soc_vendors)
+  → feature.VendorRelease.includes      (applied when vendor_release matches, from releases list)
+```
+
+The `vendor_release` slug used for release-level override selection is **reused**
+for feature-level sub-release selection — no separate field is needed.
+
+**Example — RAUC OTA feature with NXP-specific layers:**
+
+```yaml
+registry:
+  features:
+    - slug: rauc
+      description: "Enable RAUC support in the Yocto image"
+      compatible_with: [yocto]
+      includes:
+        - features/ota/rauc/rauc.yml        # always included
+      vendor_overrides:
+        - vendor: advantech
+          includes:
+            - features/ota/rauc/advantech-rauc.yml  # added for Advantech boards
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/rauc/modular-bsp-ota-nxp.yml  # added for NXP SoCs
+              releases:
+                - slug: imx-6.6.53
+                  description: "RAUC layers for i.MX BSP 6.6.53"
+                  includes:
+                    - features/ota/rauc/rauc-imx-6.6.53.yml  # added when vendor_release=imx-6.6.53
+```
+
+With a BSP preset that targets an Advantech NXP board and selects `vendor_release: imx-6.6.53`,
+the resolver produces this KAS file order for the `rauc` feature:
+
+```
+features/ota/rauc/rauc.yml
+features/ota/rauc/advantech-rauc.yml
+features/ota/rauc/modular-bsp-ota-nxp.yml
+features/ota/rauc/rauc-imx-6.6.53.yml
+```
+
+For a QEMU device (vendor `qemu`) with the same feature enabled, only the base
+`features/ota/rauc/rauc.yml` is added — the `advantech` vendor_override is silently
+skipped because `device.vendor` does not match.
+
+#### `features[*].vendor_overrides[*]` fields
+
+The structure is identical to `releases[*].vendor_overrides[*]`:
+
+| Field        | Type          | Description                                                                                          |
+|--------------|---------------|------------------------------------------------------------------------------------------------------|
+| `vendor`     | string        | Board vendor this override applies to (matched against `devices[*].vendor`)                          |
+| `includes`   | list[str]     | KAS files added when `device.vendor` matches                                                         |
+| `soc_vendors`| list (opt.)   | Per-SoC-vendor overrides (same structure as `releases[*].vendor_overrides[*].soc_vendors`)           |
+| `releases`   | list (opt.)   | Vendor sub-release entries (same structure as `releases[*].vendor_overrides[*].releases`).  The sub-release is selected by the `vendor_release` field on the BSP preset. |
+| `slug`       | string (opt.) | Optional identifier (not used for feature overrides — matching is always by `vendor`)                |
+| `distro`     | string (opt.) | Not used for feature overrides — distro resolution is driven by the release-level `vendor_overrides` |
+
+> **Note**: `vendor_overrides` on a feature do **not** affect distro resolution.
+> Distro selection is always driven by the release-level `vendor_overrides` (and
+> the preset's `override` / `vendor_release` fields).  Feature vendor_overrides
+> only influence which KAS files are added.
 
 ---
 

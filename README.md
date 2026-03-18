@@ -722,7 +722,7 @@ python -m build
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
-| `Feature` | Optional BSP feature (slug, includes, compatibility constraints) |
+| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
 | `BspPreset` | Named preset combining device + release + features |
 | `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
 | `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
