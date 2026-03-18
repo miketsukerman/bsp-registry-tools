@@ -486,6 +486,16 @@ class Feature:
         includes: KAS configuration files that enable this feature
         local_conf: local.conf lines to append when feature is enabled
         env: Environment variables required/set by this feature
+        vendor_overrides: Optional list of vendor-specific KAS configuration
+                          overrides for this feature.  Works identically to
+                          ``Release.vendor_overrides`` but is scoped to a
+                          single feature: the resolver matches entries by
+                          ``device.vendor`` (and ``device.soc_vendor`` when
+                          ``soc_vendors`` are defined) and appends the
+                          resulting includes *after* the feature's base
+                          ``includes``.  ``VendorRelease`` sub-entries inside
+                          a feature override are selected via the same
+                          ``vendor_release_slug`` passed to ``resolve()``.
     """
     slug: str
     description: str
@@ -494,6 +504,7 @@ class Feature:
     includes: List[str] = field(default_factory=empty_list)
     local_conf: List[str] = field(default_factory=empty_list)
     env: List[EnvironmentVariable] = field(default_factory=empty_list)
+    vendor_overrides: List[VendorOverride] = field(default_factory=empty_list)
 
 
 @dataclass

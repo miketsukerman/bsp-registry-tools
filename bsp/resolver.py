@@ -453,6 +453,8 @@ class V2Resolver:
           -> release.includes -> release.vendor_overrides[device.vendor or override.slug].includes
           -> release.vendor_overrides[device.vendor].releases[vendor_release].includes
           -> device.includes -> feature.includes
+          -> feature.vendor_overrides[device.vendor].includes
+          -> feature.vendor_overrides[device.vendor].releases[vendor_release].includes
         Merging order for local_conf:  device.local_conf -> feature.local_conf (in order)
 
         Args:
@@ -692,6 +694,13 @@ class V2Resolver:
         kas_files.extend(device_includes)
         for feature in features:
             kas_files.extend(feature.includes)
+            if feature.vendor_overrides:
+                # Feature vendor_overrides are always matched by device.vendor;
+                # there is no preset-level override_slug concept for features.
+                kas_files.extend(self._apply_vendor_overrides(
+                    feature.vendor_overrides, device.vendor, device.soc_vendor,
+                    vendor_release_slug, override_slug=None,
+                ))
 
         # Build merged local_conf
         # Prefer device.local_conf (new style); fall back to device.build.local_conf (legacy).

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from bsp import BspManager, BspPreset, Docker, V2Resolver
-from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML
+from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML
 
 
 class TestBspManagerInit:
@@ -2709,3 +2709,129 @@ class TestContainerCopy:
         assert "scripts/old-setup.sh" not in copy_sources, (
             "The replaced container's copy entries must not appear in resolved.copy."
         )
+
+
+class TestFeatureVendorOverrides:
+    """Tests for vendor_overrides on feature definitions."""
+
+    def test_feature_vendor_overrides_loaded_from_yaml(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """vendor_overrides on a Feature are parsed correctly from YAML."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        feature = manager.resolver.get_feature("rauc")
+        assert len(feature.vendor_overrides) == 1
+        vo = feature.vendor_overrides[0]
+        assert vo.vendor == "advantech"
+        assert "features/ota/rauc/advantech-rauc.yml" in vo.includes
+        assert len(vo.soc_vendors) == 1
+        svo = vo.soc_vendors[0]
+        assert svo.vendor == "nxp"
+        assert "features/ota/rauc/modular-bsp-ota-nxp.yml" in svo.includes
+
+    def test_feature_base_includes_always_applied(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """Feature.includes (base) are always added regardless of vendor."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["rauc"],
+            vendor_release_slug="imx-6.6.53",
+        )
+        assert "features/ota/rauc/rauc.yml" in resolved.kas_files
+
+    def test_feature_vendor_common_includes_applied_for_matching_vendor(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """VendorOverride.includes in a feature are added when device.vendor matches."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["rauc"],
+            vendor_release_slug="imx-6.6.53",
+        )
+        assert "features/ota/rauc/advantech-rauc.yml" in resolved.kas_files
+
+    def test_feature_vendor_common_includes_not_applied_for_other_vendor(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """VendorOverride.includes in a feature are NOT added for non-matching vendor."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        # qemu-arm64 has vendor=qemu, not advantech
+        resolved = manager.resolver.resolve(
+            "qemu-arm64", "scarthgap",
+            feature_slugs=["rauc"],
+        )
+        assert "features/ota/rauc/advantech-rauc.yml" not in resolved.kas_files
+
+    def test_feature_soc_vendor_includes_applied_for_matching_soc_vendor(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """SocVendorOverride.includes in a feature are added when device.soc_vendor matches."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["rauc"],
+            vendor_release_slug="imx-6.6.53",
+        )
+        assert "features/ota/rauc/modular-bsp-ota-nxp.yml" in resolved.kas_files
+
+    def test_feature_soc_vendor_release_includes_applied(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """VendorRelease.includes in a feature SocVendorOverride are added for matching slug."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["rauc"],
+            vendor_release_slug="imx-6.6.53",
+        )
+        assert "features/ota/rauc/rauc-imx-6.6.53.yml" in resolved.kas_files
+
+    def test_feature_vendor_overrides_after_base_includes(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """Feature vendor override includes appear after feature.includes in kas_files."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["rauc"],
+            vendor_release_slug="imx-6.6.53",
+        )
+        base_idx = resolved.kas_files.index("features/ota/rauc/rauc.yml")
+        vendor_idx = resolved.kas_files.index("features/ota/rauc/advantech-rauc.yml")
+        soc_idx = resolved.kas_files.index("features/ota/rauc/modular-bsp-ota-nxp.yml")
+        release_idx = resolved.kas_files.index("features/ota/rauc/rauc-imx-6.6.53.yml")
+        assert base_idx < vendor_idx < soc_idx < release_idx
+
+    def test_feature_without_vendor_overrides_unaffected(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """Features without vendor_overrides continue to work normally."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve(
+            "adv-imx8", "scarthgap",
+            feature_slugs=["secure-boot"],
+        )
+        assert "features/secure-boot/secure-boot.yml" in resolved.kas_files
+
+    def test_feature_vendor_override_via_preset(
+        self, registry_with_feature_vendor_overrides_file
+    ):
+        """Feature vendor overrides are applied when resolving via a BSP preset."""
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("adv-imx8-scarthgap-imx6.6.53-rauc")
+        assert "features/ota/rauc/rauc.yml" in resolved.kas_files
+        assert "features/ota/rauc/advantech-rauc.yml" in resolved.kas_files
+        assert "features/ota/rauc/modular-bsp-ota-nxp.yml" in resolved.kas_files
+        assert "features/ota/rauc/rauc-imx-6.6.53.yml" in resolved.kas_files

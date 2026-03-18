@@ -1434,3 +1434,137 @@ def registry_with_container_copy_file(tmp_dir):
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_CONTAINER_COPY_YAML)
     return registry_path
+
+
+# =============================================================================
+# Registry with vendor_overrides on features
+# =============================================================================
+
+REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+    - slug: fsl-imx-xwayland
+      description: "Freescale i.MX X Wayland distro"
+      vendor: nxp
+      framework: yocto
+      includes:
+        - vendors/nxp/distro/fsl-imx-xwayland.yaml
+  devices:
+    - slug: adv-imx8
+      description: "Advantech i.MX8 Board (NXP SoC)"
+      vendor: advantech
+      soc_vendor: nxp
+      includes:
+        - kas/adv-imx8.yaml
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+      vendor_overrides:
+        - vendor: advantech
+          includes:
+            - kas/yocto/vendors/advantech/scarthgap.yaml
+          soc_vendors:
+            - vendor: nxp
+              distro: fsl-imx-xwayland
+              includes:
+                - kas/yocto/vendors/advantech/nxp/scarthgap.yaml
+              releases:
+                - slug: imx-6.6.53
+                  description: "Scarthgap for i.MX 6.6.53"
+                  includes:
+                    - kas/yocto/vendors/advantech/nxp/imx-6.6.53.yaml
+  features:
+    - slug: rauc
+      description: "Enable RAUC support in the Yocto image"
+      compatible_with: [yocto]
+      includes:
+        - features/ota/rauc/rauc.yml
+      vendor_overrides:
+        - vendor: advantech
+          includes:
+            - features/ota/rauc/advantech-rauc.yml
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/rauc/modular-bsp-ota-nxp.yml
+              releases:
+                - slug: imx-6.6.53
+                  description: "RAUC for i.MX 6.6.53"
+                  includes:
+                    - features/ota/rauc/rauc-imx-6.6.53.yml
+    - slug: secure-boot
+      description: "Enable secure boot"
+      includes:
+        - features/secure-boot/secure-boot.yml
+  bsp:
+    - name: adv-imx8-scarthgap-imx6.6.53-rauc
+      description: "Advantech i.MX8 Scarthgap (imx-6.6.53) with RAUC"
+      device: adv-imx8
+      release: scarthgap
+      vendor_release: imx-6.6.53
+      features: [rauc]
+      build:
+        container: "debian-bookworm"
+        path: build/adv-imx8-scarthgap-imx6.6.53-rauc
+    - name: adv-imx8-scarthgap-rauc-no-vendor-release
+      description: "Advantech i.MX8 Scarthgap with RAUC (no vendor_release)"
+      device: adv-imx8
+      release: scarthgap
+      features: [rauc]
+      build:
+        container: "debian-bookworm"
+        path: build/adv-imx8-scarthgap-rauc
+    - name: qemu-arm64-scarthgap-rauc
+      description: "QEMU ARM64 Scarthgap with RAUC"
+      device: qemu-arm64
+      release: scarthgap
+      features: [rauc]
+      build:
+        container: "debian-bookworm"
+        path: build/qemu-arm64-scarthgap-rauc
+    - name: adv-imx8-scarthgap-secure-boot
+      description: "Advantech i.MX8 Scarthgap with secure-boot (no feature vendor_overrides)"
+      device: adv-imx8
+      release: scarthgap
+      features: [secure-boot]
+      build:
+        container: "debian-bookworm"
+        path: build/adv-imx8-scarthgap-secure-boot
+"""
+
+
+@pytest.fixture
+def registry_with_feature_vendor_overrides_file(tmp_dir):
+    """Create a registry YAML with vendor_overrides on features."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML)
+    return registry_path
