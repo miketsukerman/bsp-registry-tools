@@ -1,0 +1,142 @@
+specification:
+  version: "2.0"
+
+# Container definitions for build environments
+containers:
+  - isar-debian-trixie:
+      image: "bsp/registry/debian/isar/kas:5.2"
+      file: kas/isar/Dockerfile.isar.debian
+      runtime_args: "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
+      privileged: true    # Run container in privileged mode (required for ISAR builds)
+      args:
+        - name: "DISTRO"
+          value: "debian-trixie"
+        - name: "KAS_VERSION"
+          value: "5.2"
+
+environments:
+  # Isar uses its own Debian-based build system – point to a dedicated container
+  isar-build:
+    container: isar-debian-trixie
+    # Copy the isar-runqemu.sh script into the build directory so it can be used by the BSP presets for running QEMU with the generated images
+    copy:
+      - kas/isar/scripts/isar-runqemu.sh: build/    
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/isar/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/isar/sstate"
+
+registry:
+
+  # =====================================
+  # Devices
+  # =====================================
+
+  devices:
+
+    # Isar project uses qemuamd64 as the name for the x86-64 QEMU machine
+    - slug: qemuamd64
+      description: "QEMU AMD64 (X86-64) (emulated)"
+      vendor: qemu
+      soc_vendor: amd
+      includes:
+        - kas/devices/qemu/qemuamd64.yaml
+
+  # =====================================
+  # Build System Frameworks
+  # (e.g. Yocto, Isar)
+  # =====================================
+  
+  frameworks:
+
+    - slug: isar
+      description: | 
+        Set of scripts for building software packages and repeatable 
+        generation of Debian-based root filesystems with customizations
+      vendor: "Ilbers GmbH"
+      includes:
+        - kas/isar/isar.yaml
+
+  # =====================================
+  # Distributions
+  # =====================================
+
+  distro:
+    
+    - slug: isar
+      description: "Isar v0.11 (Siemens build system)"
+      framework: isar
+      includes:
+        - kas/isar/isar-v0.11.yaml
+
+  # =====================================
+  # Releases
+  # =====================================
+
+  releases:
+
+    # Isar v0.11 – uses the isar-build named environment (Debian container + isar download cache)
+    - slug: ubuntu-noble
+      distro: isar
+      description: "Ubuntu Noble (Isar)"
+      isar_version: "0.11"
+      environment: isar-build
+      includes:
+        - kas/isar/distro/ubuntu-noble.yaml
+
+    - slug: debian-trixie
+      distro: isar
+      description: "Debian Trixie (Isar)"
+      isar_version: "0.11"
+      environment: isar-build
+      includes:
+        - kas/isar/distro/debian-trixie.yaml
+
+  # =====================================
+  # Features (optional add-ons)
+  # =====================================
+
+  features: 
+  
+    - slug: users
+      description: "Add sample non-root user accounts to the image"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
+      includes:
+        - kas/isar/features/users.yaml
+
+    - slug: isar-ssh
+      description: "Enable SSH server in the Isar image"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
+      includes:
+        - kas/isar/features/ssh.yaml
+
+    - slug: wic
+      description: "Enable WIC image creation"
+      compatible_with: [isar]   # This feature is only compatible with the Isar framework
+      includes:
+        - kas/isar/features/wic.yaml
+
+  # =====================================
+  # BSP Presets (named shortcuts)
+  # =====================================
+
+  bsp:
+
+    # Multi-release preset for QEMU AMD64 (x86-64): expands into
+    # isar-qemuamd64-ubuntu-noble and isar-qemuamd64-debian-trixie,
+    # eliminating duplicate entries for each supported target OS release.
+    - name: isar-qemuamd64
+      description: "Isar v0.11 QEMU AMD64 (x86-64)"
+      device: qemuamd64
+      releases: [ubuntu-noble, debian-trixie]
+      features: [users, wic, isar-ssh]
+
+    # Multi-release preset for QEMU AMD64 (x86-64): expands into
+    # isar-qemuamd64-ubuntu-noble and isar-qemuamd64-debian-trixie,
+    # eliminating duplicate entries for each supported target OS release.
+    - name: isar-qemuarm64
+      description: "Isar v0.11 QEMU ARM64 (aarch64)"
+      device: qemuarm64
+      releases: [ubuntu-noble, debian-trixie]
+      features: [users, wic, isar-ssh]

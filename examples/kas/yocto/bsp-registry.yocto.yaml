@@ -1,0 +1,183 @@
+specification:
+  version: "2.0"
+
+# Container definitions for build environments
+containers:
+  - debian-bookworm:
+      image: "bsp/registry/debian/kas:5.2"
+      file: kas/yocto/Dockerfile.poky.debian
+      args:
+        - name: "DISTRO"
+          value: "debian-bookworm"
+        - name: "KAS_VERSION"
+          value: "5.2"
+
+registry:
+
+  # =====================================
+  # Devices
+  # =====================================
+
+  devices:
+
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm64.yaml
+
+    - slug: qemuarm
+      description: "QEMU ARM (32-bit, emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm.yaml
+
+    - slug: qemux86
+      description: "QEMU x86 (emulated)"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/devices/qemu/qemux86.yaml
+  
+    - slug: qemux86-64
+      description: "QEMU x86-64 (emulated)"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/devices/qemu/qemux86-64.yaml
+  
+  # =====================================
+  # Build System Frameworks
+  # (e.g. Yocto, Isar)
+  # =====================================
+  
+  frameworks:
+
+    - slug: yocto
+      description: | 
+        Yocto Project build system
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+
+  # =====================================
+  # Distributions
+  # =====================================
+
+  distro:
+    
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      framework: yocto
+      includes:
+        - kas/yocto/distro/poky.yaml
+
+    - slug: poky-harden
+      description: "Hardened Poky (Yocto Project reference distro)"
+      framework: yocto
+      includes:
+        - kas/yocto/distro/harden.yaml
+
+  # =====================================
+  # Releases
+  # =====================================
+
+  releases:
+
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      yocto_version: "5.0"
+      includes:
+        - kas/yocto/releases/scarthgap.yaml
+
+    - slug: scarthgap-harden
+      distro: poky-harden
+      description: "Yocto 5.0 LTS (Scarthgap Hardened)"
+      yocto_version: "5.0"
+      includes:
+        - kas/yocto/releases/scarthgap.yaml
+
+    - slug: styhead
+      distro: poky
+      description: "Yocto 5.1 (Styhead)"
+      yocto_version: "5.1"
+      includes:
+        - kas/yocto/releases/styhead.yaml
+
+  # =====================================
+  # Features (optional add-ons)
+  # =====================================
+
+  features: 
+  
+    - slug: systemd
+      description: "Enable systemd as the init system"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/systemd.yaml
+
+    - slug: yocto-ssh
+      description: "Enable SSH server in the Yocto image"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/ssh.yaml
+
+    - slug: debug
+      description: "Enable debug features in the image"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/debug.yaml
+
+    - slug: security
+      description: "Enable security features in the Yocto image"
+      compatible_with: [yocto]   # This feature is only compatible with the Yocto framework
+      includes:
+        - kas/yocto/features/security.yaml
+
+  # =====================================
+  # BSP Presets (named shortcuts)
+  # =====================================
+
+  bsp:
+
+    # --- QEMU ARM64 ---
+    # Multi-release preset: expands into poky-qemuarm64-scarthgap and
+    # poky-qemuarm64-styhead automatically, eliminating duplicate entries.
+    - name: poky-qemuarm64
+      description: "Poky QEMU ARM64"
+      device: qemuarm64
+      releases: [scarthgap, styhead]
+      features: [systemd, debug, yocto-ssh]
+
+    # --- QEMU x86-64 ---
+    - name: poky-harden-qemux86-64-scarthgap
+      description: "Poky Hardened QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
+      device: qemux86-64
+      release: scarthgap-harden
+      features: [systemd, yocto-ssh, security]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-harden-qemux86-64-scarthgap
+
+    # Multi-release preset for x86-64: expands into poky-qemux86-64-scarthgap
+    # and poky-qemux86-64-styhead.
+    - name: poky-qemux86-64
+      description: "Poky QEMU x86-64"
+      device: qemux86-64
+      releases: [scarthgap, styhead]
+      features: [systemd, debug, yocto-ssh]
+      build:
+        container: "debian-bookworm"
+
+    # --- QEMU ARM (32-bit) ---
+    - name: poky-qemuarm-scarthgap
+      description: "Poky QEMU ARM (32-bit) Scarthgap (Yocto 5.0 LTS)"
+      device: qemuarm
+      release: scarthgap
+      features: [systemd]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm-scarthgap

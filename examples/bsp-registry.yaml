@@ -1,173 +1,25 @@
 specification:
-  version: "1.0"
+  version: "2.0"
 
-# Global environment variables for all builds
+include:
+  - kas/yocto/bsp-registry.yocto.yaml
+  - kas/isar/bsp-registry.isar.yaml
+
+# Global environment variables for all builds (base layer – applied to every build)
 # Use $ENV{VAR_NAME} syntax to reference system environment variables
 environment:
-  - name: "GITCONFIG_FILE"
-    value: "$ENV{HOME}/.gitconfig"
-  - name: "DL_DIR"
-    value: "$ENV{HOME}/data/cache/downloads"
-  - name: "SSTATE_DIR"
-    value: "$ENV{HOME}/data/cache/sstate"
+  variables:
+    - name: "GITCONFIG_FILE"
+      value: "$ENV{HOME}/.gitconfig"
 
-# Container definitions for build environments
-containers:
-  - debian-bookworm:
-      image: "bsp/registry/debian/kas:5.2"
-      file: Dockerfile.poky.debian
-      args:
-        - name: "DISTRO"
-          value: "debian-bookworm"
-        - name: "KAS_VERSION"
-          value: "5.2"
-  - isar-debian-trixie:
-      image: "bsp/registry/debian/isar/kas:5.2"
-      file: Dockerfile.isar.debian
-      privileged: true    # Run container in privileged mode (required for ISAR builds)
-      args:
-        - name: "DISTRO"
-          value: "debian-trixie"
-        - name: "KAS_VERSION"
-          value: "5.2"
-
-registry:
-  bsp:
-
-    # =====================================
-    # QEMU ARM64 BSPs
-    # =====================================
-
-    - name: poky-qemuarm64-scarthgap
-      description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/qemu-arm64-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
-          - kas/poky/qemu/qemuarm64.yaml
-
-    - name: poky-qemuarm64-styhead
-      description: "Poky QEMU ARM64 Styhead (Yocto 5.1)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.1"
-      build:
-        path: build/qemu-arm64-styhead
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/styhead.yaml
-          - kas/poky/qemu/qemuarm64.yaml
-
-    # =====================================
-    # QEMU x86-64 BSPs
-    # =====================================
-
-    - name: poky-qemux86-64-scarthgap
-      description: "Poky QEMU x86-64 Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/qemu-x86-64-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
-          - kas/poky/qemu/qemux86-64.yaml
-
-    - name: poky-qemux86-64-styhead
-      description: "Poky QEMU x86-64 Styhead (Yocto 5.1)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.1"
-      build:
-        path: build/qemu-x86-64-styhead
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/styhead.yaml
-          - kas/poky/qemu/qemux86-64.yaml
-
-    # =====================================
-    # QEMU ARM (32-bit) BSPs
-    # =====================================
-
-    - name: poky-qemuarm-scarthgap
-      description: "Poky QEMU ARM (32-bit) Scarthgap (Yocto 5.0 LTS)"
-      os:
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/qemu-arm-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/poky/scarthgap.yaml
-          - kas/poky/qemu/qemuarm.yaml
-
-    # =====================================
-    # Isar QEMU Ubuntu ARM64 BSPs
-    # =====================================
-
-    - name: isar-qemuarm64
-      description: "Isar QEMU Ubuntu ARM64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
-      build:
-        path: build/qemu-arm64-isar
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/debian-trixie.yaml
-          - kas/isar/qemu/common.yaml
-          - kas/isar/qemu/qemuarm64.yaml
-
-    # =====================================
-    # Isar QEMU Ubuntu X86_64 BSPs
-    # =====================================
-
-    - name: isar-debian-qemux86-64
-      description: "Isar QEMU Debian Trixie X86_64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
-      build:
-        path: build/qemu-x86-64-debian-trixie
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/debian-trixie.yaml
-          - kas/isar/qemu/common.yaml
-          - kas/isar/qemu/qemux86-64.yaml
-
-    - name: isar-ubuntu-qemux86-64
-      description: "Isar QEMU Ubuntu Noble X86_64 Isar (version 0.11)"
-      os:
-        name: linux
-        build_system: isar
-        version: "0.11"
-      build:
-        path: build/qemu-x86-64-ubuntu-noble
-        environment:
-          container: "isar-debian-trixie"
-        configuration:
-          - kas/isar/isar.yaml
-          - kas/isar/distro/ubuntu-noble.yaml
-          - kas/isar/qemu/common.yaml
-          - kas/isar/qemu/qemux86-64.yaml
+# Named environments: each entry bundles a container reference + variables.
+# The special name "default" is used for any release that does not specify an environment.
+# A release can override by setting its "environment:" field to a different name.
+environments:
+  default:
+    container: debian-bookworm
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
