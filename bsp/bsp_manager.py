@@ -3,50 +3,60 @@ Main BSP management class coordinating registry, builds, and exports.
 """
 
 import logging
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from .environment import EnvironmentManager
+from .exceptions import COLORAMA_AVAILABLE
 from .kas_manager import KasManager
-from .models import BSP, Docker
+from .models import BspPreset, Docker, EnvironmentVariable
 from .path_resolver import resolver
+from .resolver import ResolvedConfig, V2Resolver
 from .utils import get_registry_from_yaml_file, build_docker
 
+if COLORAMA_AVAILABLE:
+    from colorama import Fore, Style
+
 # =============================================================================
-# Main BSP Management Class with Container Support
+# Main BSP Management Class with v2.0 Support
 # =============================================================================
 
 
 class BspManager:
     """
-    Main BSP management class for BSP registry management.
+    Main BSP management class for BSP registry management (v2.0 schema).
 
     This class coordinates the overall BSP management flow including
-    configuration loading, BSP discovery, build execution, shell access,
-    and configuration export operations with container support.
+    configuration loading, device/release/feature discovery, build execution,
+    shell access, and configuration export operations with container support.
     """
 
-    def __init__(self, config_path: str = "bsp-registry.yaml"):
+    def __init__(self, config_path: str = "bsp-registry.yaml", verbose: bool = False):
         """
         Initialize BSP manager.
 
         Args:
             config_path: Path to BSP registry configuration file
+            verbose: If True, stream docker build output live during builds
         """
         self.config_path = Path(config_path)
+        self.verbose = verbose
         self.logger = logging.getLogger(self.__class__.__name__)
         self.model = None  # Will hold parsed registry configuration
         self.env_manager = None  # Environment configuration manager
         self.containers = {}  # Dictionary of container configurations
+        self.resolver = None  # V2Resolver instance
 
     def load_configuration(self) -> None:
         """
         Load and parse BSP configuration from YAML file.
 
         Raises:
-            SystemExit: If configuration file is missing or invalid
+            SystemExit: If configuration file is missing, invalid, or not v2.0
         """
         try:
             if not self.config_path.exists():
@@ -63,9 +73,12 @@ class BspManager:
                 logging.info(f"Loaded {len(self.containers)} container definitions")
 
             # Initialize Environment manager if configuration exists
-            if self.model.environment:
-                self.env_manager = EnvironmentManager(self.model.environment)
-                logging.info(f"Environment configuration initialized with {len(self.model.environment)} variables")
+            if self.model.environment and self.model.environment.variables:
+                self.env_manager = EnvironmentManager(self.model.environment.variables)
+                logging.info(
+                    f"Environment configuration initialized with "
+                    f"{len(self.model.environment.variables)} variables"
+                )
 
         except SystemExit:
             raise
@@ -78,6 +91,9 @@ class BspManager:
         logging.info("Initializing BSP manager...")
         self.load_configuration()
 
+        # Create v2 resolver
+        self.resolver = V2Resolver(self.model, self.containers)
+
         # Validate environment configuration if present
         if self.env_manager:
             if not self.env_manager.validate_environment():
@@ -86,105 +102,655 @@ class BspManager:
 
         logging.info("BSP manager initialized successfully")
 
-    def list_bsp(self) -> None:
+    # ------------------------------------------------------------------
+    # Listing commands
+    # ------------------------------------------------------------------
+
+    def _color_helpers(self, use_color: bool):
         """
-        List all available BSPs in the registry.
+        Return ``(header, name, dim)`` color-formatting helpers.
 
-        Raises:
-            SystemExit: If no BSPs are found in registry
+        Each helper accepts a string and returns it wrapped in the
+        appropriate ANSI escape sequences when *use_color* is ``True``
+        and colorama is available; otherwise the string is returned
+        unchanged.
         """
-        if not self.model or not self.model.registry.bsp:
-            logging.error("No BSPs found in registry")
-            sys.exit(1)
+        colored = use_color and COLORAMA_AVAILABLE
 
-        logging.info("Available BSPs:")
-        for bsp in self.model.registry.bsp:
-            print(f"- {bsp.name}: {bsp.description}")
+        def _c(text: str, *styles) -> str:
+            if not colored:
+                return text
+            return "".join(styles) + text + Style.RESET_ALL
 
-    def list_containers(self) -> None:
+        def _header(text: str) -> str:
+            return _c(text, Fore.CYAN, Style.BRIGHT)
+
+        def _name(text: str) -> str:
+            return _c(text, Fore.YELLOW)
+
+        def _dim(text: str) -> str:
+            return _c(text, Style.DIM)
+
+        return _header, _name, _dim
+
+    def list_bsp(self, use_color: bool = True) -> None:
+        """
+        List all BSP presets defined in the registry.
+
+        In v2, presets are optional shortcuts. If no presets are defined,
+        a helpful message is shown instead of exiting with an error.
+
+        Presets that use the ``releases`` list are expanded and shown as
+        individual entries (one per release).
+
+        Args:
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        raw_presets = self.model.registry.bsp if self.model else []
+        if not raw_presets:
+            print("No BSP presets defined in registry")
+            print(
+                "Use 'bsp list devices', 'bsp list releases', or "
+                "'bsp list features' to see available components."
+            )
+            return
+
+        presets = self.resolver.list_presets()
+        print(_header("Available BSP presets:"))
+        for preset in presets:
+            extra_parts = []
+            if preset.vendor_release:
+                extra_parts.append(f"vendor_release: {preset.vendor_release}")
+            if getattr(preset, "override", None):
+                extra_parts.append(f"override: {preset.override}")
+            if preset.features:
+                extra_parts.append(f"features: {', '.join(preset.features)}")
+            extra_str = (", " + ", ".join(extra_parts)) if extra_parts else ""
+            print(
+                f"- {_name(preset.name)}: {preset.description} "
+                + _dim(f"(device: {preset.device}, release: {preset.release}{extra_str})")
+            )
+
+    def list_devices(self, use_color: bool = True) -> None:
+        """
+        List all hardware devices defined in the registry.
+
+        Args:
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        devices = self.model.registry.devices if self.model else []
+        if not devices:
+            print("No devices found in registry")
+            return
+
+        print(_header("Available devices:"))
+        for device in devices:
+            soc_family = (
+                f", soc_family: {device.soc_family}" if device.soc_family else ""
+            )
+            print(
+                f"- {_name(device.slug)}: {device.description} "
+                + _dim(f"(vendor: {device.vendor}, soc_vendor: {device.soc_vendor}{soc_family})")
+            )
+
+    def list_releases(self, device_slug: Optional[str] = None, use_color: bool = True) -> None:
+        """
+        List all release definitions in the registry.
+
+        For each release, vendor overrides are shown together with their
+        optional sub-releases (vendor releases).
+
+        Args:
+            device_slug: If provided, filter releases to those compatible with
+                         the device's vendor (via vendor_overrides). A release is
+                         shown when it has no vendor_overrides (generic), or when
+                         it has at least one vendor_overrides entry whose vendor
+                         matches the device's board vendor.  When omitted, all
+                         releases are shown.
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        releases = self.model.registry.releases if self.model else []
+        if not releases:
+            print("No releases found in registry")
+            return
+
+        if device_slug:
+            # Validate the device exists (exits on failure)
+            device = self.resolver.get_device(device_slug)
+            # Filter: keep releases that are generic OR have a matching vendor entry
+            releases = [
+                r for r in releases
+                if not r.vendor_overrides
+                or any(vo.vendor == device.vendor for vo in r.vendor_overrides)
+            ]
+            print(_header(f"Releases compatible with device '{device_slug}':"))
+        else:
+            print(_header("Available releases:"))
+
+        for release in releases:
+            yocto = f" [Yocto {release.yocto_version}]" if release.yocto_version else ""
+            isar = f" [Isar {release.isar_version}]" if release.isar_version else ""
+            distro_str = f", distro: {release.distro}" if release.distro else ""
+            env_str = f", environment: {release.environment}" if release.environment else ""
+            meta = f"{yocto}{isar}{distro_str}{env_str}"
+            print(
+                f"- {_name(release.slug)}: {release.description}"
+                + (_dim(meta) if meta else "")
+            )
+            # Show vendor overrides and their sub-releases
+            for vo in release.vendor_overrides:
+                vo_parts = [f"vendor: {vo.vendor}"]
+                if vo.slug:
+                    vo_parts.append(f"slug: {vo.slug}")
+                if vo.distro:
+                    vo_parts.append(f"distro: {vo.distro}")
+                vo_line = "  " + _dim(f"  override [{', '.join(vo_parts)}]")
+                print(vo_line)
+                for vr in vo.releases:
+                    print("  " + _dim(f"    release: {vr.slug} — {vr.description}"))
+                for svo in vo.soc_vendors:
+                    svo_parts = [f"soc_vendor: {svo.vendor}"]
+                    if svo.distro:
+                        svo_parts.append(f"distro: {svo.distro}")
+                    print("  " + _dim(f"    [{', '.join(svo_parts)}]"))
+                    for vr in svo.releases:
+                        print("  " + _dim(f"      release: {vr.slug} — {vr.description}"))
+
+    def list_features(self, use_color: bool = True) -> None:
+        """
+        List all feature definitions in the registry.
+
+        Args:
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        features = self.model.registry.features if self.model else []
+        if not features:
+            print("No features found in registry")
+            return
+
+        print(_header("Available features:"))
+        for feature in features:
+            compat_parts = []
+            if feature.compatibility:
+                if feature.compatibility.vendor:
+                    compat_parts.append(f"vendor: {feature.compatibility.vendor}")
+                if feature.compatibility.soc_vendor:
+                    compat_parts.append(f"soc_vendor: {feature.compatibility.soc_vendor}")
+                if feature.compatibility.soc_family:
+                    compat_parts.append(f"soc_family: {feature.compatibility.soc_family}")
+            if feature.compatible_with:
+                compat_parts.append(f"compatible_with: {', '.join(feature.compatible_with)}")
+            compat_str = _dim(f" [requires {', '.join(compat_parts)}]") if compat_parts else ""
+            print(f"- {_name(feature.slug)}: {feature.description}{compat_str}")
+
+    def list_distros(self, use_color: bool = True) -> None:
+        """
+        List all distribution/build-system definitions in the registry.
+
+        Args:
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        distros = self.model.registry.distro if self.model else []
+        if not distros:
+            print("No distros found in registry")
+            return
+
+        print(_header("Available distros:"))
+        for distro in distros:
+            fw_str = f", framework: {distro.framework}" if distro.framework else ""
+            print(
+                f"- {_name(distro.slug)}: {distro.description} "
+                + _dim(f"(vendor: {distro.vendor}{fw_str})")
+            )
+
+    def list_frameworks(self, use_color: bool = True) -> None:
+        """
+        List all build-system framework definitions in the registry.
+
+        Args:
+            use_color: Enable colored output (requires colorama).
+        """
+        _header, _name, _dim = self._color_helpers(use_color)
+
+        frameworks = self.model.registry.frameworks if self.model else []
+        if not frameworks:
+            print("No frameworks found in registry")
+            return
+
+        print(_header("Available frameworks:"))
+        for framework in frameworks:
+            print(
+                f"- {_name(framework.slug)}: {framework.description} "
+                + _dim(f"(vendor: {framework.vendor})")
+            )
+
+    def list_containers(self, use_color: bool = True) -> None:
         """
         List all available containers in the registry.
 
-        Raises:
-            SystemExit: If no containers are found in registry
+        Args:
+            use_color: Enable colored output (requires colorama).
         """
+        _header, _name, _dim = self._color_helpers(use_color)
+
         if not self.containers:
-            logging.info("No container definitions found in registry")
+            print("No container definitions found in registry")
             return
 
-        logging.info("Available Containers:")
+        print(_header("Available Containers:"))
         for container_name, container_config in self.containers.items():
-            print(f"- {container_name}:")
-            print(f"    Image: {container_config.image}")
-            print(f"    File: {container_config.file}")
+            print(f"- {_name(container_name)}:")
+            print(f"    Image: {_dim(container_config.image)}")
+            print(f"    File: {_dim(container_config.file)}")
             if container_config.args:
-                print(f"    Args: {', '.join([f'{arg.name}={arg.value}' for arg in container_config.args])}")
+                args_str = ', '.join([f'{arg.name}={arg.value}' for arg in container_config.args])
+                print(f"    Args: {_dim(args_str)}")
 
-    def get_bsp_by_name(self, bsp_name: str) -> BSP:
+    def tree_bsp(self, use_color: bool = True, mode: str = "default") -> None:
         """
-        Retrieve BSP configuration by name.
+        Print a colored ASCII tree of the full BSP registry hierarchy.
+
+        The tree is organized into sections (Frameworks, Distros, Releases,
+        Devices, Features, BSP Presets) and uses Unicode box-drawing characters
+        for the connectors.  Colorama colors are applied when *use_color* is
+        ``True`` and colorama is installed; otherwise plain text is rendered.
 
         Args:
-            bsp_name: Name of the BSP to retrieve
+            use_color: Enable colored output (requires colorama).  Ignored when
+                       colorama is not installed.
+            mode: Display mode — ``"default"`` (standard detail level including
+                  vendor overrides/releases), ``"compact"`` (names/slugs only),
+                  or ``"full"`` (all details including includes lists).
+        """
+
+        colored = use_color and COLORAMA_AVAILABLE
+
+        # -----------------------------------------------------------------
+        # Color helpers (no-op when color is disabled)
+        # -----------------------------------------------------------------
+        def _c(text: str, *styles) -> str:
+            if not colored:
+                return text
+            return "".join(styles) + text + Style.RESET_ALL
+
+        # Convenience aliases
+        def _header(text: str) -> str:
+            return _c(text, Fore.CYAN, Style.BRIGHT)
+
+        def _name(text: str) -> str:
+            return _c(text, Fore.YELLOW)
+
+        def _dim(text: str) -> str:
+            return _c(text, Style.DIM)
+
+        def _slug(text: str) -> str:
+            return _c(text, Fore.GREEN) if colored else text
+
+        # -----------------------------------------------------------------
+        # Tree connector characters
+        # -----------------------------------------------------------------
+        BRANCH = "├── "
+        LAST   = "└── "
+        PIPE   = "│   "
+        BLANK  = "    "
+
+        compact = mode == "compact"
+        full    = mode == "full"
+
+        def _print_sub_lines(sub_lines: list, prefix: str) -> None:
+            """Print a list of already-formatted sub-lines with tree connectors."""
+            for idx, line in enumerate(sub_lines):
+                conn = LAST if idx == len(sub_lines) - 1 else BRANCH
+                print(f"{prefix}{conn}{line}")
+
+        def _print_includes(includes: list, prefix: str, label: str = "includes") -> None:
+            """Print an includes list as a sub-tree node.
+
+            Used in full mode to display KAS include file lists for frameworks,
+            distros, devices, features, vendor overrides, and vendor releases.
+            """
+            if not includes:
+                return
+            print(f"{prefix}{BRANCH}{_dim(label + ':')}")
+            inc_prefix = prefix + PIPE
+            for inc_idx, inc in enumerate(includes):
+                conn = LAST if inc_idx == len(includes) - 1 else BRANCH
+                print(f"{inc_prefix}{conn}{_dim(inc)}")
+
+        # -----------------------------------------------------------------
+        # Registry root
+        # -----------------------------------------------------------------
+        registry = self.model.registry if self.model else None
+        print(_header("BSP Registry"))
+
+        # Determine which top-level sections are present and non-empty
+        frameworks = (registry.frameworks or []) if registry else []
+        distros    = (registry.distro or [])      if registry else []
+        releases   = (registry.releases or [])    if registry else []
+        devices    = (registry.devices or [])     if registry else []
+        features   = (registry.features or [])    if registry else []
+        presets    = self.resolver.list_presets()  if self.resolver else []
+
+        sections = [
+            ("Frameworks", frameworks),
+            ("Distros",    distros),
+            ("Releases",   releases),
+            ("Devices",    devices),
+            ("Features",   features),
+            ("BSP Presets", presets),
+        ]
+        # Filter empty sections
+        sections = [(name, items) for name, items in sections if items]
+
+        for sec_idx, (sec_name, items) in enumerate(sections):
+            is_last_section = sec_idx == len(sections) - 1
+            sec_connector  = LAST if is_last_section else BRANCH
+            sec_prefix     = BLANK if is_last_section else PIPE
+
+            print(f"{sec_connector}{_header(sec_name)} ({len(items)})")
+
+            items = list(items)
+            for item_idx, item in enumerate(items):
+                is_last_item = item_idx == len(items) - 1
+                item_connector = LAST if is_last_item else BRANCH
+                item_prefix    = sec_prefix + (BLANK if is_last_item else PIPE)
+
+                # -------------------------------------------------------
+                # Per-section formatting
+                # -------------------------------------------------------
+                if sec_name == "Frameworks":
+                    detail = _dim(f" (vendor: {item.vendor})") if not compact else ""
+                    print(f"{sec_prefix}{item_connector}{_name(item.slug)}: {item.description}{detail}")
+                    if full:
+                        _print_includes(item.includes, item_prefix)
+
+                elif sec_name == "Distros":
+                    if not compact:
+                        parts = [f"vendor: {item.vendor}"] if item.vendor else []
+                        if item.framework:
+                            parts.append(f"framework: {item.framework}")
+                        detail = _dim(f" ({', '.join(parts)})") if parts else ""
+                    else:
+                        detail = ""
+                    print(f"{sec_prefix}{item_connector}{_name(item.slug)}: {item.description}{detail}")
+                    if full:
+                        _print_includes(item.includes, item_prefix)
+
+                elif sec_name == "Releases":
+                    if not compact:
+                        tags = []
+                        if item.yocto_version:
+                            tags.append(f"Yocto {item.yocto_version}")
+                        if item.isar_version:
+                            tags.append(f"Isar {item.isar_version}")
+                        tag_str = _dim(f" [{', '.join(tags)}]") if tags else ""
+                    else:
+                        tag_str = ""
+                    print(f"{sec_prefix}{item_connector}{_name(item.slug)}: {item.description}{tag_str}")
+
+                    if compact:
+                        continue
+
+                    # Sub-items: distro + vendor overrides
+                    # Build a flat list for compact/default; use nested tree for full
+                    if full:
+                        sub_lines = []
+                        if item.distro:
+                            sub_lines.append(_dim(f"distro: {item.distro}"))
+                        if item.includes:
+                            sub_lines.append(_dim(f"includes: {', '.join(item.includes)}"))
+                        _print_sub_lines(sub_lines, item_prefix)
+
+                        # Vendor overrides as a nested sub-tree
+                        for vo_idx, vo in enumerate(item.vendor_overrides):
+                            is_last_vo = vo_idx == len(item.vendor_overrides) - 1
+                            vo_conn   = LAST if is_last_vo else BRANCH
+                            vo_prefix = item_prefix + (BLANK if is_last_vo else PIPE)
+
+                            vo_tags = []
+                            if vo.slug:
+                                vo_tags.append(f"slug: {vo.slug}")
+                            if vo.distro:
+                                vo_tags.append(f"distro: {vo.distro}")
+                            vo_tag_str = _dim(f" ({', '.join(vo_tags)})") if vo_tags else ""
+                            print(
+                                f"{item_prefix}{vo_conn}"
+                                f"{_dim('vendor override: ')}{_slug(vo.vendor)}{vo_tag_str}"
+                            )
+
+                            # Vendor override includes
+                            vo_sub = []
+                            if vo.includes:
+                                vo_sub.append(_dim(f"includes: {', '.join(vo.includes)}"))
+                            _print_sub_lines(vo_sub, vo_prefix)
+
+                            # SoC vendor entries (if present), else flat vendor releases
+                            if vo.soc_vendors:
+                                for svo_idx, svo in enumerate(vo.soc_vendors):
+                                    is_last_svo = svo_idx == len(vo.soc_vendors) - 1
+                                    svo_conn   = LAST if is_last_svo else BRANCH
+                                    svo_prefix = vo_prefix + (BLANK if is_last_svo else PIPE)
+
+                                    svo_tag_str = _dim(f" (distro: {svo.distro})") if svo.distro else ""
+                                    print(
+                                        f"{vo_prefix}{svo_conn}"
+                                        f"{_dim('soc vendor: ')}{_slug(svo.vendor)}{svo_tag_str}"
+                                    )
+
+                                    # SoC vendor includes
+                                    svo_sub = []
+                                    if svo.includes:
+                                        svo_sub.append(_dim(f"includes: {', '.join(svo.includes)}"))
+                                    _print_sub_lines(svo_sub, svo_prefix)
+
+                                    # SoC vendor releases
+                                    for vr_idx, vr in enumerate(svo.releases):
+                                        is_last_vr = vr_idx == len(svo.releases) - 1
+                                        vr_conn   = LAST if is_last_vr else BRANCH
+                                        vr_prefix = svo_prefix + (BLANK if is_last_vr else PIPE)
+                                        print(
+                                            f"{svo_prefix}{vr_conn}"
+                                            f"{_dim('vendor release: ')}{_slug(vr.slug)}: {vr.description}"
+                                        )
+                                        _print_includes(vr.includes, vr_prefix)
+                            else:
+                                # Vendor releases
+                                for vr_idx, vr in enumerate(vo.releases):
+                                    is_last_vr = vr_idx == len(vo.releases) - 1
+                                    vr_conn   = LAST if is_last_vr else BRANCH
+                                    vr_prefix = vo_prefix + (BLANK if is_last_vr else PIPE)
+                                    print(
+                                        f"{vo_prefix}{vr_conn}"
+                                        f"{_dim('vendor release: ')}{_slug(vr.slug)}: {vr.description}"
+                                    )
+                                    _print_includes(vr.includes, vr_prefix)
+                    else:
+                        # default mode: flat sub-lines showing distro + vendor overrides
+                        sub_items = []
+                        if item.distro:
+                            sub_items.append(_dim(f"distro: {item.distro}"))
+                        for vo in item.vendor_overrides:
+                            vo_parts = [f"vendor override: {vo.vendor}"]
+                            if vo.slug:
+                                vo_parts.append(f"slug: {vo.slug}")
+                            if vo.distro:
+                                vo_parts.append(f"distro: {vo.distro}")
+                            if vo.soc_vendors:
+                                svo_strs = []
+                                for svo in vo.soc_vendors:
+                                    svo_p = [svo.vendor]
+                                    if svo.distro:
+                                        svo_p.append(f"distro: {svo.distro}")
+                                    svo_vr_names = [vr.slug for vr in svo.releases]
+                                    if svo_vr_names:
+                                        svo_p.append(f"releases: {', '.join(svo_vr_names)}")
+                                    svo_strs.append(f"[{'; '.join(svo_p)}]")
+                                vo_parts.append(f"soc vendors: {', '.join(svo_strs)}")
+                            else:
+                                vr_names = [vr.slug for vr in vo.releases]
+                                if vr_names:
+                                    vo_parts.append(f"releases: {', '.join(vr_names)}")
+                            sub_items.append(_dim(", ".join(vo_parts)))
+                        _print_sub_lines(sub_items, item_prefix)
+
+                elif sec_name == "Devices":
+                    if not compact:
+                        parts = [f"vendor: {item.vendor}", f"soc_vendor: {item.soc_vendor}"]
+                        if item.soc_family:
+                            parts.append(f"soc_family: {item.soc_family}")
+                        detail = _dim(f" ({', '.join(parts)})")
+                    else:
+                        detail = ""
+                    print(f"{sec_prefix}{item_connector}{_name(item.slug)}: {item.description}{detail}")
+                    if full:
+                        _print_includes(item.includes, item_prefix)
+
+                elif sec_name == "Features":
+                    if not compact:
+                        compat_parts = []
+                        if item.compatibility:
+                            if item.compatibility.vendor:
+                                compat_parts.append(f"vendor: {item.compatibility.vendor}")
+                            if item.compatibility.soc_vendor:
+                                compat_parts.append(f"soc_vendor: {item.compatibility.soc_vendor}")
+                            if item.compatibility.soc_family:
+                                compat_parts.append(f"soc_family: {item.compatibility.soc_family}")
+                        if item.compatible_with:
+                            compat_parts.append(f"compatible_with: {', '.join(item.compatible_with)}")
+                        compat_str = _dim(f" [requires {', '.join(compat_parts)}]") if compat_parts else ""
+                    else:
+                        compat_str = ""
+                    print(f"{sec_prefix}{item_connector}{_name(item.slug)}: {item.description}{compat_str}")
+                    if full:
+                        _print_includes(item.includes, item_prefix)
+
+                        # Vendor overrides as a nested sub-tree
+                        for vo_idx, vo in enumerate(item.vendor_overrides):
+                            is_last_vo = vo_idx == len(item.vendor_overrides) - 1
+                            vo_conn   = LAST if is_last_vo else BRANCH
+                            vo_prefix = item_prefix + (BLANK if is_last_vo else PIPE)
+
+                            vo_tags = []
+                            if vo.slug:
+                                vo_tags.append(f"slug: {vo.slug}")
+                            if vo.distro:
+                                vo_tags.append(f"distro: {vo.distro}")
+                            vo_tag_str = _dim(f" ({', '.join(vo_tags)})") if vo_tags else ""
+                            print(
+                                f"{item_prefix}{vo_conn}"
+                                f"{_dim('vendor override: ')}{_slug(vo.vendor)}{vo_tag_str}"
+                            )
+
+                            # Vendor override includes
+                            vo_sub = []
+                            if vo.includes:
+                                vo_sub.append(_dim(f"includes: {', '.join(vo.includes)}"))
+                            _print_sub_lines(vo_sub, vo_prefix)
+
+                            # SoC vendor entries (if present), else flat vendor releases
+                            if vo.soc_vendors:
+                                for svo_idx, svo in enumerate(vo.soc_vendors):
+                                    is_last_svo = svo_idx == len(vo.soc_vendors) - 1
+                                    svo_conn   = LAST if is_last_svo else BRANCH
+                                    svo_prefix = vo_prefix + (BLANK if is_last_svo else PIPE)
+
+                                    svo_tag_str = _dim(f" (distro: {svo.distro})") if svo.distro else ""
+                                    print(
+                                        f"{vo_prefix}{svo_conn}"
+                                        f"{_dim('soc vendor: ')}{_slug(svo.vendor)}{svo_tag_str}"
+                                    )
+
+                                    # SoC vendor includes
+                                    svo_sub = []
+                                    if svo.includes:
+                                        svo_sub.append(_dim(f"includes: {', '.join(svo.includes)}"))
+                                    _print_sub_lines(svo_sub, svo_prefix)
+
+                                    # SoC vendor releases
+                                    for vr_idx, vr in enumerate(svo.releases):
+                                        is_last_vr = vr_idx == len(svo.releases) - 1
+                                        vr_conn   = LAST if is_last_vr else BRANCH
+                                        vr_prefix = svo_prefix + (BLANK if is_last_vr else PIPE)
+                                        print(
+                                            f"{svo_prefix}{vr_conn}"
+                                            f"{_dim('vendor release: ')}{_slug(vr.slug)}: {vr.description}"
+                                        )
+                                        _print_includes(vr.includes, vr_prefix)
+                            else:
+                                # Vendor releases
+                                for vr_idx, vr in enumerate(vo.releases):
+                                    is_last_vr = vr_idx == len(vo.releases) - 1
+                                    vr_conn   = LAST if is_last_vr else BRANCH
+                                    vr_prefix = vo_prefix + (BLANK if is_last_vr else PIPE)
+                                    print(
+                                        f"{vo_prefix}{vr_conn}"
+                                        f"{_dim('vendor release: ')}{_slug(vr.slug)}: {vr.description}"
+                                    )
+                                    _print_includes(vr.includes, vr_prefix)
+
+                elif sec_name == "BSP Presets":
+                    print(f"{sec_prefix}{item_connector}{_name(item.name)}: {item.description}")
+                    if compact:
+                        continue
+                    sub_lines = []
+                    sub_lines.append(
+                        _dim(f"device: {item.device}  release: {item.release}")
+                    )
+                    if item.vendor_release:
+                        sub_lines.append(_dim(f"vendor release: {item.vendor_release}"))
+                    if full and getattr(item, "override", None):
+                        sub_lines.append(_dim(f"override: {item.override}"))
+                    if item.features:
+                        sub_lines.append(
+                            _dim(f"features: {', '.join(item.features)}")
+                        )
+                    _print_sub_lines(sub_lines, item_prefix)
+
+        if not sections:
+            print(f"{LAST}{_dim('(empty registry)')}")
+
+    # ------------------------------------------------------------------
+    # Preset lookup
+    # ------------------------------------------------------------------
+
+    def get_bsp_by_name(self, bsp_name: str) -> BspPreset:
+        """
+        Retrieve a BSP preset configuration by name.
+
+        Presets that use the ``releases`` list are expanded first; the
+        caller must use the expanded name (``{name}-{release_slug}``).
+
+        Args:
+            bsp_name: Name of the preset to retrieve
 
         Returns:
-            BSP configuration object
+            BspPreset configuration object
 
         Raises:
-            SystemExit: If BSP with given name is not found
+            SystemExit: If preset with given name is not found
         """
-        for bsp in self.model.registry.bsp:
-            if bsp.name == bsp_name:
-                return bsp
+        for preset in self.resolver.list_presets():
+            if preset.name == bsp_name:
+                return preset
 
-        # BSP not found - show error with available options
-        logging.error(f"BSP not found: {bsp_name}")
-        logging.info("Available BSPs:")
-        for bsp in self.model.registry.bsp:
-            logging.info(f"  - {bsp.name}")
+        logging.error(f"BSP preset not found: '{bsp_name}'")
+        available = [p.name for p in self.resolver.list_presets()]
+        print("Available presets: " + (", ".join(available) or "(none)"))
         sys.exit(1)
 
-    def get_container_config_for_bsp(self, bsp: BSP) -> Docker:
-        """
-        Get the Docker configuration for a BSP, resolving container references.
-
-        This method supports both direct Docker configuration and container references.
-        Priority: container reference > direct Docker configuration.
-
-        Args:
-            bsp: BSP configuration object
-
-        Returns:
-            Docker configuration for the BSP
-
-        Raises:
-            SystemExit: If container reference cannot be resolved or configuration is missing
-        """
-        build_env = bsp.build.environment
-
-        # First check for container reference
-        if build_env.container:
-            container_name = build_env.container
-            if container_name in self.containers:
-                logging.info(f"Using container reference: {container_name}")
-                return self.containers[container_name]
-            else:
-                logging.error(f"Container '{container_name}' not found in registry containers")
-                logging.info("Available containers:")
-                for name in self.containers.keys():
-                    logging.info(f"  - {name}")
-                sys.exit(1)
-
-        # Fall back to direct Docker configuration
-        elif build_env.docker:
-            logging.info("Using direct Docker configuration")
-            return build_env.docker
-
-        # No container configuration found
-        else:
-            logging.error(f"No container configuration found for BSP {bsp.name}")
-            logging.info("Either specify 'container' to reference a registry container or provide 'docker' configuration")
-            sys.exit(1)
+    # ------------------------------------------------------------------
+    # Build directory helpers
+    # ------------------------------------------------------------------
 
     def prepare_build_directory(self, build_path: str) -> None:
         """
@@ -199,222 +765,516 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
-    def _get_kas_manager_for_bsp(self, bsp: BSP, use_container: bool = True) -> KasManager:
+    def _copy_files(self, resolved: ResolvedConfig) -> None:
         """
-        Create and configure a KAS manager for the specified BSP.
+        Copy files into the build environment before the build starts.
+
+        Each entry in ``resolved.copy`` is a single-key dict mapping a source
+        path to a destination path.  The source path is resolved relative to
+        the registry file's parent directory.  The destination path is resolved
+        relative to the BSP's build directory (``resolved.build_path``), so
+        that copied files land directly inside the build workspace for the
+        current BSP.  If the destination ends with ``/`` or is an existing
+        directory the source filename is preserved inside it.
+
+        The copied files are therefore accessible inside the build container
+        because the build directory is mounted into the container during the
+        build.
 
         Args:
-            bsp: BSP configuration object
-            use_container: Whether to use containerized KAS (default: True)
+            resolved: Resolved build configuration containing copy entries.
+
+        Raises:
+            SystemExit: If a source file does not exist.
+        """
+        if not resolved.copy:
+            return
+
+        base = self.config_path.parent
+        # Destination paths are relative to the BSP's build directory so that
+        # copied files land inside the build workspace for the current BSP.
+        # When build_path is empty (no preset, direct resolve() call) fall back
+        # to the registry directory to preserve backward-compatible behaviour.
+        raw_build_path = resolved.build_path or ""
+        if raw_build_path:
+            build_abs = Path(raw_build_path)
+            if not build_abs.is_absolute():
+                build_abs = (base / build_abs).resolve()
+            else:
+                build_abs = build_abs.resolve()
+        else:
+            build_abs = base.resolve()
+
+        for copy_entry in resolved.copy:
+            for src, dst in copy_entry.items():
+                src_path = Path(src)
+                if not src_path.is_absolute():
+                    src_path = (base / src_path).resolve()
+
+                if not src_path.exists():
+                    self.logger.error(
+                        f"Copy source file not found: {src_path}"
+                    )
+                    sys.exit(1)
+
+                dst_path = Path(dst)
+                if not dst_path.is_absolute():
+                    dst_path = (build_abs / dst_path).resolve()
+
+                # If destination looks like a directory (trailing slash or
+                # already is one), place the file inside it.
+                if str(dst).endswith("/") or dst_path.is_dir():
+                    dst_path = dst_path / src_path.name
+
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    self.logger.info(f"Copying file: {src_path} -> {dst_path}")
+                    shutil.copy2(str(src_path), str(dst_path))
+                except OSError as e:
+                    self.logger.error(
+                        f"Failed to copy '{src_path}' to '{dst_path}': {e}"
+                    )
+                    sys.exit(1)
+                self.logger.info(f"Copied {src_path} -> {dst_path}")
+
+    # ------------------------------------------------------------------
+    # Internal: KasManager factory for a resolved config
+    # ------------------------------------------------------------------
+
+    def _get_kas_manager_for_resolved(
+        self,
+        resolved: ResolvedConfig,
+        use_container: bool = True,
+    ) -> KasManager:
+        """
+        Create a KasManager for the given ResolvedConfig.
+
+        If the resolved config includes local_conf additions, a temporary
+        KAS YAML file is generated to carry those into the build.  The
+        caller is responsible for deleting the temp file when done.
+
+        Environment variables are merged in this order (later entries win):
+        1. Root-level ``environment`` list (global defaults)
+        2. Named environment variables from ``resolved.env``
+
+        Args:
+            resolved: Resolved device+release+features build config
+            use_container: Whether to use containerized KAS
 
         Returns:
             Configured KasManager instance
         """
-        # Get container configuration
-        container_config = self.get_container_config_for_bsp(bsp)
+        # Build per-build EnvironmentManager: root vars merged with
+        # named-env / feature vars from the resolved config.
+        root_vars: List[EnvironmentVariable] = (
+            list(self.model.environment.variables)
+            if self.model.environment and self.model.environment.variables
+            else []
+        )
+        # resolved.env contains named-env vars first, then feature vars.
+        # Merge by appending; later keys win in EnvironmentManager.
+        merged_vars = root_vars + list(resolved.env)
+        # Always create a fresh EnvironmentManager from merged vars so that
+        # named-env and feature variables are applied for this specific build.
+        # Fall back to the global env_manager only when no vars exist at all.
+        env_mgr = EnvironmentManager(merged_vars) if merged_vars else self.env_manager
 
-        # Get cache directories from environment manager
-        downloads = None
-        sstate = None
+        downloads = env_mgr.get_value("DL_DIR") if env_mgr else None
+        sstate = env_mgr.get_value("SSTATE_DIR") if env_mgr else None
 
-        if self.env_manager:
-            downloads = self.env_manager.get_value('DL_DIR')
-            sstate = self.env_manager.get_value('SSTATE_DIR')
-
-        # Ensure cache directories exist if specified
         if downloads:
             resolver.ensure_directory(downloads)
         if sstate:
             resolver.ensure_directory(sstate)
 
-        # Initialize KAS manager with environment configuration
+        # Determine KAS file list: generate a composed YAML when we have
+        # local_conf additions so that everything is in a single entry-point.
+        if resolved.local_conf:
+            temp_fd, temp_path = tempfile.mkstemp(
+                prefix="bsp_composed_", suffix=".yml"
+            )
+            os.close(temp_fd)
+            self.resolver.generate_kas_yaml(
+                resolved,
+                temp_path,
+                base_dir=str(self.config_path.parent),
+            )
+            kas_files = [temp_path]
+            self._temp_kas_file = temp_path
+        else:
+            # Resolve relative paths against the registry directory
+            base = self.config_path.parent
+            kas_files = []
+            for f in resolved.kas_files:
+                p = Path(f)
+                if p.is_absolute():
+                    kas_files.append(str(p))
+                else:
+                    kas_files.append(str((base / p).resolve()))
+            self._temp_kas_file = None
+
+        container_image = (
+            resolved.container.image
+            if resolved.container and use_container
+            else None
+        )
+        container_runtime_args = (
+            resolved.container.runtime_args
+            if resolved.container and use_container
+            else None
+        )
+
         kas_mgr = KasManager(
-            bsp.build.configuration,
-            bsp.build.path,
+            kas_files,
+            resolved.build_path,
             download_dir=downloads,
             sstate_dir=sstate,
             use_container=use_container,
-            container_image=container_config.image if use_container else None,
-            container_privileged=container_config.privileged if use_container else False,
+            container_image=container_image,
+            container_runtime_args=container_runtime_args,
+            container_privileged=(
+                resolved.container.privileged if resolved.container and use_container else False
+            ),
             search_paths=[str(self.config_path.parent)],
-            env_manager=self.env_manager
+            env_manager=env_mgr,
+        )
+        return kas_mgr
+
+    def _cleanup_temp_kas_file(self) -> None:
+        """Remove the temporary KAS YAML file if one was created."""
+        temp_file = getattr(self, "_temp_kas_file", None)
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+                logging.debug(f"Removed temporary KAS file: {temp_file}")
+            except OSError as e:
+                logging.warning(f"Could not remove temporary KAS file: {e}")
+        self._temp_kas_file = None
+
+    # ------------------------------------------------------------------
+    # Build
+    # ------------------------------------------------------------------
+
+    def _build_resolved(
+        self,
+        resolved: ResolvedConfig,
+        checkout_only: bool = False,
+        label: str = "",
+    ) -> None:
+        """
+        Execute a build (or checkout) for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration
+            checkout_only: If True, only checkout and validate without building
+            label: Descriptive label for log messages
+        """
+        action = "Checking out" if checkout_only else "Building"
+        logging.info(f"{action} {label or resolved.device.slug}")
+
+        # Build Docker image if needed (skip in checkout mode)
+        if not checkout_only and resolved.container:
+            container = resolved.container
+            if container.file and container.image:
+                build_docker(
+                    str(self.config_path.parent),
+                    container.file,
+                    container.image,
+                    container.args,
+                    verbose=self.verbose,
+                )
+        else:
+            if checkout_only:
+                logging.info("Skipping Docker build in checkout mode")
+
+        self.prepare_build_directory(resolved.build_path)
+        self._copy_files(resolved)
+
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved, use_container=not checkout_only
         )
 
-        return kas_mgr
+        try:
+            config_output = kas_mgr.dump_config(show_output=False)
+            if config_output:
+                logging.debug("Configuration dump:\n" + config_output)
+
+            if checkout_only:
+                logging.info("Performing checkout and validation (no build)...")
+                kas_mgr.checkout_project()
+                logging.info(f"Checkout and validation completed successfully!")
+            else:
+                kas_mgr.build_project()
+                logging.info(f"Build completed successfully!")
+        finally:
+            self._cleanup_temp_kas_file()
 
     def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
         """
-        Build a specific BSP including Docker image and Yocto build.
-
-        This is the main build method that orchestrates the complete
-        BSP build process from Docker image creation to Yocto build.
-        When checkout_only is True, performs checkout and validation without the full build.
+        Build a BSP by preset name.
 
         Args:
-            bsp_name: Name of the BSP to build
-            checkout_only: If True, only checkout and validate configuration without building
+            bsp_name: Name of the BSP preset to build
+            checkout_only: If True, only checkout and validate without building
 
         Raises:
-            SystemExit: If any step of the build process fails
+            SystemExit: If preset not found or build fails
         """
-        if checkout_only:
-            logging.info(f"Checking out BSP: {bsp_name}")
-        else:
-            logging.info(f"Building BSP: {bsp_name}")
+        logging.info(f"{'Checking out' if checkout_only else 'Building'} BSP preset: {bsp_name}")
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        self._build_resolved(
+            resolved,
+            checkout_only=checkout_only,
+            label=f"{preset.name} - {preset.description}",
+        )
 
-        # Retrieve BSP configuration
-        bsp = self.get_bsp_by_name(bsp_name)
+    def build_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        checkout_only: bool = False,
+    ) -> None:
+        """
+        Build by specifying device, release, and optional features directly.
 
-        if checkout_only:
-            logging.info(f"Checking out {bsp.name} - {bsp.description}")
-        else:
-            logging.info(f"Building {bsp.name} - {bsp.description}")
+        Args:
+            device_slug: Device slug
+            release_slug: Release slug
+            feature_slugs: Optional list of feature slugs to enable
+            checkout_only: If True, only checkout and validate without building
 
-        # Get container configuration
-        container_config = self.get_container_config_for_bsp(bsp)
+        Raises:
+            SystemExit: If any component is not found, incompatible, or build fails
+        """
+        logging.info(
+            f"{'Checking out' if checkout_only else 'Building'} "
+            f"device={device_slug} release={release_slug} "
+            f"features={feature_slugs or []}"
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        self._build_resolved(
+            resolved,
+            checkout_only=checkout_only,
+            label=f"{device_slug}/{release_slug}",
+        )
 
-        # Build Docker image if configured (skip for checkout mode)
-        if not checkout_only:
-            if container_config.file and container_config.image:
-                build_docker(
-                    str(self.config_path.parent),
-                    container_config.file,
-                    container_config.image,
-                    container_config.args
+    # ------------------------------------------------------------------
+    # Shell
+    # ------------------------------------------------------------------
+
+    def _shell_resolved(
+        self,
+        resolved: ResolvedConfig,
+        command: Optional[str] = None,
+        label: str = "",
+    ) -> None:
+        """
+        Start a KAS shell session for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration
+            command: Optional command to run in the shell
+            label: Descriptive label for log messages
+        """
+        logging.info(f"Starting shell for {label or resolved.device.slug}")
+
+        if resolved.container:
+            container = resolved.container
+            if container.file and container.image:
+                logging.info("Building Docker image for shell environment...")
+                build_docker(str(self.config_path.parent), container.file, container.image, container.args)
+
+        self.prepare_build_directory(resolved.build_path)
+        self._copy_files(resolved)
+
+        kas_mgr = self._get_kas_manager_for_resolved(resolved, use_container=True)
+
+        try:
+            if command:
+                logging.info(f"Executing command: {command}")
+            else:
+                logging.info("Starting interactive KAS shell session...")
+                logging.info("Use 'Ctrl+D' or type 'exit' to leave the shell.")
+            kas_mgr.shell_session(command=command)
+        finally:
+            self._cleanup_temp_kas_file()
+
+    def shell_into_bsp(self, bsp_name: str, command: Optional[str] = None) -> None:
+        """
+        Enter interactive shell for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset
+            command: Optional command to execute in the shell
+
+        Raises:
+            SystemExit: If preset not found or shell fails
+        """
+        logging.info(f"Entering shell for BSP preset: {bsp_name}")
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        self._shell_resolved(
+            resolved, command=command, label=f"{preset.name} - {preset.description}"
+        )
+
+    def shell_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        command: Optional[str] = None,
+    ) -> None:
+        """
+        Enter interactive shell by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug
+            release_slug: Release slug
+            feature_slugs: Optional list of feature slugs
+            command: Optional command to execute in the shell
+
+        Raises:
+            SystemExit: If any component is not found or shell fails
+        """
+        logging.info(
+            f"Entering shell for device={device_slug} release={release_slug} "
+            f"features={feature_slugs or []}"
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        self._shell_resolved(
+            resolved, command=command, label=f"{device_slug}/{release_slug}"
+        )
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _export_resolved(
+        self,
+        resolved: ResolvedConfig,
+        output_file: Optional[str] = None,
+        label: str = "",
+    ) -> None:
+        """
+        Export KAS configuration for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration
+            output_file: Optional file path to save the configuration
+            label: Descriptive label for log messages
+        """
+        logging.info(f"Exporting KAS configuration for {label or resolved.device.slug}")
+
+        downloads = None
+        sstate = None
+        if self.env_manager:
+            downloads = self.env_manager.get_value("DL_DIR")
+            sstate = self.env_manager.get_value("SSTATE_DIR")
+
+        # Use a temporary build directory for export
+        with tempfile.TemporaryDirectory(prefix="bsp_export_") as temp_dir:
+            if resolved.local_conf:
+                temp_fd, temp_path = tempfile.mkstemp(
+                    prefix="bsp_composed_", suffix=".yml"
                 )
-        else:
-            logging.info("Skipping Docker build in checkout mode")
+                os.close(temp_fd)
+                self.resolver.generate_kas_yaml(
+                    resolved,
+                    temp_path,
+                    base_dir=str(self.config_path.parent),
+                )
+                kas_files = [temp_path]
+            else:
+                base = self.config_path.parent
+                kas_files = []
+                for f in resolved.kas_files:
+                    p = Path(f)
+                    if p.is_absolute():
+                        kas_files.append(str(p))
+                    else:
+                        kas_files.append(str((base / p).resolve()))
+                temp_path = None
 
-        # Prepare build directory
-        self.prepare_build_directory(bsp.build.path)
+            try:
+                kas_mgr = KasManager(
+                    kas_files,
+                    temp_dir,
+                    download_dir=downloads,
+                    sstate_dir=sstate,
+                    use_container=False,
+                    search_paths=[str(self.config_path.parent)],
+                    env_manager=self.env_manager,
+                )
+                config_yaml = kas_mgr.export_kas_config(output_file)
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
-        # Get KAS manager - use native KAS for checkout, container for builds
-        kas_mgr = self._get_kas_manager_for_bsp(bsp, use_container=not checkout_only)
+        if not output_file:
+            print("\n" + "=" * 60)
+            print(f"KAS Configuration for {label or resolved.device.slug}")
+            print("=" * 60)
+            print(config_yaml)
+            print("=" * 60)
 
-        # Dump configuration for verification (debugging)
-        config_output = kas_mgr.dump_config(show_output=False)
-        if config_output:
-            logging.debug("Configuration dump:")
-            logging.debug(config_output)
+        logging.info("Configuration exported successfully!")
 
-        if checkout_only:
-            # Execute checkout for validation only
-            logging.info("Performing checkout and validation (no build)...")
-            kas_mgr.checkout_project()
-            logging.info(f"BSP {bsp_name} checked out and validated successfully!")
-        else:
-            # Execute full build
-            kas_mgr.build_project()
-            logging.info(f"BSP {bsp_name} built successfully!")
-
-    def shell_into_bsp(self, bsp_name: str, command: str = None) -> None:
+    def export_bsp_config(
+        self, bsp_name: str, output_file: Optional[str] = None
+    ) -> None:
         """
-        Enter interactive shell session for the specified BSP.
-
-        This method launches an interactive shell within the Docker
-        container environment for the BSP, allowing manual execution
-        of build commands, BitBake operations, and debugging.
+        Export KAS configuration for a BSP preset.
 
         Args:
-            bsp_name: Name of the BSP to enter shell for
-            command: Optional command to execute in the shell (if not provided, starts interactive shell)
-
-        Raises:
-            SystemExit: If shell session cannot be started
-        """
-        logging.info(f"Entering shell for BSP: {bsp_name}")
-
-        # Retrieve BSP configuration
-        bsp = self.get_bsp_by_name(bsp_name)
-
-        logging.info(f"Starting shell session for {bsp.name} - {bsp.description}")
-
-        # Get container configuration
-        container_config = self.get_container_config_for_bsp(bsp)
-
-        # Build Docker image if configured (same as build process)
-        if container_config.file and container_config.image:
-            logging.info("Building Docker image for shell environment...")
-            build_docker(
-                str(self.config_path.parent),
-                container_config.file,
-                container_config.image,
-                container_config.args
-            )
-
-        # Prepare build directory
-        self.prepare_build_directory(bsp.build.path)
-
-        # Get KAS manager and start shell session
-        kas_mgr = self._get_kas_manager_for_bsp(bsp)
-
-        # Start interactive shell session
-        logging.info("Starting KAS shell session...")
-        if command:
-            logging.info(f"Executing command: {command}")
-        else:
-            logging.info("Interactive shell started. Available commands:")
-            logging.info("  - bitbake <recipe>    : Build a specific recipe")
-            logging.info("  - devtool <command>   : Use devtool for development workflows")
-            logging.info("  - oe-init-build-env   : Initialize build environment")
-            logging.info("  - exit                : Exit the shell session")
-            logging.info("Use 'Ctrl+D' or type 'exit' to leave the shell.")
-
-        kas_mgr.shell_session(command=command)
-
-    def export_bsp_config(self, bsp_name: str, output_file: Optional[str] = None) -> None:
-        """
-        Export BSP configuration in KAS format.
-
-        Args:
-            bsp_name: Name of the BSP to export
+            bsp_name: Name of the BSP preset to export
             output_file: Optional file path to save the configuration
 
         Raises:
-            SystemExit: If export fails
+            SystemExit: If preset not found or export fails
         """
-        logging.info(f"Exporting KAS configuration for BSP: {bsp_name}")
+        logging.info(f"Exporting KAS configuration for BSP preset: {bsp_name}")
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        self._export_resolved(
+            resolved,
+            output_file=output_file,
+            label=f"{preset.name} - {preset.description}",
+        )
 
-        # Retrieve BSP configuration
-        bsp = self.get_bsp_by_name(bsp_name)
+    def export_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        output_file: Optional[str] = None,
+    ) -> None:
+        """
+        Export KAS configuration by specifying device, release, and features directly.
 
-        logging.info(f"Exporting configuration for {bsp.name} - {bsp.description}")
+        Args:
+            device_slug: Device slug
+            release_slug: Release slug
+            feature_slugs: Optional list of feature slugs
+            output_file: Optional file path to save the configuration
 
-        # Get cache directories from environment manager
-        downloads = None
-        sstate = None
+        Raises:
+            SystemExit: If any component is not found or export fails
+        """
+        logging.info(
+            f"Exporting configuration for device={device_slug} release={release_slug} "
+            f"features={feature_slugs or []}"
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        self._export_resolved(
+            resolved,
+            output_file=output_file,
+            label=f"{device_slug}/{release_slug}",
+        )
 
-        if self.env_manager:
-            downloads = self.env_manager.get_value('DL_DIR')
-            sstate = self.env_manager.get_value('SSTATE_DIR')
-
-        # Create a temporary build directory for export operations
-        with tempfile.TemporaryDirectory(prefix=f"bsp_export_{bsp_name}_") as temp_dir:
-            # Initialize KAS manager with environment configuration
-            kas_mgr = KasManager(
-                bsp.build.configuration,
-                temp_dir,  # Use temporary directory for export
-                download_dir=downloads,
-                sstate_dir=sstate,
-                use_container=False,  # Don't need container for export
-                search_paths=[str(self.config_path.parent)],
-                env_manager=self.env_manager
-            )
-
-            # Export KAS configuration
-            config_yaml = kas_mgr.export_kas_config(output_file)
-
-            # If no output file specified, print to stdout
-            if not output_file:
-                print("\n" + "="*60)
-                print(f"KAS Configuration for BSP: {bsp_name}")
-                print("="*60)
-                print(config_yaml)
-                print("="*60)
-
-        logging.info(f"BSP {bsp_name} configuration exported successfully!")
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
 
     def cleanup(self) -> None:
         """Cleanup resources and perform any necessary finalization."""
         logging.debug("Cleaning up resources...")
-        # Add cleanup logic here if needed (e.g., temp files, connections)
+        self._cleanup_temp_kas_file()
