@@ -152,6 +152,15 @@ class TestBspLauncherAppComposition:
             btn = app.query_one("#btn-containers", Button)
             assert btn.disabled is False
 
+    async def test_cancel_button_disabled_by_default(self, registry_file):
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Button
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            btn = app.query_one("#btn-cancel", Button)
+            assert btn.disabled is True
+
 
 # =============================================================================
 # CLI routing: --gui flag and 'bsp gui' subcommand
