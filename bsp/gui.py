@@ -289,6 +289,7 @@ if TEXTUAL_AVAILABLE:
             Binding("s", "shell", "Shell"),
             Binding("e", "export_config", "Export"),
             Binding("c", "containers", "Containers"),
+            Binding("x", "cancel", "Cancel", show=False),
         ]
 
         def __init__(
@@ -306,6 +307,8 @@ if TEXTUAL_AVAILABLE:
             self._bsp_manager = None
             self._selected_bsp_name: Optional[str] = None
             self._running_process: Optional[subprocess.Popen] = None
+            self._is_loading: bool = False
+            self._load_lock = threading.Lock()
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -336,6 +339,7 @@ if TEXTUAL_AVAILABLE:
                 yield Button("$ Shell", id="btn-shell", variant="default", disabled=True)
                 yield Button("↑ Export", id="btn-export", variant="default", disabled=True)
                 yield Button("☰ Containers", id="btn-containers", variant="default")
+                yield Button("✕ Cancel", id="btn-cancel", variant="error", disabled=True)
 
             # Output log panel
             with Vertical(id="log-panel"):
@@ -357,6 +361,11 @@ if TEXTUAL_AVAILABLE:
 
         def _load_registry_async(self) -> None:
             """Spawn a thread to load the registry without blocking the UI."""
+            with self._load_lock:
+                if self._is_loading:
+                    self._log("[yellow]Registry load already in progress[/yellow]")
+                    return
+                self._is_loading = True
             self._set_status("Loading registry…")
             thread = threading.Thread(target=self._load_registry, daemon=True)
             thread.start()
@@ -407,11 +416,17 @@ if TEXTUAL_AVAILABLE:
                     self._log, f"[red]Error loading registry: {exc}[/red]"
                 )
                 self.call_from_thread(self._set_status, f"Error: {exc}")
+            finally:
+                with self._load_lock:
+                    self._is_loading = False
 
         def _populate_bsp_table(self, registry_path: str) -> None:
             """Update the BSP table with loaded data (runs on UI thread)."""
             table = self.query_one("#bsp-table", DataTable)
-            table.clear()
+            # Clear rows AND columns to fully reset table state, preventing
+            # "row key already exists" errors if populate is called more than once.
+            table.clear(columns=True)
+            table.add_columns("Name", "Description")
 
             label = self.query_one("#registry-label", Label)
             label.update(f"Registry: {registry_path}")
@@ -504,15 +519,17 @@ if TEXTUAL_AVAILABLE:
         def on_containers(self) -> None:
             self.action_containers()
 
+        @on(Button.Pressed, "#btn-cancel")
+        def on_cancel(self) -> None:
+            self.action_cancel()
+
         # ── Keybinding actions ───────────────────────────────────
 
         def action_refresh(self) -> None:
             """Reload the BSP registry."""
             self._bsp_manager = None
             self._selected_bsp_name = None
-            table = self.query_one("#bsp-table", DataTable)
-            table.clear()
-            for btn_id in ("#btn-build", "#btn-shell", "#btn-export"):
+            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
             self._load_registry_async()
@@ -556,6 +573,19 @@ if TEXTUAL_AVAILABLE:
             """List all containers in the registry."""
             self._run_bsp_command("containers")
 
+        def action_cancel(self) -> None:
+            """Terminate the currently running build/export command."""
+            proc = self._running_process
+            if proc is None:
+                self._log("[yellow]No command is currently running[/yellow]")
+                return
+            try:
+                proc.terminate()
+                self._log("[yellow]Cancelling running command…[/yellow]")
+                self._set_status("Cancelling…")
+            except OSError:
+                pass
+
         # ── CLI subprocess helper ────────────────────────────────
 
         def _run_bsp_command(self, *args: str) -> None:
@@ -581,6 +611,7 @@ if TEXTUAL_AVAILABLE:
 
             self._log(f"[bold]$ bsp {' '.join(args)}[/bold]")
             self._set_status(f"Running: bsp {' '.join(args)}")
+            self._set_cancel_button(disabled=False)
 
             thread = threading.Thread(
                 target=self._stream_command, args=(cmd,), daemon=True
@@ -609,6 +640,11 @@ if TEXTUAL_AVAILABLE:
                         self._log, "[green]Command finished successfully[/green]"
                     )
                     self.call_from_thread(self._set_status, "Done")
+                elif rc == -15:  # SIGTERM — user cancelled
+                    self.call_from_thread(
+                        self._log, "[yellow]Command cancelled by user[/yellow]"
+                    )
+                    self.call_from_thread(self._set_status, "Cancelled")
                 else:
                     self.call_from_thread(
                         self._log,
@@ -623,6 +659,13 @@ if TEXTUAL_AVAILABLE:
                 self.call_from_thread(self._set_status, f"Error: {exc}")
             finally:
                 self._running_process = None
+                self.call_from_thread(
+                    self._set_cancel_button, disabled=True
+                )
+
+        def _set_cancel_button(self, *, disabled: bool) -> None:
+            """Enable or disable the Cancel button (must run on UI thread)."""
+            self.query_one("#btn-cancel", Button).disabled = disabled
 
         # ── Helpers ──────────────────────────────────────────────
 
