@@ -93,8 +93,18 @@ def main() -> int:
         parser.add_argument("--local", action="store_true",
                             help="Force local registry lookup only (do not use remote)")
 
+        # GUI shortcut: `bsp gui` launches the TUI launcher
+        parser.add_argument(
+            '--gui',
+            action='store_true',
+            help='Launch the interactive GUI (requires the [gui] extra)'
+        )
+
         # Create subparsers for different commands
-        subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=True)
+        subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
+
+        # GUI subcommand (alias for --gui flag)
+        subparsers.add_parser('gui', help='Launch the interactive GUI launcher')
 
         # ----------------------------------------------------------------
         # Build command
@@ -409,6 +419,20 @@ def main() -> int:
         )
 
         args = parser.parse_args()
+
+        # --gui flag or 'bsp gui' subcommand → launch TUI
+        if getattr(args, 'gui', False) or args.command == 'gui':
+            from .gui import launch_gui
+            return launch_gui(
+                registry_path=args.registry,
+                remote=args.remote if args.remote != DEFAULT_REMOTE_URL else None,
+                branch=args.branch if args.branch != DEFAULT_BRANCH else None,
+                no_update=not args.update,
+            )
+
+        if not args.command:
+            parser.print_help()
+            return 1
 
         # Setup logging based on verbosity
         log_level = logging.DEBUG if args.verbose else logging.WARNING
