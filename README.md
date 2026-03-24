@@ -4,7 +4,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 ## Overview
 
-`bsp-registry-tools` provides a command-line interface and Python API for managing Advantech Board Support Packages (BSPs). It uses YAML-based registry files to define BSP configurations, build environments, and Docker containers, making reproducible Yocto builds straightforward.
+`bsp-registry-tools` provides a command-line interface, an interactive GUI launcher, and a Python API for managing Advantech Board Support Packages (BSPs). It uses YAML-based registry files to define BSP configurations, build environments, and Docker containers, making reproducible Yocto builds straightforward.
 
 ### Key Features
 
@@ -17,6 +17,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
+- 🚀 **Interactive TUI launcher** (`bsp-launcher`) — visual alternative to the CLI
 
 ## Installation
 
@@ -24,6 +25,12 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 ```bash
 pip install bsp-registry-tools
+```
+
+### With GUI support
+
+```bash
+pip install 'bsp-registry-tools[gui]'
 ```
 
 ### From Source
@@ -41,6 +48,7 @@ pip install .
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
+- *(optional)* [textual](https://textual.textualize.io/) >= 0.80.0 — required for `bsp-launcher` GUI
 
 ## Quick Start
 
@@ -179,19 +187,84 @@ bsp build poky-qemuarm64-scarthgap
 bsp shell poky-qemuarm64-scarthgap
 ```
 
+### 5. Launch the Interactive GUI
+
+```bash
+# Install the GUI extra first
+pip install 'bsp-registry-tools[gui]'
+
+# Then launch the TUI launcher
+bsp-launcher
+
+# Or via the main CLI
+bsp gui
+bsp --gui
+```
+
+## GUI Launcher (`bsp-launcher`)
+
+`bsp-launcher` is a Terminal User Interface (TUI) that provides a visual, interactive
+alternative to the CLI — similar in spirit to the
+[Advantech BSP Launcher](https://docs.aim-linux.advantech.com/docs/utility/bsplauncher/).
+
+![BSP Registry Launcher screenshot](https://github.com/user-attachments/assets/f29f14d5-c886-4f65-ba7f-e4f3ccecb8d4)
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **BSP list** | All BSPs from the registry displayed in a navigable table |
+| **BSP details** | Select a BSP to view its description, OS info, build path, and config files |
+| **Build** | Trigger a BSP build with a confirmation prompt (keyboard shortcut: `b`) |
+| **Shell hint** | Shows the equivalent `bsp shell` command to run in your terminal (`s`) |
+| **Export** | Export KAS configuration and stream output to the log panel (`e`) |
+| **Containers** | List all container definitions from the registry (`c`) |
+| **Refresh** | Reload the registry (pull latest from remote if applicable) (`r`) |
+| **Output log** | Real-time streaming of command output in a scrollable panel |
+| **Keyboard-first** | Full keyboard navigation; footer shows all available shortcuts |
+
+### Launching options
+
+```bash
+# Use the default (remote) registry
+bsp-launcher
+
+# Use a local registry file
+bsp-launcher --registry ./bsp-registry.yaml
+
+# Use a custom remote registry
+bsp-launcher --remote https://github.com/my-org/bsp-registry.git --branch dev
+
+# Skip the remote update (faster, offline)
+bsp-launcher --no-update
+```
+
+### CLI vs GUI comparison
+
+| Capability | CLI (`bsp`) | GUI (`bsp-launcher`) |
+|-----------|-------------|----------------------|
+| List BSPs | `bsp list` | Visual table, keyboard-navigable |
+| Build BSP | `bsp build <name>` | Select row → press `b` |
+| Shell access | `bsp shell <name>` | Shows equivalent CLI command |
+| Export config | `bsp export <name>` | Select row → press `e` |
+| List containers | `bsp containers` | Press `c` |
+| Real-time output | stdout/stderr | Integrated scrollable log panel |
+| Scriptable / CI | ✅ Yes | ❌ Requires a terminal |
+
 ## CLI Reference
 
 ```
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
-           [--local]
-           {build,list,containers,tree,export,shell} ...
+           [--local] [--gui]
+           {gui,build,list,containers,tree,export,shell} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell}
+  {gui,build,list,containers,tree,export,shell}
                         Command to execute
+    gui                 Launch the interactive GUI launcher
     build               Build an image for BSP
     list                List available BSPs
     containers          List available containers
@@ -211,6 +284,7 @@ options:
   --update              Update the cached registry clone before use (default)
   --no-update           Skip updating the cached registry clone
   --local               Force local registry lookup only (do not use remote)
+  --gui                 Launch the interactive GUI (requires the [gui] extra)
 ```
 
 ### Registry Resolution Priority
@@ -673,7 +747,9 @@ pytest tests/test_bsp.py::TestEnvironmentManager -v
 bsp-registry-tools/
 ├── bsp/
 │   ├── __init__.py           # Public API exports
-│   ├── cli.py                # CLI entry point
+│   ├── cli.py                # CLI entry point (bsp command)
+│   ├── cli_runner.py         # Module runner shim for GUI subprocesses
+│   ├── gui.py                # Interactive TUI launcher (bsp-launcher command)
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
 │   ├── kas_manager.py        # KAS build system integration

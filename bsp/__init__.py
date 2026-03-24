@@ -83,6 +83,7 @@ from .environment import EnvironmentManager
 from .kas_manager import KasManager
 from .bsp_manager import BspManager
 from .cli import main
+from .gui import launch_gui, TEXTUAL_AVAILABLE
 
 __all__ = [
     # Exceptions
@@ -139,4 +140,7 @@ __all__ = [
     "BspManager",
     # CLI
     "main",
+    # GUI
+    "launch_gui",
+    "TEXTUAL_AVAILABLE",
 ]
