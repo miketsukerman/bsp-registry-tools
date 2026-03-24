@@ -36,16 +36,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["textual>=0.80.0"]
+gui = ["textual>=8.0.0"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
-    "textual>=0.80.0",
+    "bsp-registry-tools[gui]",
 ]
 
 [project.scripts]
 bsp = "bsp.cli:main"
-bsp-launcher = "bsp.gui:launch_gui"
+bsp-launcher = "bsp.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/Advantech-EECC/bsp-registry-tools"

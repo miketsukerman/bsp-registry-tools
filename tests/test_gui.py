@@ -203,3 +203,61 @@ class TestCliGuiRouting:
 class TestCliRunnerModule:
     def test_cli_runner_importable(self):
         import bsp.cli_runner  # noqa: F401 — just ensure it imports cleanly
+
+
+# =============================================================================
+# bsp-launcher entry point: bsp.gui:main
+# =============================================================================
+
+class TestBspLauncherMain:
+    """Tests for the bsp-launcher console script entry point (bsp.gui:main)."""
+
+    def test_main_calls_launch_gui(self):
+        """bsp-launcher with no args should call launch_gui with defaults."""
+        from bsp.gui import main as gui_main
+
+        with patch("sys.argv", ["bsp-launcher"]):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                rc = gui_main()
+        assert rc == 0
+        mock_gui.assert_called_once()
+
+    def test_main_passes_registry(self, registry_file):
+        """--registry arg is forwarded to launch_gui."""
+        from bsp.gui import main as gui_main
+
+        with patch("sys.argv", ["bsp-launcher", "--registry", str(registry_file)]):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                gui_main()
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("registry_path") == str(registry_file)
+
+    def test_main_passes_no_update(self):
+        """--no-update flag is forwarded to launch_gui."""
+        from bsp.gui import main as gui_main
+
+        with patch("sys.argv", ["bsp-launcher", "--no-update"]):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                gui_main()
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("no_update") is True
+
+    def test_main_remote_default_passed_as_none(self):
+        """When --remote is the default URL, launch_gui receives remote=None."""
+        from bsp.gui import main as gui_main
+
+        with patch("sys.argv", ["bsp-launcher"]):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                gui_main()
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("remote") is None
+
+    def test_main_custom_remote(self):
+        """Custom --remote is forwarded to launch_gui."""
+        from bsp.gui import main as gui_main
+
+        with patch("sys.argv", ["bsp-launcher", "--remote", "https://example.com/reg.git"]):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                gui_main()
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("remote") == "https://example.com/reg.git"

@@ -8,6 +8,7 @@ to the CLI with real-time log output, BSP selection, and action buttons.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import subprocess
 import sys
@@ -76,6 +77,56 @@ def launch_gui(
     )
     app.run()
     return 0
+
+
+def main() -> int:
+    """
+    Entry point for the ``bsp-launcher`` console script.
+
+    Parses command-line arguments and launches the BSP Registry GUI.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors).
+    """
+    from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
+
+    parser = argparse.ArgumentParser(
+        prog="bsp-launcher",
+        description="BSP Registry Launcher — interactive TUI for Advantech BSP management",
+    )
+    parser.add_argument(
+        "--registry", "-r",
+        default=None,
+        metavar="REGISTRY",
+        help="BSP registry file (local path; skips remote fetch)",
+    )
+    parser.add_argument(
+        "--remote",
+        default=DEFAULT_REMOTE_URL,
+        metavar="URL",
+        help="Remote registry git URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--branch",
+        default=DEFAULT_BRANCH,
+        metavar="BRANCH",
+        help="Remote registry branch (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-update",
+        dest="no_update",
+        action="store_true",
+        help="Skip updating the cached registry clone",
+    )
+
+    args = parser.parse_args()
+
+    return launch_gui(
+        registry_path=args.registry,
+        remote=args.remote if args.remote != DEFAULT_REMOTE_URL else None,
+        branch=args.branch if args.branch != DEFAULT_BRANCH else None,
+        no_update=args.no_update,
+    )
 
 
 # =============================================================================
