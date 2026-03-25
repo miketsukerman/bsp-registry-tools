@@ -24,7 +24,6 @@ try:
     from textual.screen import ModalScreen
     from textual.widgets import (
         Button,
-        DataTable,
         Footer,
         Header,
         Input,
@@ -33,6 +32,7 @@ try:
         Static,
         TabbedContent,
         TabPane,
+        Tree,
     )
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -233,8 +233,8 @@ if TEXTUAL_AVAILABLE:
             min-width: 12;
         }
 
-        /* ── BSP table ───────────────────────────────────────── */
-        #bsp-table {
+        /* ── BSP tree ────────────────────────────────────────── */
+        #bsp-tree {
             height: 1fr;
         }
 
@@ -323,8 +323,8 @@ if TEXTUAL_AVAILABLE:
             # Middle: BSP list | BSP detail
             with Horizontal(id="main-layout"):
                 with Vertical(id="left-panel"):
-                    yield Label("Available BSPs", classes="detail-key")
-                    yield DataTable(id="bsp-table", cursor_type="row")
+                    yield Label("BSP Presets", classes="detail-key")
+                    yield Tree("Vendors", id="bsp-tree")
 
                 with Vertical(id="right-panel"):
                     yield Label("BSP Details", classes="detail-key")
@@ -352,9 +352,9 @@ if TEXTUAL_AVAILABLE:
         # ── Lifecycle ────────────────────────────────────────────
 
         def on_mount(self) -> None:
-            """Initialize BSP table columns and load the registry."""
-            table = self.query_one("#bsp-table", DataTable)
-            table.add_columns("Name", "Description")
+            """Initialize BSP tree and load the registry."""
+            tree = self.query_one("#bsp-tree", Tree)
+            tree.root.expand()
             self._load_registry_async()
 
         # ── Registry loading ─────────────────────────────────────
@@ -404,7 +404,7 @@ if TEXTUAL_AVAILABLE:
                 bsp_manager.initialize()
 
                 self._bsp_manager = bsp_manager
-                self.call_from_thread(self._populate_bsp_table, registry_path)
+                self.call_from_thread(self._populate_bsp_tree, registry_path)
 
             except SystemExit:
                 self.call_from_thread(
@@ -420,37 +420,89 @@ if TEXTUAL_AVAILABLE:
                 with self._load_lock:
                     self._is_loading = False
 
-        def _populate_bsp_table(self, registry_path: str) -> None:
-            """Update the BSP table with loaded data (runs on UI thread)."""
-            table = self.query_one("#bsp-table", DataTable)
-            # Clear rows AND columns to fully reset table state, preventing
-            # "row key already exists" errors if populate is called more than once.
-            table.clear(columns=True)
-            table.add_columns("Name", "Description")
+        def _populate_bsp_tree(self, registry_path: str) -> None:
+            """Rebuild the BSP tree with Vendor → Device → Preset hierarchy (runs on UI thread)."""
+            from .models import Device as DeviceModel
+
+            def device_label(device_slug: str) -> str:
+                """Return the display label for a device slug."""
+                d: Optional[DeviceModel] = devices.get(device_slug)
+                return (d.description if d and d.description else device_slug)
+
+            tree = self.query_one("#bsp-tree", Tree)
+            tree.clear()
 
             label = self.query_one("#registry-label", Label)
             label.update(f"Registry: {registry_path}")
 
-            if self._bsp_manager and self._bsp_manager.model.registry.bsp:
-                for bsp in self._bsp_manager.model.registry.bsp:
-                    table.add_row(bsp.name, bsp.description, key=bsp.name)
-                self._set_status(
-                    f"Loaded {len(self._bsp_manager.model.registry.bsp)} BSP(s)"
-                )
-                self._log(
-                    f"[green]Registry loaded:[/green] {len(self._bsp_manager.model.registry.bsp)} BSP(s) available"
-                )
+            if not (self._bsp_manager and self._bsp_manager.model):
+                self._set_status("No BSPs found in registry")
+                self._log("[yellow]No BSPs found in registry[/yellow]")
+                return
+
+            registry = self._bsp_manager.model.registry
+
+            # vendor_slug → display name
+            vendor_names: dict[str, str] = {
+                v.slug: (v.name or v.slug) for v in (registry.vendors or [])
+            }
+            # device_slug → Device object
+            devices: dict[str, DeviceModel] = {
+                d.slug: d for d in (registry.devices or [])
+            }
+            # vendor_slug → device_slug → [BspPreset]
+            vendor_device_presets: dict[str, dict[str, list]] = {}
+            no_vendor_presets: dict[str, list] = {}
+
+            for bsp in (registry.bsp or []):
+                device = devices.get(bsp.device)
+                vendor_slug = device.vendor if device else None
+
+                if vendor_slug:
+                    vd = vendor_device_presets.setdefault(vendor_slug, {})
+                    vd.setdefault(bsp.device, []).append(bsp)
+                else:
+                    no_vendor_presets.setdefault(bsp.device, []).append(bsp)
+
+            preset_count = 0
+
+            # Add vendor → device → preset sub-trees
+            for vendor_slug, device_map in sorted(vendor_device_presets.items()):
+                display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
+                vendor_node = tree.root.add(f"[bold]{display_name}[/bold]", expand=True)
+                for device_slug, presets in sorted(device_map.items()):
+                    device_node = vendor_node.add(device_label(device_slug), expand=True)
+                    for bsp in presets:
+                        device_node.add_leaf(bsp.name, data=bsp.name)
+                        preset_count += 1
+
+            # Devices that had no matching vendor go under "Other"
+            if no_vendor_presets:
+                other_node = tree.root.add("[bold]Other[/bold]", expand=True)
+                for device_slug, presets in sorted(no_vendor_presets.items()):
+                    device_node = other_node.add(device_label(device_slug), expand=True)
+                    for bsp in presets:
+                        device_node.add_leaf(bsp.name, data=bsp.name)
+                        preset_count += 1
+
+            if preset_count:
+                self._set_status(f"Loaded {preset_count} BSP preset(s)")
+                self._log(f"[green]Registry loaded:[/green] {preset_count} BSP(s) available")
             else:
                 self._set_status("No BSPs found in registry")
                 self._log("[yellow]No BSPs found in registry[/yellow]")
 
         # ── BSP selection ────────────────────────────────────────
 
-        @on(DataTable.RowSelected, "#bsp-table")
-        def on_bsp_selected(self, event: DataTable.RowSelected) -> None:
-            """Show details for the selected BSP and enable action buttons."""
-            self._selected_bsp_name = str(event.row_key.value)
-            self._show_bsp_details(self._selected_bsp_name)
+        @on(Tree.NodeSelected, "#bsp-tree")
+        def on_bsp_selected(self, event: Tree.NodeSelected) -> None:
+            """Show details for the selected BSP preset and enable action buttons."""
+            bsp_name = event.node.data
+            if bsp_name is None:
+                # Vendor or device node — nothing to select
+                return
+            self._selected_bsp_name = bsp_name
+            self._show_bsp_details(bsp_name)
 
             # Enable action buttons
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export"):
@@ -532,6 +584,8 @@ if TEXTUAL_AVAILABLE:
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
+            tree = self.query_one("#bsp-tree", Tree)
+            tree.clear()
             self._load_registry_async()
 
         def action_build(self) -> None:
