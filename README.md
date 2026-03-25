@@ -328,22 +328,42 @@ BSP Registry
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout]
+# Build by preset name
+bsp build <bsp_name> [--clean] [--checkout] [--path PATH]
+
+# Build by components
+bsp build --device DEVICE --release RELEASE [--feature FEATURE ...] [--clean] [--checkout] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
+| `--device DEVICE`, `-d DEVICE` | Device slug (use with `--release` for component-based build) |
+| `--release RELEASE` | Release slug (use with `--device` for component-based build) |
+| `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be specified multiple times) |
 | `--clean` | Clean build directory before building |
 | `--checkout` | Validate configuration and checkout repos without building |
+| `--path PATH` | Override the output build directory path defined in the registry |
 
 **Examples:**
 
 ```bash
-# Full build
+# Full build using a preset
 bsp build poky-qemuarm64-scarthgap
+
+# Build using device and release components
+bsp build --device qemuarm64 --release scarthgap
+
+# Build with additional features
+bsp build --device qemuarm64 --release scarthgap --feature ota --feature secure-boot
 
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
+
+# Override the output build directory
+bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
+# Component-based build with custom output path
+bsp build --device qemuarm64 --release scarthgap --path /mnt/fast-ssd/build
 ```
 
 #### `shell` — Interactive shell in build environment
