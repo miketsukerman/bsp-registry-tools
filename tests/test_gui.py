@@ -120,7 +120,7 @@ class TestBspLauncherAppComposition:
         app = BspLauncherApp(registry_path=str(registry_file))
         async with app.run_test(headless=True) as _:
             # Basic widget presence
-            assert app.query_one("#bsp-table") is not None
+            assert app.query_one("#bsp-tree") is not None
             assert app.query_one("#output-log") is not None
             assert app.query_one("#btn-build") is not None
             assert app.query_one("#btn-refresh") is not None
