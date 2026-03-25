@@ -311,3 +311,49 @@ containers:
 
         kas_mgr = manager._get_kas_manager_for_bsp(bsp_obj, use_container=False)
         assert str(registry_dir) in kas_mgr.search_paths
+
+    def test_build_bsp_path_override(self, tmp_dir):
+        """build_bsp() with build_path_override uses the custom path instead of registry path."""
+        from unittest.mock import patch
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "registry"
+        registry_dir.mkdir()
+
+        registry_content = """
+specification:
+  version: "1.0"
+registry:
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      build:
+        path: build/test
+        environment:
+          container: "ubuntu-22.04"
+        configuration:
+          - test.yml
+containers:
+  - ubuntu-22.04:
+      image: "test/ubuntu-22.04:latest"
+      file: Dockerfile.ubuntu
+      args: []
+"""
+        registry_file = registry_dir / "bsp-registry.yml"
+        registry_file.write_text(registry_content)
+
+        custom_path = str(tmp_dir / "custom-output")
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        captured_paths = []
+
+        def capture_build_dir(build_path):
+            captured_paths.append(build_path)
+
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch.object(KasManager, "build_project"), \
+             patch.object(KasManager, "dump_config", return_value=None), \
+             patch.object(manager, "prepare_build_directory", side_effect=capture_build_dir):
+            manager.build_bsp("test-bsp", build_path_override=custom_path)
+
+        assert captured_paths == [custom_path]

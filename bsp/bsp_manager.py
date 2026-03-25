@@ -242,7 +242,7 @@ class BspManager:
 
         return kas_mgr
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
+    def build_bsp(self, bsp_name: str, checkout_only: bool = False, build_path_override: Optional[str] = None) -> None:
         """
         Build a specific BSP including Docker image and Yocto build.
 
@@ -253,6 +253,7 @@ class BspManager:
         Args:
             bsp_name: Name of the BSP to build
             checkout_only: If True, only checkout and validate configuration without building
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any step of the build process fails
@@ -286,7 +287,12 @@ class BspManager:
             logging.info("Skipping Docker build in checkout mode")
 
         # Prepare build directory
-        self.prepare_build_directory(bsp.build.path)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+            build_path = build_path_override
+        else:
+            build_path = bsp.build.path
+        self.prepare_build_directory(build_path)
 
         # Get KAS manager - use native KAS for checkout, container for builds
         kas_mgr = self._get_kas_manager_for_bsp(bsp, use_container=not checkout_only)

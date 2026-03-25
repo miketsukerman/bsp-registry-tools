@@ -201,13 +201,14 @@ bsp containers
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout]
+bsp build <bsp_name> [--clean] [--checkout] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--clean` | Clean build directory before building |
 | `--checkout` | Validate configuration and checkout repos without building |
+| `--path PATH` | Override the output build directory path defined in the registry |
 
 **Examples:**
 
@@ -217,6 +218,9 @@ bsp build poky-qemuarm64-scarthgap
 
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
+
+# Override the output build directory
+bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
 ```
 
 #### `shell` — Interactive shell in build environment

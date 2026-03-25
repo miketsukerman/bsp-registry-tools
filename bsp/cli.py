@@ -63,6 +63,13 @@ def main() -> int:
             action='store_true',
             help='Checkout and validate build configuration without building (fast)'
         )
+        build_parser.add_argument(
+            '--path',
+            type=str,
+            dest='build_path',
+            metavar='PATH',
+            help='Override output build directory path'
+        )
 
         # List command
         subparsers.add_parser('list', help='List available BSPs')
@@ -150,7 +157,8 @@ def main() -> int:
         # Execute requested command
         if args.command == 'build':
             checkout_only = getattr(args, 'checkout', False)
-            bsp_mgr.build_bsp(args.bsp_name, checkout_only=checkout_only)
+            build_path = getattr(args, 'build_path', None)
+            bsp_mgr.build_bsp(args.bsp_name, checkout_only=checkout_only, build_path_override=build_path)
         elif args.command == 'list':
             bsp_mgr.list_bsp()
         elif args.command == 'containers':

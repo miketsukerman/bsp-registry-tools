@@ -72,3 +72,18 @@ containers:
             with patch.object(KasManager, "export_kas_config", return_value="config: data"):
                 exit_code = bsp.main()
         assert exit_code == 0
+
+    def test_main_build_with_path_override(self, registry_file, tmp_dir):
+        """--path argument is forwarded to build_bsp() as build_path_override."""
+        custom_path = str(tmp_dir / "my-custom-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "--checkout", "--path", custom_path, "test-bsp"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                mock_build_bsp.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_bsp.assert_called_once_with(
+            "test-bsp", checkout_only=True, build_path_override=custom_path
+        )
