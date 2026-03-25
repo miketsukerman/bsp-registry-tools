@@ -423,13 +423,8 @@ if TEXTUAL_AVAILABLE:
                     self._is_loading = False
 
         def _populate_bsp_tree(self, registry_path: str) -> None:
-            """Rebuild the BSP tree with Vendor → Device → Preset hierarchy (runs on UI thread)."""
+            """Rebuild the BSP tree with Vendor → Device → Release → Preset hierarchy."""
             from .models import Device as DeviceModel
-
-            def device_label(device_slug: str) -> str:
-                """Return the display label for a device slug."""
-                d: Optional[DeviceModel] = devices.get(device_slug)
-                return (d.description if d and d.description else device_slug)
 
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
@@ -437,7 +432,8 @@ if TEXTUAL_AVAILABLE:
             label = self.query_one("#registry-label", Label)
             label.update(f"Registry: {registry_path}")
 
-            if not (self._bsp_manager and self._bsp_manager.model):
+            if not (self._bsp_manager and self._bsp_manager.model
+                    and self._bsp_manager.resolver):
                 self._set_status("No BSPs found in registry")
                 self._log("[yellow]No BSPs found in registry[/yellow]")
                 return
@@ -452,40 +448,65 @@ if TEXTUAL_AVAILABLE:
             devices: dict[str, DeviceModel] = {
                 d.slug: d for d in (registry.devices or [])
             }
-            # vendor_slug → device_slug → [BspPreset]
-            vendor_device_presets: dict[str, dict[str, list]] = {}
-            no_vendor_presets: dict[str, list] = {}
+            # release_slug → display label (description or slug)
+            release_labels: dict[str, str] = {
+                r.slug: (r.description or r.slug)
+                for r in (registry.releases or [])
+            }
 
-            for bsp in (registry.bsp or []):
+            def device_label(device_slug: str) -> str:
+                d: Optional[DeviceModel] = devices.get(device_slug)
+                return (d.description if d and d.description else device_slug)
+
+            # Use the resolver so multi-release presets are expanded into
+            # concrete entries (e.g. poky-qemuarm64 → poky-qemuarm64-scarthgap,
+            # poky-qemuarm64-styhead) each carrying their single release slug.
+            expanded_presets = self._bsp_manager.resolver.list_presets()
+
+            # vendor_slug → device_slug → release_slug → [full preset name]
+            vendor_device_release: dict[str, dict[str, dict[str, list]]] = {}
+            no_vendor_presets: dict[str, dict[str, list]] = {}
+
+            for bsp in expanded_presets:
                 device = devices.get(bsp.device)
                 vendor_slug = device.vendor if device else None
+                release_slug = bsp.release or ""
 
                 if vendor_slug:
-                    vd = vendor_device_presets.setdefault(vendor_slug, {})
-                    vd.setdefault(bsp.device, []).append(bsp)
+                    vd = vendor_device_release.setdefault(vendor_slug, {})
+                    dr = vd.setdefault(bsp.device, {})
+                    dr.setdefault(release_slug, []).append(bsp.name)
                 else:
-                    no_vendor_presets.setdefault(bsp.device, []).append(bsp)
+                    dr = no_vendor_presets.setdefault(bsp.device, {})
+                    dr.setdefault(release_slug, []).append(bsp.name)
 
             preset_count = 0
 
-            # Add vendor → device → preset sub-trees
-            for vendor_slug, device_map in sorted(vendor_device_presets.items()):
+            def _add_device_subtree(parent_node, device_slug: str,
+                                    release_map: dict[str, list]) -> None:
+                nonlocal preset_count
+                dev_node = parent_node.add(device_label(device_slug), expand=True)
+                for rel_slug, names in sorted(release_map.items()):
+                    rel_label = release_labels.get(rel_slug, rel_slug)
+                    rel_node = dev_node.add(
+                        f"[italic]{rel_label}[/italic]", expand=True
+                    )
+                    for preset_name in sorted(names):
+                        rel_node.add_leaf(preset_name, data=preset_name)
+                        preset_count += 1
+
+            # Add vendor → device → release → preset sub-trees
+            for vendor_slug, device_map in sorted(vendor_device_release.items()):
                 display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
                 vendor_node = tree.root.add(f"[bold]{display_name}[/bold]", expand=True)
-                for device_slug, presets in sorted(device_map.items()):
-                    device_node = vendor_node.add(device_label(device_slug), expand=True)
-                    for bsp in presets:
-                        device_node.add_leaf(bsp.name, data=bsp.name)
-                        preset_count += 1
+                for device_slug, release_map in sorted(device_map.items()):
+                    _add_device_subtree(vendor_node, device_slug, release_map)
 
             # Devices that had no matching vendor go under "Other"
             if no_vendor_presets:
                 other_node = tree.root.add("[bold]Other[/bold]", expand=True)
-                for device_slug, presets in sorted(no_vendor_presets.items()):
-                    device_node = other_node.add(device_label(device_slug), expand=True)
-                    for bsp in presets:
-                        device_node.add_leaf(bsp.name, data=bsp.name)
-                        preset_count += 1
+                for device_slug, release_map in sorted(no_vendor_presets.items()):
+                    _add_device_subtree(other_node, device_slug, release_map)
 
             if preset_count:
                 self._set_status(f"Loaded {preset_count} BSP preset(s)")
