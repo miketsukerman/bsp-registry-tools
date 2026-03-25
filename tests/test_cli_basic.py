@@ -173,3 +173,34 @@ registry:
         captured = capsys.readouterr()
         assert "override" in captured.out
         assert "imx-6.6.53" in captured.out
+
+    def test_main_build_with_path_override(self, registry_file, tmp_dir):
+        """--path argument is forwarded to build_bsp() as build_path_override."""
+        custom_path = str(tmp_dir / "my-custom-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "--checkout", "--path", custom_path, "test-bsp"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                mock_build_bsp.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_bsp.assert_called_once_with(
+            "test-bsp", checkout_only=True, build_path_override=custom_path
+        )
+
+    def test_main_build_by_components_with_path_override(self, registry_file, tmp_dir):
+        """--path argument is forwarded to build_by_components() as build_path_override."""
+        custom_path = str(tmp_dir / "components-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "--checkout", "--device", "test-device", "--release", "test-release",
+            "--path", custom_path
+        ]):
+            with patch.object(BspManager, "build_by_components") as mock_build:
+                mock_build.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            "test-device", "test-release", [], checkout_only=True, build_path_override=custom_path
+        )

@@ -85,6 +85,13 @@ def main() -> int:
             action="store_true",
             help="Checkout and validate build configuration without building (fast)"
         )
+        build_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -258,14 +265,15 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            build_path = getattr(args, "build_path", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only, build_path_override=build_path)
             elif device and release:
                 bsp_mgr.build_by_components(
-                    device, release, features, checkout_only=checkout_only
+                    device, release, features, checkout_only=checkout_only, build_path_override=build_path
                 )
             else:
                 logging.error(

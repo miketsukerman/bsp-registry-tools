@@ -960,6 +960,7 @@ class BspManager:
         resolved: ResolvedConfig,
         checkout_only: bool = False,
         label: str = "",
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -968,9 +969,14 @@ class BspManager:
             resolved: Resolved build configuration
             checkout_only: If True, only checkout and validate without building
             label: Descriptive label for log messages
+            build_path_override: If provided, overrides the build output path from the registry
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
+
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+            resolved.build_path = build_path_override
 
         # Build Docker image if needed (skip in checkout mode)
         if not checkout_only and resolved.container:
@@ -1009,13 +1015,14 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
+    def build_bsp(self, bsp_name: str, checkout_only: bool = False, build_path_override: Optional[str] = None) -> None:
         """
         Build a BSP by preset name.
 
         Args:
             bsp_name: Name of the BSP preset to build
             checkout_only: If True, only checkout and validate without building
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1026,6 +1033,7 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{preset.name} - {preset.description}",
+            build_path_override=build_path_override,
         )
 
     def build_by_components(
@@ -1034,6 +1042,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         checkout_only: bool = False,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1043,6 +1052,7 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
             checkout_only: If True, only checkout and validate without building
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1057,6 +1067,7 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{device_slug}/{release_slug}",
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------

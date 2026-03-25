@@ -391,6 +391,46 @@ class TestBspManagerBuildByComponents:
             manager.build_bsp("imx8-scarthgap-ota")
         mock_build.assert_called_once()
 
+    def test_build_bsp_path_override(self, registry_with_features_file, tmp_dir):
+        """build_bsp() with build_path_override sets resolved.build_path before building."""
+        custom_path = str(tmp_dir / "custom-output")
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        captured_paths = []
+
+        def capture_build_dir(build_path):
+            captured_paths.append(build_path)
+
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch.object(manager, "prepare_build_directory", side_effect=capture_build_dir):
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=custom_path)
+
+        assert captured_paths == [custom_path]
+
+    def test_build_by_components_path_override(self, registry_with_features_file, tmp_dir):
+        """build_by_components() with build_path_override sets resolved.build_path before building."""
+        custom_path = str(tmp_dir / "custom-components-output")
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        captured_paths = []
+
+        def capture_build_dir(build_path):
+            captured_paths.append(build_path)
+
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch.object(manager, "prepare_build_directory", side_effect=capture_build_dir):
+            manager.build_by_components("imx8-board", "scarthgap", build_path_override=custom_path)
+
+        assert captured_paths == [custom_path]
+
 
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):
