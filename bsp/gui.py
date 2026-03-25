@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -204,13 +206,13 @@ if TEXTUAL_AVAILABLE:
         }
 
         #left-panel {
-            width: 35%;
+            width: 1fr;
             border: round $primary;
             padding: 0 1;
         }
 
         #right-panel {
-            width: 65%;
+            width: 1fr;
             border: round $primary;
             padding: 0 1;
         }
@@ -634,7 +636,15 @@ if TEXTUAL_AVAILABLE:
                 self._log("[yellow]No command is currently running[/yellow]")
                 return
             try:
-                proc.terminate()
+                # Kill the entire process group so child processes (e.g. kas)
+                # don't keep the stdout pipe open and block the stream loop.
+                if hasattr(os, "killpg"):
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except (OSError, ProcessLookupError):
+                        proc.terminate()
+                else:
+                    proc.terminate()
                 self._log("[yellow]Cancelling running command…[/yellow]")
                 self._set_status("Cancelling…")
             except OSError:
@@ -680,6 +690,7 @@ if TEXTUAL_AVAILABLE:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    start_new_session=True,
                 )
                 self._running_process = proc
 
