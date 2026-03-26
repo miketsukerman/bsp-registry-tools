@@ -125,6 +125,11 @@ class TestBspLauncherAppComposition:
             assert app.query_one("#output-log") is not None
             assert app.query_one("#btn-build") is not None
             assert app.query_one("#btn-refresh") is not None
+            # Right panel split into BSP detail and env panes
+            assert app.query_one("#detail-view") is not None
+            assert app.query_one("#env-view") is not None
+            # Containers button must be gone
+            assert len(app.query("#btn-containers")) == 0
 
     async def test_build_button_disabled_by_default(self, registry_file):
         from bsp.gui import BspLauncherApp
@@ -142,15 +147,6 @@ class TestBspLauncherAppComposition:
         app = BspLauncherApp(registry_path=str(registry_file))
         async with app.run_test(headless=True) as _:
             btn = app.query_one("#btn-refresh", Button)
-            assert btn.disabled is False
-
-    async def test_containers_button_exists(self, registry_file):
-        from bsp.gui import BspLauncherApp
-        from textual.widgets import Button
-
-        app = BspLauncherApp(registry_path=str(registry_file))
-        async with app.run_test(headless=True) as _:
-            btn = app.query_one("#btn-containers", Button)
             assert btn.disabled is False
 
     async def test_cancel_button_disabled_by_default(self, registry_file):

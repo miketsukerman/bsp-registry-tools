@@ -497,6 +497,20 @@ if TEXTUAL_AVAILABLE:
             padding: 0 1;
         }
 
+        #bsp-detail-pane {
+            height: 1fr;
+            border-bottom: solid $primary-darken-2;
+        }
+
+        #env-pane {
+            height: 1fr;
+        }
+
+        #env-label {
+            color: $accent;
+            text-style: bold;
+        }
+
         /* ── Registry bar ────────────────────────────────────── */
         #registry-bar {
             height: 3;
@@ -571,7 +585,6 @@ if TEXTUAL_AVAILABLE:
             Binding("s", "shell", "Shell"),
             Binding("e", "export_config", "Export"),
             Binding("f", "flash", "Flash"),
-            Binding("c", "containers", "Containers"),
             Binding("x", "cancel", "Cancel", show=False),
         ]
 
@@ -610,11 +623,18 @@ if TEXTUAL_AVAILABLE:
                     yield Tree("Vendors", id="bsp-tree")
 
                 with Vertical(id="right-panel"):
-                    yield Label("BSP Details", classes="detail-key")
-                    yield ScrollableContainer(
-                        Static("Select a BSP from the list.", id="detail-view"),
-                        id="detail-scroll",
-                    )
+                    with Vertical(id="bsp-detail-pane"):
+                        yield Label("BSP Details", classes="detail-key")
+                        yield ScrollableContainer(
+                            Static("Select a BSP from the list.", id="detail-view"),
+                            id="detail-scroll",
+                        )
+                    with Vertical(id="env-pane"):
+                        yield Label("Build Environment", id="env-label")
+                        yield ScrollableContainer(
+                            Static("", id="env-view"),
+                            id="env-scroll",
+                        )
 
             # Action buttons
             with Horizontal(id="action-bar"):
@@ -622,7 +642,6 @@ if TEXTUAL_AVAILABLE:
                 yield Button("$ Shell", id="btn-shell", variant="default", disabled=True)
                 yield Button("↑ Export", id="btn-export", variant="default", disabled=True)
                 yield Button("⚡ Flash", id="btn-flash", variant="warning", disabled=True)
-                yield Button("☰ Containers", id="btn-containers", variant="default")
                 yield Button("✕ Cancel", id="btn-cancel", variant="error", disabled=True)
 
             # Output log panel
@@ -832,7 +851,7 @@ if TEXTUAL_AVAILABLE:
                 self.query_one(btn_id, Button).disabled = False
 
         def _show_bsp_details(self, bsp_name: str) -> None:
-            """Render BSP details in the right panel."""
+            """Render BSP details (top) and build environment (bottom) in the right panel."""
             if not self._bsp_manager:
                 return
 
@@ -854,6 +873,7 @@ if TEXTUAL_AVAILABLE:
             if bsp is None:
                 return
 
+            # ── Top pane: BSP details ──────────────────────────────
             lines = [
                 f"[bold cyan]Name:[/bold cyan]        {bsp.name}",
                 f"[bold cyan]Description:[/bold cyan] {bsp.description}",
@@ -877,9 +897,96 @@ if TEXTUAL_AVAILABLE:
                     lines.append(f"[bold cyan]Container:[/bold cyan]   {env.container}")
                 elif env.docker and env.docker.image:
                     lines.append(f"[bold cyan]Image:[/bold cyan]       {env.docker.image}")
+            # Bitbake targets
+            if bsp.targets:
+                lines.append(f"[bold cyan]Targets:[/bold cyan]     {', '.join(bsp.targets)}")
 
-            detail_widget = self.query_one("#detail-view", Static)
-            detail_widget.update("\n".join(lines))
+            # Build path
+            if bsp.build and bsp.build.path:
+                lines.append(f"[bold cyan]Build Path:[/bold cyan]  {bsp.build.path}")
+
+            self.query_one("#detail-view", Static).update("\n".join(lines))
+
+            # ── Bottom pane: build environment ─────────────────────
+            env_lines: list[str] = []
+
+            # Shared helpers for this BSP
+            registry = self._bsp_manager.model.registry
+            release_slug = bsp.release or (bsp.releases[0] if bsp.releases else None)
+            release_obj = next(
+                (r for r in (registry.releases or []) if r.slug == release_slug),
+                None,
+            ) if release_slug else None
+
+            # Container name (from preset's build section or resolved env)
+            container_name: Optional[str] = None
+            if bsp.build and bsp.build.container:
+                container_name = bsp.build.container
+            elif release_obj:
+                try:
+                    named_env = self._bsp_manager.resolver.get_named_environment(
+                        release_obj
+                    )
+                    if named_env and named_env.container:
+                        container_name = named_env.container
+                except Exception:
+                    pass
+
+            # Resolve the container entry to get the image name
+            if container_name:
+                try:
+                    containers = getattr(registry, "containers", None) or {}
+                    container_cfg = containers.get(container_name)
+                    if container_cfg and getattr(container_cfg, "image", None):
+                        env_lines.append(
+                            f"[bold cyan]Container:[/bold cyan]  {container_name}"
+                            f"  [dim]({container_cfg.image})[/dim]"
+                        )
+                    else:
+                        env_lines.append(
+                            f"[bold cyan]Container:[/bold cyan]  {container_name}"
+                        )
+                except Exception:
+                    env_lines.append(
+                        f"[bold cyan]Container:[/bold cyan]  {container_name}"
+                    )
+
+            # Named environment and its variables
+            if release_obj:
+                try:
+                    named_env = self._bsp_manager.resolver.get_named_environment(
+                        release_obj
+                    )
+                    if named_env:
+                        env_name = release_obj.environment or "default"
+                        env_lines.append(
+                            f"[bold cyan]Environment:[/bold cyan] {env_name}"
+                        )
+                        if named_env.variables:
+                            env_lines.append("[bold cyan]Variables:[/bold cyan]")
+                            for var in named_env.variables:
+                                env_lines.append(
+                                    f"  [dim]{var.name}[/dim] = {var.value}"
+                                )
+                except Exception:
+                    pass
+
+            # Global environment variables
+            try:
+                global_env = getattr(registry, "environment", None)
+                if global_env and getattr(global_env, "variables", None):
+                    env_lines.append("[bold cyan]Global Vars:[/bold cyan]")
+                    for var in global_env.variables:
+                        env_lines.append(
+                            f"  [dim]{var.name}[/dim] = {var.value}"
+                        )
+            except Exception:
+                pass
+
+            if not env_lines:
+                env_lines.append("[dim]No build environment configuration[/dim]")
+
+            self.query_one("#env-view", Static).update("\n".join(env_lines))
 
         # ── Button actions ───────────────────────────────────────
 
@@ -903,10 +1010,6 @@ if TEXTUAL_AVAILABLE:
         def on_flash(self) -> None:
             self.action_flash()
 
-        @on(Button.Pressed, "#btn-containers")
-        def on_containers(self) -> None:
-            self.action_containers()
-
         @on(Button.Pressed, "#btn-cancel")
         def on_cancel(self) -> None:
             self.action_cancel()
@@ -920,6 +1023,7 @@ if TEXTUAL_AVAILABLE:
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
+            self.query_one("#env-view", Static).update("")
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
             self._load_registry_async()
@@ -979,10 +1083,6 @@ if TEXTUAL_AVAILABLE:
                     self._run_bsp_command("flash", self._selected_bsp_name, "--target", target)
 
             self.push_screen(FlashScreen(self._selected_bsp_name), _on_target)
-
-        def action_containers(self) -> None:
-            """List all containers in the registry."""
-            self._run_bsp_command("containers")
 
         def action_cancel(self) -> None:
             """Terminate the currently running build/export command."""
