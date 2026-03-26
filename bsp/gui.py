@@ -964,9 +964,11 @@ if TEXTUAL_AVAILABLE:
                         )
                         if named_env.variables:
                             env_lines.append("[bold cyan]Variables:[/bold cyan]")
+                            from .environment import EnvironmentManager
+                            expanded = EnvironmentManager(named_env.variables).get_environment_dict()
                             for var in named_env.variables:
                                 env_lines.append(
-                                    f"  [dim]{var.name}[/dim] = {var.value}"
+                                    f"  [dim]{var.name}[/dim] = {expanded.get(var.name, var.value)}"
                                 )
                 except Exception:
                     pass
@@ -976,9 +978,11 @@ if TEXTUAL_AVAILABLE:
                 global_env = getattr(registry, "environment", None)
                 if global_env and getattr(global_env, "variables", None):
                     env_lines.append("[bold cyan]Global Vars:[/bold cyan]")
+                    from .environment import EnvironmentManager
+                    expanded = EnvironmentManager(global_env.variables).get_environment_dict()
                     for var in global_env.variables:
                         env_lines.append(
-                            f"  [dim]{var.name}[/dim] = {var.value}"
+                            f"  [dim]{var.name}[/dim] = {expanded.get(var.name, var.value)}"
                         )
             except Exception:
                 pass
