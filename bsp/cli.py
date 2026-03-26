@@ -146,7 +146,7 @@ def main() -> int:
             help="Checkout and validate build configuration without building (fast)"
         )
         build_parser.add_argument(
-            "--deploy",
+"--deploy",
             action="store_true",
             dest="deploy_after_build",
             help="Deploy artifacts to cloud storage after a successful build"
@@ -192,6 +192,13 @@ def main() -> int:
             metavar="FORMAT",
             choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
             help="Compression format for the archive bundle (default: tar.gz)"
+        )
+        build_parser.add_argument(
+            "--target",
+            type=str,
+            dest="kas_target",
+            metavar="TARGET",
+            help="KAS build target to pass to BitBake (e.g. core-image-minimal)"
         )
 
         # ----------------------------------------------------------------
@@ -519,6 +526,7 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
+            kas_target = getattr(args, "kas_target", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -528,6 +536,7 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
+                    target=kas_target,
                 )
             elif device and release:
                 bsp_mgr.build_by_components(
@@ -535,6 +544,7 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
+                    target=kas_target,
                 )
             else:
                 logging.error(

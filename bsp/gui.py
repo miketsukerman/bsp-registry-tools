@@ -417,6 +417,10 @@ if TEXTUAL_AVAILABLE:
             text-align: left;
             padding: 0 0 1 0;
         }
+        BuildTargetScreen #target-label {
+            text-align: left;
+            padding: 0 0 0 0;
+        }
         BuildTargetScreen Input {
             width: 100%;
             margin: 0 0 1 0;
@@ -445,6 +449,11 @@ if TEXTUAL_AVAILABLE:
                     yield Label(
                         f"Build path: {self._build_path}", id="info-label"
                     )
+                yield Label("KAS target — BitBake recipe/image (optional):", id="target-label")
+                yield Input(
+                    placeholder="e.g. core-image-minimal",
+                    id="opt-target",
+                )
                 yield Checkbox("Clean build (--clean)", id="opt-clean")
                 yield Checkbox(
                     "Checkout only — no build (--checkout)",
@@ -456,9 +465,21 @@ if TEXTUAL_AVAILABLE:
 
         @on(Button.Pressed, "#build-confirm")
         def on_build(self) -> None:
+            target = self.query_one("#opt-target", Input).value.strip()
+            if target and not re.fullmatch(r"[\w][\w\-\.]*", target):
+                self.app.bell()
+                self.notify(
+                    "Target must contain only letters, digits, hyphens, underscores, or dots.",
+                    severity="error",
+                )
+                return
             clean = self.query_one("#opt-clean", Checkbox).value
             checkout_only = self.query_one("#opt-checkout-only", Checkbox).value
-            self.dismiss({"clean": clean, "checkout_only": checkout_only})
+            self.dismiss({
+                "target": target,
+                "clean": clean,
+                "checkout_only": checkout_only,
+            })
 
         @on(Button.Pressed, "#build-cancel")
         def on_build_cancel(self) -> None:
@@ -1051,6 +1072,8 @@ if TEXTUAL_AVAILABLE:
                 if options is None:
                     return
                 cmd_args = ["build", self._selected_bsp_name]
+                if options.get("target"):
+                    cmd_args.extend(["--target", options["target"]])
                 if options.get("clean"):
                     cmd_args.append("--clean")
                 if options.get("checkout_only"):

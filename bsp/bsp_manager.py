@@ -979,6 +979,7 @@ class BspManager:
         deploy_after_build: bool = False,
         preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
+        target: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -991,6 +992,7 @@ class BspManager:
             preset: Optional BSP preset whose ``deploy`` block is applied on
                     top of the global deploy config before CLI overrides.
             deploy_overrides: CLI-level overrides for the deploy configuration
+            target: Optional KAS build target (e.g. 'core-image-minimal')
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1027,7 +1029,7 @@ class BspManager:
                 kas_mgr.checkout_project()
                 logging.info(f"Checkout and validation completed successfully!")
             else:
-                kas_mgr.build_project()
+                kas_mgr.build_project(target=target)
                 logging.info(f"Build completed successfully!")
                 if deploy_after_build:
                     self._deploy_resolved(
@@ -1044,6 +1046,7 @@ class BspManager:
         checkout_only: bool = False,
         deploy_after_build: bool = False,
         deploy_overrides: Optional[Dict] = None,
+        target: Optional[str] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1053,6 +1056,7 @@ class BspManager:
             checkout_only: If True, only checkout and validate without building
             deploy_after_build: If True, deploy artifacts after a successful build
             deploy_overrides: CLI-level overrides for the deploy configuration
+            target: Optional KAS build target (e.g. 'core-image-minimal')
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1066,6 +1070,7 @@ class BspManager:
             deploy_after_build=deploy_after_build,
             preset=preset,
             deploy_overrides=deploy_overrides,
+            target=target,
         )
 
     def build_by_components(
@@ -1076,6 +1081,7 @@ class BspManager:
         checkout_only: bool = False,
         deploy_after_build: bool = False,
         deploy_overrides: Optional[Dict] = None,
+        target: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1087,6 +1093,7 @@ class BspManager:
             checkout_only: If True, only checkout and validate without building
             deploy_after_build: If True, deploy artifacts after a successful build
             deploy_overrides: CLI-level overrides for the deploy configuration
+            target: Optional KAS build target (e.g. 'core-image-minimal')
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1103,6 +1110,7 @@ class BspManager:
             label=f"{device_slug}/{release_slug}",
             deploy_after_build=deploy_after_build,
             deploy_overrides=deploy_overrides,
+            target=target,
         )
 
     # ------------------------------------------------------------------
