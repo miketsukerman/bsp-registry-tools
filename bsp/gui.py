@@ -77,7 +77,24 @@ def launch_gui(
         branch=branch,
         no_update=no_update,
     )
-    app.run()
+    result = app.run()
+
+    # Shell action: the TUI exited cleanly — now exec the interactive shell in
+    # the restored terminal, replacing the current process.
+    if isinstance(result, tuple) and result[0] == "shell":
+        bsp_name = result[1]
+        cmd = [sys.executable, "-m", "bsp.cli_runner"]
+        if registry_path:
+            cmd += ["--registry", registry_path]
+        if remote:
+            cmd += ["--remote", remote]
+        if branch:
+            cmd += ["--branch", branch]
+        if no_update:
+            cmd.append("--no-update")
+        cmd += ["shell", bsp_name]
+        os.execv(sys.executable, cmd)
+
     return 0
 
 
@@ -183,6 +200,59 @@ if TEXTUAL_AVAILABLE:
         @on(Button.Pressed, "#confirm-no")
         def on_no(self) -> None:
             self.dismiss(False)
+
+    class FlashScreen(ModalScreen):
+        """A dialog that prompts for a target block device to flash the BSP image."""
+
+        DEFAULT_CSS = """
+        FlashScreen {
+            align: center middle;
+        }
+        FlashScreen > Container {
+            background: $surface;
+            border: thick $warning;
+            padding: 1 2;
+            width: 60;
+            height: 12;
+        }
+        FlashScreen Label {
+            width: 100%;
+            text-align: center;
+            padding: 1 0;
+        }
+        FlashScreen Input {
+            width: 100%;
+            margin: 0 0 1 0;
+        }
+        FlashScreen Horizontal {
+            align: center middle;
+            height: 3;
+        }
+        FlashScreen Button {
+            margin: 0 2;
+        }
+        """
+
+        def __init__(self, bsp_name: str) -> None:
+            super().__init__()
+            self._bsp_name = bsp_name
+
+        def compose(self) -> ComposeResult:
+            with Container():
+                yield Label(f"Flash '{self._bsp_name}' — Target device:")
+                yield Input(placeholder="/dev/sda or /dev/mmcblk0", id="flash-target-input")
+                with Horizontal():
+                    yield Button("⚡ Flash", variant="warning", id="flash-confirm")
+                    yield Button("Cancel", variant="default", id="flash-cancel")
+
+        @on(Button.Pressed, "#flash-confirm")
+        def on_flash(self) -> None:
+            target = self.query_one("#flash-target-input", Input).value.strip()
+            self.dismiss(target if target else None)
+
+        @on(Button.Pressed, "#flash-cancel")
+        def on_flash_cancel(self) -> None:
+            self.dismiss(None)
 
     class BspLauncherApp(App):
         """
@@ -290,6 +360,7 @@ if TEXTUAL_AVAILABLE:
             Binding("b", "build", "Build"),
             Binding("s", "shell", "Shell"),
             Binding("e", "export_config", "Export"),
+            Binding("f", "flash", "Flash"),
             Binding("c", "containers", "Containers"),
             Binding("x", "cancel", "Cancel", show=False),
         ]
@@ -340,6 +411,7 @@ if TEXTUAL_AVAILABLE:
                 yield Button("▶ Build", id="btn-build", variant="success", disabled=True)
                 yield Button("$ Shell", id="btn-shell", variant="default", disabled=True)
                 yield Button("↑ Export", id="btn-export", variant="default", disabled=True)
+                yield Button("⚡ Flash", id="btn-flash", variant="warning", disabled=True)
                 yield Button("☰ Containers", id="btn-containers", variant="default")
                 yield Button("✕ Cancel", id="btn-cancel", variant="error", disabled=True)
 
@@ -528,7 +600,7 @@ if TEXTUAL_AVAILABLE:
             self._show_bsp_details(bsp_name)
 
             # Enable action buttons
-            for btn_id in ("#btn-build", "#btn-shell", "#btn-export"):
+            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
                 self.query_one(btn_id, Button).disabled = False
 
         def _show_bsp_details(self, bsp_name: str) -> None:
@@ -536,11 +608,20 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return
 
-            bsp = None
-            for b in self._bsp_manager.model.registry.bsp:
-                if b.name == bsp_name:
-                    bsp = b
-                    break
+            # Search raw registry first (single-release presets).
+            # For expanded multi-release names (e.g. poky-qemuarm64-scarthgap)
+            # fall back to the resolver's expanded list.
+            bsp = next(
+                (b for b in (self._bsp_manager.model.registry.bsp or [])
+                 if b.name == bsp_name),
+                None,
+            )
+            if bsp is None and self._bsp_manager.resolver:
+                bsp = next(
+                    (p for p in self._bsp_manager.resolver.list_presets()
+                     if p.name == bsp_name),
+                    None,
+                )
 
             if bsp is None:
                 return
@@ -590,6 +671,10 @@ if TEXTUAL_AVAILABLE:
         def on_export(self) -> None:
             self.action_export_config()
 
+        @on(Button.Pressed, "#btn-flash")
+        def on_flash(self) -> None:
+            self.action_flash()
+
         @on(Button.Pressed, "#btn-containers")
         def on_containers(self) -> None:
             self.action_containers()
@@ -604,7 +689,7 @@ if TEXTUAL_AVAILABLE:
             """Reload the BSP registry."""
             self._bsp_manager = None
             self._selected_bsp_name = None
-            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-cancel"):
+            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
             tree = self.query_one("#bsp-tree", Tree)
@@ -627,17 +712,13 @@ if TEXTUAL_AVAILABLE:
             )
 
         def action_shell(self) -> None:
-            """Open a shell for the selected BSP."""
+            """Exit the TUI and open an interactive shell for the selected BSP."""
             if not self._selected_bsp_name:
                 self._log("[yellow]No BSP selected[/yellow]")
                 return
-            self._log(
-                f"[yellow]Shell mode opens a terminal — run:[/yellow] "
-                f"bsp shell {self._selected_bsp_name}"
-            )
-            self._set_status(
-                f"Tip: run 'bsp shell {self._selected_bsp_name}' in your terminal"
-            )
+            # Exit the TUI — launch_gui() will exec 'bsp shell <name>' in the
+            # restored terminal, replacing the current process.
+            self.exit(("shell", self._selected_bsp_name))
 
         def action_export_config(self) -> None:
             """Export configuration for the selected BSP."""
@@ -645,6 +726,18 @@ if TEXTUAL_AVAILABLE:
                 self._log("[yellow]No BSP selected[/yellow]")
                 return
             self._run_bsp_command("export", self._selected_bsp_name)
+
+        def action_flash(self) -> None:
+            """Open a dialog to flash the selected BSP image to a target device."""
+            if not self._selected_bsp_name:
+                self._log("[yellow]No BSP selected[/yellow]")
+                return
+
+            def _on_target(target: Optional[str]) -> None:
+                if target:
+                    self._run_bsp_command("flash", self._selected_bsp_name, "--target", target)
+
+            self.push_screen(FlashScreen(self._selected_bsp_name), _on_target)
 
         def action_containers(self) -> None:
             """List all containers in the registry."""
