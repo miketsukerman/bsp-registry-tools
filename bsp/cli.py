@@ -217,6 +217,27 @@ def main() -> int:
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
         )
 
+        # ----------------------------------------------------------------
+        # Flash command
+        # ----------------------------------------------------------------
+        flash_parser = subparsers.add_parser(
+            "flash",
+            help="Flash BSP image to a target device (SD card or eMMC)"
+        )
+        flash_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset name to flash"
+        )
+        flash_parser.add_argument(
+            "--target", "-t",
+            type=str,
+            required=True,
+            metavar="DEVICE",
+            help="Target block device (e.g. /dev/sda, /dev/mmcblk0)"
+        )
+
         args = parser.parse_args()
 
         # --gui flag or 'bsp gui' subcommand → launch TUI
@@ -378,6 +399,15 @@ def main() -> int:
                 )
                 shell_parser.print_help()
                 return 1
+
+        elif args.command == "flash":
+            bsp_name = getattr(args, "bsp_name", None)
+            target = getattr(args, "target", None)
+            if not bsp_name:
+                logging.error("Specify a BSP preset name.")
+                flash_parser.print_help()
+                return 1
+            bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target)
 
         else:
             logging.error(f"Unknown command: {args.command}")

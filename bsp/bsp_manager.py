@@ -1146,6 +1146,115 @@ class BspManager:
         )
 
     # ------------------------------------------------------------------
+    # Flash
+    # ------------------------------------------------------------------
+
+    def flash_bsp(self, bsp_name: str, target: str) -> None:
+        """
+        Flash a BSP image to a target block device (SD card or eMMC).
+
+        Resolves the BSP preset to locate its build output directory, finds the
+        most recently produced ``.wic`` or ``.img`` image in
+        ``<build_path>/tmp/deploy/images/``, then writes it to *target* using
+        ``bmaptool`` (if available and a matching ``.bmap`` file exists) or
+        ``dd`` as a fallback.
+
+        Args:
+            bsp_name: BSP preset name (must have been built first).
+            target: Target block device path (e.g. ``/dev/sda``,
+                    ``/dev/mmcblk0``).
+
+        Raises:
+            SystemExit: If the preset is not found, no image file is present,
+                        or the flash tool exits with a non-zero status.
+        """
+        import shutil as _shutil
+        import subprocess as _sp
+
+        logging.info(f"Flashing BSP preset '{bsp_name}' to '{target}'")
+
+        resolved, _ = self.resolver.resolve_preset(bsp_name)
+        build_path = Path(resolved.build_path)
+
+        # Yocto images land in tmp/deploy/images/<machine>/
+        deploy_dir = build_path / "tmp" / "deploy" / "images"
+        if not deploy_dir.exists():
+            logging.error(f"Deploy directory not found: {deploy_dir}")
+            print(
+                f"Error: No build output found in {deploy_dir}.\n"
+                f"Run 'bsp build {bsp_name}' first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Collect candidate image files (prefer .wic for block-level flashing)
+        candidates: List[Path] = []
+        for pattern in ("*.wic", "*.img"):
+            candidates.extend(deploy_dir.rglob(pattern))
+        # Filter out bmap sidecar files that may inadvertently match *.img
+        candidates = [f for f in candidates if ".bmap" not in f.suffixes]
+
+        if not candidates:
+            print(
+                f"Error: No .wic or .img image files found in {deploy_dir}.\n"
+                f"Run 'bsp build {bsp_name}' first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Pick the most recently modified file
+        image_path = max(candidates, key=lambda f: f.stat().st_mtime)
+        bmap_path = image_path.with_suffix(image_path.suffix + ".bmap")
+        bmaptool = _shutil.which("bmaptool")
+
+        # Validate the target is a block device to prevent accidental overwrites
+        target_path = Path(target)
+        if target_path.exists():
+            import stat as _stat
+            if not _stat.S_ISBLK(target_path.stat().st_mode):
+                print(
+                    f"Error: '{target}' is not a block device. "
+                    "Specify a target such as /dev/sda or /dev/mmcblk0.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            print(
+                f"Error: Target device '{target}' does not exist. "
+                "Check the device path and ensure the storage medium is connected.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if bmaptool and bmap_path.exists():
+            logging.info(f"Flashing {image_path} → {target} using bmaptool")
+            print(f"Flashing {image_path.name} → {target} (bmaptool)…")
+            result = _sp.run(["bmaptool", "copy", str(image_path), target])
+        else:
+            logging.info(f"Flashing {image_path} → {target} using dd")
+            print(f"Flashing {image_path.name} → {target} (dd)…")
+            print("⚠  This will overwrite all data on the target device!")
+            result = _sp.run([
+                "dd",
+                f"if={image_path}",
+                f"of={target}",
+                "bs=4M",
+                "conv=fsync",
+                "status=progress",
+            ])
+
+        if result.returncode != 0:
+            print(
+                f"Error: Flash failed with exit code {result.returncode}.\n"
+                "Common causes: insufficient permissions (try with sudo), "
+                "device busy, or incorrect target path.",
+                file=sys.stderr,
+            )
+            sys.exit(result.returncode)
+
+        print(f"Successfully flashed {image_path.name} to {target}")
+
+    # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
