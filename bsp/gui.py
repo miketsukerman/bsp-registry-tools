@@ -28,6 +28,7 @@ try:
     from textual.screen import ModalScreen
     from textual.widgets import (
         Button,
+        Checkbox,
         Footer,
         Header,
         Input,
@@ -391,6 +392,78 @@ if TEXTUAL_AVAILABLE:
         def on_flash_cancel(self) -> None:
             self.dismiss(None)
 
+    class BuildTargetScreen(ModalScreen):
+        """Dialog that shows build options before launching a build."""
+
+        DEFAULT_CSS = """
+        BuildTargetScreen {
+            align: center middle;
+        }
+        BuildTargetScreen > Container {
+            background: $surface;
+            border: thick $success;
+            padding: 1 2;
+            width: 64;
+            height: auto;
+        }
+        BuildTargetScreen Label {
+            width: 100%;
+            text-align: center;
+            padding: 1 0;
+        }
+        BuildTargetScreen #info-label {
+            color: $text-muted;
+            text-style: italic;
+            text-align: left;
+            padding: 0 0 1 0;
+        }
+        BuildTargetScreen Input {
+            width: 100%;
+            margin: 0 0 1 0;
+        }
+        BuildTargetScreen Checkbox {
+            margin: 0 0 1 0;
+        }
+        BuildTargetScreen Horizontal {
+            align: center middle;
+            height: 3;
+        }
+        BuildTargetScreen Button {
+            margin: 0 2;
+        }
+        """
+
+        def __init__(self, bsp_name: str, build_path: str) -> None:
+            super().__init__()
+            self._bsp_name = bsp_name
+            self._build_path = build_path
+
+        def compose(self) -> ComposeResult:
+            with Container():
+                yield Label(f"▶ Build '{self._bsp_name}'")
+                if self._build_path:
+                    yield Label(
+                        f"Build path: {self._build_path}", id="info-label"
+                    )
+                yield Checkbox("Clean build (--clean)", id="opt-clean")
+                yield Checkbox(
+                    "Checkout only — no build (--checkout-only)",
+                    id="opt-checkout-only",
+                )
+                with Horizontal():
+                    yield Button("▶ Build", variant="success", id="build-confirm")
+                    yield Button("Cancel", variant="default", id="build-cancel")
+
+        @on(Button.Pressed, "#build-confirm")
+        def on_build(self) -> None:
+            clean = self.query_one("#opt-clean", Checkbox).value
+            checkout_only = self.query_one("#opt-checkout-only", Checkbox).value
+            self.dismiss({"clean": clean, "checkout_only": checkout_only})
+
+        @on(Button.Pressed, "#build-cancel")
+        def on_build_cancel(self) -> None:
+            self.dismiss(None)
+
     class BspLauncherApp(App):
         """
         BSP Registry Launcher — interactive TUI for Advantech BSP management.
@@ -634,12 +707,30 @@ if TEXTUAL_AVAILABLE:
         def _populate_bsp_tree(self, registry_path: str) -> None:
             """Rebuild the BSP tree with Vendor → Device → Release → Preset hierarchy."""
             from .models import Device as DeviceModel
+            from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
 
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
 
+            # Build registry label showing path + remote URL/branch when applicable
+            remote_url = self._remote or DEFAULT_REMOTE_URL
+            branch = self._branch or DEFAULT_BRANCH
+            if self._registry_path:
+                # Local registry — show path only
+                registry_label_text = f"Registry: {registry_path}"
+                subtitle = registry_path
+            else:
+                # Remote registry — show URL and branch
+                registry_label_text = (
+                    f"Registry: {registry_path}  [{remote_url} @ {branch}]"
+                )
+                subtitle = f"{remote_url} @ {branch}"
+
             label = self.query_one("#registry-label", Label)
-            label.update(f"Registry: {registry_path}")
+            label.update(registry_label_text)
+
+            # Update subtitle to include URL + branch
+            self.sub_title = subtitle
 
             if not (self._bsp_manager and self._bsp_manager.model
                     and self._bsp_manager.resolver):
@@ -834,18 +925,31 @@ if TEXTUAL_AVAILABLE:
             self._load_registry_async()
 
         def action_build(self) -> None:
-            """Build the selected BSP."""
+            """Open the build target dialog, then build the selected BSP."""
             if not self._selected_bsp_name:
                 self._log("[yellow]No BSP selected[/yellow]")
                 return
 
-            def _confirmed(confirmed: bool) -> None:
-                if confirmed:
-                    self._run_bsp_command("build", self._selected_bsp_name)
+            # Resolve the build path for this preset so the dialog can show it
+            # and the log saver knows where to write the log file.
+            build_path = self._resolve_build_path(self._selected_bsp_name)
+
+            def _on_options(options: Optional[dict]) -> None:
+                if options is None:
+                    return
+                cmd_args = ["build", self._selected_bsp_name]
+                if options.get("clean"):
+                    cmd_args.append("--clean")
+                if options.get("checkout_only"):
+                    cmd_args.append("--checkout-only")
+                log_file = (
+                    str(Path(build_path) / "bsp-build.log") if build_path else None
+                )
+                self._run_bsp_command(*cmd_args, log_file=log_file)
 
             self.push_screen(
-                ConfirmScreen(f"Build BSP '{self._selected_bsp_name}'?"),
-                _confirmed,
+                BuildTargetScreen(self._selected_bsp_name, build_path),
+                _on_options,
             )
 
         def action_shell(self) -> None:
@@ -903,10 +1007,41 @@ if TEXTUAL_AVAILABLE:
 
         # ── CLI subprocess helper ────────────────────────────────
 
-        def _run_bsp_command(self, *args: str) -> None:
+        def _resolve_build_path(self, bsp_name: str) -> str:
+            """
+            Return the resolved build path for *bsp_name*, or an empty string
+            if it cannot be determined (e.g. no build.path configured).
+            """
+            if not self._bsp_manager:
+                return ""
+            try:
+                # Try the raw registry entry first
+                bsp = next(
+                    (b for b in (self._bsp_manager.model.registry.bsp or [])
+                     if b.name == bsp_name),
+                    None,
+                )
+                if bsp is None and self._bsp_manager.resolver:
+                    bsp = next(
+                        (p for p in self._bsp_manager.resolver.list_presets()
+                         if p.name == bsp_name),
+                        None,
+                    )
+                if bsp and bsp.build and bsp.build.path:
+                    return bsp.build.path
+            except Exception:
+                pass
+            return ""
+
+        def _run_bsp_command(self, *args: str, log_file: Optional[str] = None) -> None:
             """
             Run a `bsp` CLI sub-command in a background thread and stream
             its stdout/stderr to the output log panel.
+
+            Args:
+                *args: Sub-command and arguments forwarded to the bsp CLI.
+                log_file: Optional path to a file where the output is also
+                    written (created / appended to in the build folder).
             """
             if self._running_process is not None:
                 self._log("[yellow]A command is already running — please wait[/yellow]")
@@ -925,59 +1060,102 @@ if TEXTUAL_AVAILABLE:
             cmd += list(args)
 
             self._log(f"[bold]$ bsp {' '.join(args)}[/bold]")
+            if log_file:
+                self._log(f"[dim]Log file: {log_file}[/dim]")
             self._set_status(f"Running: bsp {' '.join(args)}")
             self._set_cancel_button(disabled=False)
 
             thread = threading.Thread(
-                target=self._stream_command, args=(cmd,), daemon=True
+                target=self._stream_command, args=(cmd, log_file), daemon=True
             )
             thread.start()
 
-        def _stream_command(self, cmd: list) -> None:
-            """Execute *cmd*, streaming its combined output to the log (background thread)."""
-            try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    start_new_session=True,
-                )
-                self._running_process = proc
+        def _stream_command(self, cmd: list, log_file: Optional[str] = None) -> None:
+            """Execute *cmd*, streaming its combined output to the log (background thread).
 
-                for line in proc.stdout:
-                    self.call_from_thread(self._log, line.rstrip())
+            If *log_file* is set, all output lines are also written there.
+            The file is opened inside a context manager so it is always closed,
+            even if an exception occurs during streaming.
+            """
+            import contextlib
+            import datetime
 
-                proc.wait()
-                rc = proc.returncode
-
-                if rc == 0:
-                    self.call_from_thread(
-                        self._log, "[green]Command finished successfully[/green]"
+            def _open_log():
+                """Open the log file or return a null context manager on failure."""
+                if not log_file:
+                    return contextlib.nullcontext(None)
+                try:
+                    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+                    fp = open(log_file, "w", encoding="utf-8")  # noqa: WPS515
+                    fp.write(
+                        f"# BSP build log — {datetime.datetime.now().isoformat()}\n"
+                        f"# Command: {' '.join(cmd)}\n\n"
                     )
-                    self.call_from_thread(self._set_status, "Done")
-                elif rc == -15:  # SIGTERM — user cancelled
-                    self.call_from_thread(
-                        self._log, "[yellow]Command cancelled by user[/yellow]"
-                    )
-                    self.call_from_thread(self._set_status, "Cancelled")
-                else:
+                    fp.flush()
+                    return fp
+                except OSError as exc:
                     self.call_from_thread(
                         self._log,
-                        f"[red]Command exited with code {rc}[/red]",
+                        f"[yellow]Warning: cannot open log file {log_file}: {exc}[/yellow]",
                     )
-                    self.call_from_thread(self._set_status, f"Failed (exit {rc})")
+                    return contextlib.nullcontext(None)
 
-            except Exception as exc:
-                self.call_from_thread(
-                    self._log, f"[red]Error running command: {exc}[/red]"
-                )
-                self.call_from_thread(self._set_status, f"Error: {exc}")
-            finally:
-                self._running_process = None
-                self.call_from_thread(
-                    self._set_cancel_button, disabled=True
-                )
+            with _open_log() as log_fp:
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        start_new_session=True,
+                    )
+                    self._running_process = proc
+
+                    for line in proc.stdout:
+                        stripped = line.rstrip()
+                        self.call_from_thread(self._log, stripped)
+                        if log_fp is not None:
+                            log_fp.write(line)
+                            log_fp.flush()
+
+                    proc.wait()
+                    rc = proc.returncode
+
+                    if rc == 0:
+                        self.call_from_thread(
+                            self._log, "[green]Command finished successfully[/green]"
+                        )
+                        self.call_from_thread(self._set_status, "Done")
+                    elif rc == -15:  # SIGTERM — user cancelled
+                        self.call_from_thread(
+                            self._log, "[yellow]Command cancelled by user[/yellow]"
+                        )
+                        self.call_from_thread(self._set_status, "Cancelled")
+                    else:
+                        self.call_from_thread(
+                            self._log,
+                            f"[red]Command exited with code {rc}[/red]",
+                        )
+                        self.call_from_thread(self._set_status, f"Failed (exit {rc})")
+
+                    if log_fp is not None:
+                        log_fp.write(f"\n# Exit code: {rc}\n")
+
+                except Exception as exc:
+                    self.call_from_thread(
+                        self._log, f"[red]Error running command: {exc}[/red]"
+                    )
+                    self.call_from_thread(self._set_status, f"Error: {exc}")
+                finally:
+                    if log_fp is not None and log_file:
+                        self.call_from_thread(
+                            self._log,
+                            f"[dim]Build log saved → {log_file}[/dim]",
+                        )
+                    self._running_process = None
+                    self.call_from_thread(
+                        self._set_cancel_button, disabled=True
+                    )
 
         def _set_cancel_button(self, *, disabled: bool) -> None:
             """Enable or disable the Cancel button (must run on UI thread)."""
