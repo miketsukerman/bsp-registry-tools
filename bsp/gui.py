@@ -302,7 +302,7 @@ if TEXTUAL_AVAILABLE:
             self.dismiss(False)
 
     class FlashScreen(ModalScreen):
-        """A dialog that prompts for a target block device to flash the BSP image."""
+        """A dialog that prompts for an image and a target block device to flash."""
 
         DEFAULT_CSS = """
         FlashScreen {
@@ -312,14 +312,30 @@ if TEXTUAL_AVAILABLE:
             background: $surface;
             border: thick $warning;
             padding: 1 2;
-            width: 64;
+            width: 72;
             height: auto;
-            max-height: 30;
+            max-height: 40;
         }
         FlashScreen Label {
             width: 100%;
             text-align: center;
             padding: 1 0;
+        }
+        FlashScreen #images-label {
+            text-align: left;
+            color: $text-muted;
+            padding: 0;
+        }
+        FlashScreen #image-list {
+            height: auto;
+            max-height: 8;
+            border: solid $warning-darken-2;
+            margin: 0 0 1 0;
+        }
+        FlashScreen #no-images-label {
+            color: $error;
+            text-style: italic;
+            padding: 0 0 1 0;
         }
         FlashScreen #drives-label {
             text-align: left;
@@ -328,7 +344,7 @@ if TEXTUAL_AVAILABLE:
         }
         FlashScreen #drive-list {
             height: auto;
-            max-height: 10;
+            max-height: 6;
             border: solid $primary-darken-2;
             margin: 0 0 1 0;
         }
@@ -350,10 +366,16 @@ if TEXTUAL_AVAILABLE:
         }
         """
 
-        def __init__(self, bsp_name: str) -> None:
+        def __init__(self, bsp_name: str, images: List[Path]) -> None:
             super().__init__()
             self._bsp_name = bsp_name
+            self._images = images
             self._drives = _list_removable_drives()
+            self._selected_image: Optional[Path] = images[0] if images else None
+
+        def _make_image_items(self) -> List[ListItem]:
+            """Build the list of image ListItem widgets for the ListView."""
+            return [ListItem(Label(img.name), name=str(img)) for img in self._images]
 
         def _make_drive_items(self) -> List[ListItem]:
             """Build the list of drive ListItem widgets for the ListView."""
@@ -361,7 +383,15 @@ if TEXTUAL_AVAILABLE:
 
         def compose(self) -> ComposeResult:
             with Container():
-                yield Label(f"Flash '{self._bsp_name}' — Select or enter target device:")
+                yield Label(f"Flash '{self._bsp_name}' — Select image and target device:")
+                if self._images:
+                    yield Label("Available images:", id="images-label")
+                    yield ListView(*self._make_image_items(), id="image-list")
+                else:
+                    yield Label(
+                        "No images found — build the BSP first.",
+                        id="no-images-label",
+                    )
                 if self._drives:
                     yield Label("Removable drives detected:", id="drives-label")
                     yield ListView(*self._make_drive_items(), id="drive-list")
@@ -375,8 +405,20 @@ if TEXTUAL_AVAILABLE:
                     id="flash-target-input",
                 )
                 with Horizontal():
-                    yield Button("⚡ Flash", variant="warning", id="flash-confirm")
+                    yield Button(
+                        "⚡ Flash",
+                        variant="warning",
+                        id="flash-confirm",
+                        disabled=not self._images,
+                    )
                     yield Button("Cancel", variant="default", id="flash-cancel")
+
+        @on(ListView.Selected, "#image-list")
+        def on_image_selected(self, event: ListView.Selected) -> None:
+            """Record the image chosen from the list."""
+            path = event.item.name
+            if path:
+                self._selected_image = Path(path)
 
         @on(ListView.Selected, "#drive-list")
         def on_drive_selected(self, event: ListView.Selected) -> None:
@@ -388,7 +430,10 @@ if TEXTUAL_AVAILABLE:
         @on(Button.Pressed, "#flash-confirm")
         def on_flash(self) -> None:
             target = self.query_one("#flash-target-input", Input).value.strip()
-            self.dismiss(target if target else None)
+            if target and self._selected_image:
+                self.dismiss((str(self._selected_image), target))
+            else:
+                self.dismiss(None)
 
         @on(Button.Pressed, "#flash-cancel")
         def on_flash_cancel(self) -> None:
@@ -1215,11 +1260,24 @@ if TEXTUAL_AVAILABLE:
                 self._log("[yellow]No BSP selected[/yellow]")
                 return
 
-            def _on_target(target: Optional[str]) -> None:
-                if target:
-                    self._run_bsp_command("flash", self._selected_bsp_name, "--target", target)
+            # Enumerate available images from the deploy directory
+            images: List[Path] = []
+            if self._bsp_manager:
+                try:
+                    images = self._bsp_manager.list_flash_images(self._selected_bsp_name)
+                except Exception as exc:
+                    self._log(f"[yellow]Could not enumerate flash images: {exc}[/yellow]")
 
-            self.push_screen(FlashScreen(self._selected_bsp_name), _on_target)
+            def _on_result(result: Optional[tuple]) -> None:
+                if result:
+                    image_path, target = result
+                    self._run_bsp_command(
+                        "flash", self._selected_bsp_name,
+                        "--target", target,
+                        "--image", image_path,
+                    )
+
+            self.push_screen(FlashScreen(self._selected_bsp_name, images), _on_result)
 
         def action_cancel(self) -> None:
             """Terminate the currently running build/export command."""

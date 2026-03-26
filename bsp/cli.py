@@ -244,6 +244,13 @@ def main() -> int:
             metavar="DEVICE",
             help="Target block device (e.g. /dev/sda, /dev/mmcblk0)"
         )
+        flash_parser.add_argument(
+            "--image", "-i",
+            type=str,
+            default=None,
+            metavar="IMAGE",
+            help="Path to the image file to flash (auto-selected if omitted)"
+        )
 
         args = parser.parse_args()
 
@@ -411,11 +418,12 @@ def main() -> int:
         elif args.command == "flash":
             bsp_name = getattr(args, "bsp_name", None)
             target = getattr(args, "target", None)
+            image = getattr(args, "image", None)
             if not bsp_name:
                 logging.error("Specify a BSP preset name.")
                 flash_parser.print_help()
                 return 1
-            bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target)
+            bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target, image_path=image)
 
         else:
             logging.error(f"Unknown command: {args.command}")
