@@ -1203,20 +1203,75 @@ class BspManager:
     # Flash
     # ------------------------------------------------------------------
 
-    def flash_bsp(self, bsp_name: str, target: str) -> None:
+    def _get_deploy_dir(self, bsp_name: str) -> Path:
+        """Return the Yocto deploy/images directory for *bsp_name*.
+
+        Yocto places its output under::
+
+            <build_path>/build/tmp/deploy/images/
+
+        Args:
+            bsp_name: BSP preset name.
+
+        Returns:
+            Path to the deploy/images directory (may not exist yet).
+        """
+        resolved, _ = self.resolver.resolve_preset(bsp_name)
+        build_path = Path(resolved.build_path)
+        return build_path / "build" / "tmp" / "deploy" / "images"
+
+    def list_flash_images(self, bsp_name: str) -> List[Path]:
+        """Return a list of flashable image files for *bsp_name*.
+
+        Searches ``<build_path>/build/tmp/deploy/images/`` recursively for
+        ``.wic`` and ``.img`` files (excluding ``.bmap`` sidecars).
+
+        Args:
+            bsp_name: BSP preset name (must have been built first).
+
+        Returns:
+            List of :class:`pathlib.Path` objects for candidate images, sorted
+            with ``.wic`` files first and then by descending modification time.
+        """
+        deploy_dir = self._get_deploy_dir(bsp_name)
+        if not deploy_dir.exists():
+            return []
+
+        candidates: List[Path] = []
+        for pattern in ("*.wic", "*.img"):
+            candidates.extend(deploy_dir.rglob(pattern))
+        # Filter out bmap sidecar files that may inadvertently match *.img
+        candidates = [f for f in candidates if ".bmap" not in f.suffixes]
+
+        # Sort: .wic files first, then by descending modification time.
+        # Cache stat results to avoid repeated filesystem calls.
+        stat_cache = {f: f.stat() for f in candidates}
+        candidates.sort(
+            key=lambda f: (0 if f.suffix == ".wic" else 1, -stat_cache[f].st_mtime)
+        )
+        return candidates
+
+    def flash_bsp(self, bsp_name: str, target: str, image_path: Optional[str] = None) -> None:
         """
         Flash a BSP image to a target block device (SD card or eMMC).
 
-        Resolves the BSP preset to locate its build output directory, finds the
-        most recently produced ``.wic`` or ``.img`` image in
-        ``<build_path>/tmp/deploy/images/``, then writes it to *target* using
-        ``bmaptool`` (if available and a matching ``.bmap`` file exists) or
-        ``dd`` as a fallback.
+        Resolves the BSP preset to locate its build output directory
+        (``<build_path>/build/tmp/deploy/images/``).  The caller must supply
+        the image to flash via *image_path*; use :meth:`list_flash_images` to
+        enumerate available candidates.
+
+        If the chosen image is a ``.wic`` file and ``bmaptool`` is available,
+        it is used for flashing (with a ``.bmap`` sidecar when present, or
+        ``--nobmap`` otherwise).  For all other image types ``dd`` is used as a
+        fallback.
 
         Args:
             bsp_name: BSP preset name (must have been built first).
             target: Target block device path (e.g. ``/dev/sda``,
                     ``/dev/mmcblk0``).
+            image_path: Path to the image file to flash.  When *None* the most
+                recently produced ``.wic`` or ``.img`` image in the deploy
+                directory is selected automatically.
 
         Raises:
             SystemExit: If the preset is not found, no image file is present,
@@ -1227,39 +1282,26 @@ class BspManager:
 
         logging.info(f"Flashing BSP preset '{bsp_name}' to '{target}'")
 
-        resolved, _ = self.resolver.resolve_preset(bsp_name)
-        build_path = Path(resolved.build_path)
-
-        # Yocto images land in tmp/deploy/images/<machine>/
-        deploy_dir = build_path / "tmp" / "deploy" / "images"
-        if not deploy_dir.exists():
-            logging.error(f"Deploy directory not found: {deploy_dir}")
-            print(
-                f"Error: No build output found in {deploy_dir}.\n"
-                f"Run 'bsp build {bsp_name}' first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        # Collect candidate image files (prefer .wic for block-level flashing)
-        candidates: List[Path] = []
-        for pattern in ("*.wic", "*.img"):
-            candidates.extend(deploy_dir.rglob(pattern))
-        # Filter out bmap sidecar files that may inadvertently match *.img
-        candidates = [f for f in candidates if ".bmap" not in f.suffixes]
-
-        if not candidates:
-            print(
-                f"Error: No .wic or .img image files found in {deploy_dir}.\n"
-                f"Run 'bsp build {bsp_name}' first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        # Pick the most recently modified file
-        image_path = max(candidates, key=lambda f: f.stat().st_mtime)
-        bmap_path = image_path.with_suffix(image_path.suffix + ".bmap")
-        bmaptool = _shutil.which("bmaptool")
+        if image_path:
+            selected_image = Path(image_path)
+            if not selected_image.exists():
+                print(
+                    f"Error: Image file '{image_path}' does not exist.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            # Fall back to auto-selection: most recently modified image
+            candidates = self.list_flash_images(bsp_name)
+            if not candidates:
+                deploy_dir = self._get_deploy_dir(bsp_name)
+                print(
+                    f"Error: No .wic or .img image files found in {deploy_dir}.\n"
+                    f"Run 'bsp build {bsp_name}' first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            selected_image = candidates[0]
 
         # Validate the target is a block device to prevent accidental overwrites
         target_path = Path(target)
@@ -1280,17 +1322,26 @@ class BspManager:
             )
             sys.exit(1)
 
-        if bmaptool and bmap_path.exists():
-            logging.info(f"Flashing {image_path} → {target} using bmaptool")
-            print(f"Flashing {image_path.name} → {target} (bmaptool)…")
-            result = _sp.run(["bmaptool", "copy", str(image_path), target])
+        bmaptool = _shutil.which("bmaptool")
+        is_wic = selected_image.suffix == ".wic"
+
+        if is_wic and bmaptool:
+            bmap_path = selected_image.with_suffix(selected_image.suffix + ".bmap")
+            if bmap_path.exists():
+                logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
+                print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
+                result = _sp.run(["bmaptool", "copy", str(selected_image), target])
+            else:
+                logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
+                print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
+                result = _sp.run(["bmaptool", "copy", "--nobmap", str(selected_image), target])
         else:
-            logging.info(f"Flashing {image_path} → {target} using dd")
-            print(f"Flashing {image_path.name} → {target} (dd)…")
+            logging.info(f"Flashing {selected_image} → {target} using dd")
+            print(f"Flashing {selected_image.name} → {target} (dd)…")
             print("⚠  This will overwrite all data on the target device!")
             result = _sp.run([
                 "dd",
-                f"if={image_path}",
+                f"if={selected_image}",
                 f"of={target}",
                 "bs=4M",
                 "conv=fsync",
@@ -1306,7 +1357,7 @@ class BspManager:
             )
             sys.exit(result.returncode)
 
-        print(f"Successfully flashed {image_path.name} to {target}")
+        print(f"Successfully flashed {selected_image.name} to {target}")
 
     # ------------------------------------------------------------------
     # Export
