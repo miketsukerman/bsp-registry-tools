@@ -743,6 +743,35 @@ class TestBitBakeProgressParsing:
         app._parse_and_update_progress("\x1b[33mWARNING: Something deprecated\x1b[0m")
         assert app._build_warnings == 1
 
+    def test_carriage_return_prefix_stripped(self):
+        """Bare \\r before NOTE: is stripped so the pattern matches."""
+        app = self._make_app()
+        app._parse_and_update_progress("\rNOTE: Running task 9 of 300")
+        assert app._build_task_current == 9
+        assert app._build_task_total == 300
+
+    def test_ansi_erase_and_cr_stripped(self):
+        """\\x1b[K\\r prefix (BitBake line-clear pattern) is stripped."""
+        app = self._make_app()
+        app._parse_and_update_progress("\x1b[K\rNOTE: Running task 3 of 50")
+        assert app._build_task_current == 3
+        assert app._build_task_total == 50
+
+    def test_ansi_cursor_up_erase_and_cr_stripped(self):
+        """Full VT100 cursor-up+erase+CR prefix is stripped before matching."""
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "\x1b[1A\x1b[K\rNOTE: Running task 20 of 400"
+        )
+        assert app._build_task_current == 20
+        assert app._build_task_total == 400
+
+    def test_cr_prefix_warning_still_counted(self):
+        """\\r-prefixed WARNING: lines still increment the warning counter."""
+        app = self._make_app()
+        app._parse_and_update_progress("\rWARNING: Something bad happened")
+        assert app._build_warnings == 1
+
 
 # =============================================================================
 # _reset_build_progress
