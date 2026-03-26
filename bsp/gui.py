@@ -9,7 +9,6 @@ to the CLI with real-time log output, BSP selection, and action buttons.
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 import platform
 import re
@@ -17,7 +16,6 @@ import signal
 import subprocess
 import sys
 import threading
-from collections import deque
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -36,11 +34,8 @@ try:
         Label,
         ListItem,
         ListView,
-        ProgressBar,
         RichLog,
         Static,
-        TabbedContent,
-        TabPane,
         Tree,
     )
     TEXTUAL_AVAILABLE = True
@@ -51,49 +46,6 @@ except ImportError:
 # =============================================================================
 # BitBake / KAS output parsing helpers
 # =============================================================================
-
-# Control characters and ANSI escape sequences stripped before any parsing.
-# Covers:
-#   \r           — carriage return (used by BitBake to overwrite lines)
-#   \x1b[...m/K  — SGR colour / erase-to-end-of-line (already handled)
-#   \x1b[...A/B/C/D/E/F/G/H/J/S/T/f  — VT100 cursor-movement sequences
-#   \x1b[...;...H/f — cursor position
-_RE_ANSI = re.compile(r"\r|\x1b\[[0-9;]*[mKABCDEFGHJSTf]")
-
-# ── Interactive/TTY mode (BitBake Cooker UI) ─────────────────────────────────
-# "Currently  3 running tasks (19 of 2411):"
-_RE_TASK_PROGRESS = re.compile(
-    r"Currently\s+(\d+)\s+running tasks?\s+\((\d+)\s+of\s+(\d+)\)"
-)
-# "  0: python3-native-3.11.1-r0 do_fetch (pid 12345)"
-_RE_RUNNING_TASK = re.compile(r"^\s*\d+:\s+(\S+)\s+(do_\w+)")
-
-# ── Non-interactive/piped mode (BitBake plain log output) ────────────────────
-# "NOTE: Running task 42 of 2411 (ID: 3, /path/recipe.bb, do_fetch) [cpu: ...]"
-# "NOTE: Running noexec task 1 of 2411 (/path/recipe.bb, do_build) [cpu: ...]"
-_RE_TASK_NONINTERACTIVE = re.compile(
-    r"^NOTE:\s+Running\s+(?:noexec\s+)?task\s+(\d+)\s+of\s+(\d+)"
-)
-# "NOTE: glibc-2.35-r0 do_compile: Compiling glibc ..."
-_RE_ACTIVE_RECIPE = re.compile(r"^NOTE:\s+(\S+)\s+(do_\w+):\s*(.*)")
-
-# ── Common patterns ───────────────────────────────────────────────────────────
-# "NOTE:", "WARNING:", "ERROR:", "FATAL:"
-_RE_LOG_LEVEL = re.compile(r"^(NOTE|WARNING|ERROR|FATAL):\s+(.*)")
-# "NOTE: Tasks Summary: Attempted N tasks …"
-_RE_TASKS_SUMMARY = re.compile(r"Tasks Summary:")
-# BitBake build-phase milestone lines worth surfacing in the progress tab
-# e.g. "NOTE: Preparing RunQueue", "NOTE: Executing Tasks"
-_RE_BUILD_PHASE = re.compile(
-    r"Preparing RunQueue|Executing Tasks|Parsing recipes|"
-    r"Resolving any missing task queue|Taskdata saved"
-)
-# KAS own log lines: "INFO     kas: Running bitbake ..."
-# Format: <LEVEL><spaces><logger>: <message>
-_RE_KAS_INFO = re.compile(r"^(?:INFO|DEBUG)\s+\S+:\s+(.*)")
-
-# Maximum number of concurrently-running tasks shown in the progress tab.
-_MAX_DISPLAYED_RUNNING_TASKS = 6
 
 
 # =============================================================================
@@ -635,26 +587,6 @@ if TEXTUAL_AVAILABLE:
             border: round $primary;
         }
 
-        #log-tabs {
-            height: 1fr;
-        }
-
-        #progress-status {
-            height: auto;
-            min-height: 2;
-            padding: 0 1;
-            color: $text;
-        }
-
-        #build-progress {
-            height: 1;
-            margin: 0 1 1 1;
-        }
-
-        #progress-log {
-            height: 1fr;
-        }
-
         #output-log {
             height: 1fr;
         }
@@ -695,15 +627,6 @@ if TEXTUAL_AVAILABLE:
             self._running_process: Optional[subprocess.Popen] = None
             self._is_loading: bool = False
             self._load_lock = threading.Lock()
-            # Build progress tracking (updated from the streaming thread)
-            self._build_task_current: int = 0
-            self._build_task_total: int = 0
-            # deque with maxlen ensures O(1) append/drop; acts as rolling window
-            self._build_running_tasks: deque = deque(maxlen=_MAX_DISPLAYED_RUNNING_TASKS)
-            self._build_warnings: int = 0
-            self._build_errors: int = 0
-            self._in_running_block: bool = False
-            self._progress_lock = threading.Lock()
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -743,28 +666,14 @@ if TEXTUAL_AVAILABLE:
                 yield Button("⚡ Flash", id="btn-flash", variant="warning", disabled=True)
                 yield Button("✕ Cancel", id="btn-cancel", variant="error", disabled=True)
 
-            # Output log panel — Progress tab + raw Log tab
+            # Output log panel
             with Vertical(id="log-panel"):
-                with TabbedContent(id="log-tabs"):
-                    with TabPane("📊 Progress", id="tab-progress"):
-                        yield Static(
-                            "[dim]Waiting for build output…[/dim]",
-                            id="progress-status",
-                        )
-                        yield ProgressBar(id="build-progress", show_eta=False)
-                        yield RichLog(
-                            id="progress-log",
-                            highlight=True,
-                            markup=True,
-                            wrap=True,
-                        )
-                    with TabPane("📋 Log", id="tab-log"):
-                        yield RichLog(
-                            id="output-log",
-                            highlight=True,
-                            markup=True,
-                            wrap=True,
-                        )
+                yield RichLog(
+                    id="output-log",
+                    highlight=True,
+                    markup=True,
+                    wrap=True,
+                )
 
             yield Static("", id="status-bar")
             yield Footer()
@@ -1261,176 +1170,6 @@ if TEXTUAL_AVAILABLE:
                 pass
             return ""
 
-        # ── Build progress tracking ──────────────────────────────
-
-        def _reset_build_progress(self) -> None:
-            """Reset build progress state and clear the progress tab. UI-thread method."""
-            with self._progress_lock:
-                self._build_task_current = 0
-                self._build_task_total = 0
-                self._build_running_tasks.clear()
-                self._build_warnings = 0
-                self._build_errors = 0
-                self._in_running_block = False
-            self.query_one("#progress-log", RichLog).clear()
-            self.query_one("#build-progress", ProgressBar).update(
-                total=None, progress=0
-            )
-            self.query_one("#progress-status", Static).update(
-                "[dim]Waiting for build output…[/dim]"
-            )
-
-        def _refresh_progress_ui(self) -> None:
-            """Rebuild the progress-tab status text and progress bar. UI-thread method."""
-            with self._progress_lock:
-                task_current = self._build_task_current
-                task_total = self._build_task_total
-                running_tasks = list(self._build_running_tasks)
-                warnings = self._build_warnings
-                errors = self._build_errors
-
-            parts: List[str] = []
-
-            if task_total > 0:
-                pct = int(100 * task_current / task_total)
-                parts.append(
-                    f"Tasks: [bold]{task_current}[/bold]"
-                    f"/{task_total}  ({pct}%)"
-                )
-                self.query_one("#build-progress", ProgressBar).update(
-                    total=task_total,
-                    progress=task_current,
-                )
-
-            if warnings:
-                parts.append(f"[yellow]⚠ {warnings} warning(s)[/yellow]")
-            if errors:
-                parts.append(f"[red]✗ {errors} error(s)[/red]")
-
-            if running_tasks:
-                task_lines = "\n".join(
-                    f"  [cyan]• {t}[/cyan]"
-                    for t in running_tasks
-                )
-                parts.append(f"\n[dim]Running:[/dim]\n{task_lines}")
-
-            status = "  ".join(parts) if parts else "[dim]Building…[/dim]"
-            self.query_one("#progress-status", Static).update(status)
-
-        def _parse_and_update_progress(self, line: str) -> None:
-            """Parse one BitBake/KAS output line and schedule UI updates.
-
-            Handles both BitBake's interactive/TTY mode output (when a pseudo-TTY
-            is allocated) and its non-interactive plain-log mode (when stdout is
-            piped, which is the normal case for this GUI).
-
-            Runs on the background streaming thread.  All UI mutations are
-            dispatched via :py:meth:`call_from_thread`.
-            """
-            # Strip ANSI/VT100 sequences and any remaining leading control chars
-            # (e.g. bare \r that BitBake inserts before NOTE: lines on a pipe).
-            clean = _RE_ANSI.sub("", line).lstrip()
-
-            # ── Interactive/TTY mode ──────────────────────────────────────
-            # "Currently  3 running tasks (19 of 2411):"
-            m = _RE_TASK_PROGRESS.search(clean)
-            if m:
-                with self._progress_lock:
-                    self._build_task_current = int(m.group(2))
-                    self._build_task_total = int(m.group(3))
-                    self._in_running_block = True
-                    self._build_running_tasks.clear()
-                self.call_from_thread(self._refresh_progress_ui)
-                return
-
-            # "  0: python3-native-3.11.1-r0 do_fetch (pid 12345)"
-            with self._progress_lock:
-                in_block = self._in_running_block
-
-            if in_block:
-                m = _RE_RUNNING_TASK.match(clean)
-                if m:
-                    with self._progress_lock:
-                        self._build_running_tasks.append(
-                            f"{m.group(1)} {m.group(2)}"
-                        )
-                    self.call_from_thread(self._refresh_progress_ui)
-                    return
-                else:
-                    with self._progress_lock:
-                        self._in_running_block = False
-
-            # ── Non-interactive/piped mode ────────────────────────────────
-            # "NOTE: Running [noexec] task X of Y (ID: ..., /path, do_task) ..."
-            m = _RE_TASK_NONINTERACTIVE.search(clean)
-            if m:
-                with self._progress_lock:
-                    self._build_task_current = int(m.group(1))
-                    self._build_task_total = int(m.group(2))
-                self.call_from_thread(self._refresh_progress_ui)
-                return
-
-            # "NOTE: glibc-2.35-r0 do_compile: Compiling glibc ..."
-            # Track recently active recipes as a rolling window (deque maxlen).
-            m = _RE_ACTIVE_RECIPE.match(clean)
-            if m:
-                entry = f"{m.group(1)} {m.group(2)}"
-                with self._progress_lock:
-                    if entry not in self._build_running_tasks:
-                        self._build_running_tasks.append(entry)
-                self.call_from_thread(self._refresh_progress_ui)
-                return
-
-            # ── Common log-level lines ────────────────────────────────────
-            # "WARNING: …", "ERROR: …", "NOTE: …", "FATAL: …"
-            m = _RE_LOG_LEVEL.match(clean)
-            if m:
-                level, msg = m.group(1), m.group(2)
-                if level == "WARNING":
-                    with self._progress_lock:
-                        self._build_warnings += 1
-                    self.call_from_thread(
-                        self._log_important,
-                        f"[yellow]WARNING:[/yellow] {msg}",
-                    )
-                    self.call_from_thread(self._refresh_progress_ui)
-                elif level in ("ERROR", "FATAL"):
-                    with self._progress_lock:
-                        self._build_errors += 1
-                    self.call_from_thread(
-                        self._log_important,
-                        f"[red]{level}:[/red] {msg}",
-                    )
-                    self.call_from_thread(self._refresh_progress_ui)
-                elif level == "NOTE":
-                    if _RE_TASKS_SUMMARY.search(msg):
-                        self.call_from_thread(
-                            self._log_important,
-                            f"[dim]NOTE:[/dim] {msg}",
-                        )
-                    elif _RE_BUILD_PHASE.search(msg):
-                        # Milestone lines (Preparing RunQueue, Executing Tasks …)
-                        # are surfaced in the progress tab so the user sees
-                        # build activity even before tasks start counting.
-                        self.call_from_thread(
-                            self._log_important,
-                            f"[dim]◉ {msg}[/dim]",
-                        )
-                return
-
-            # ── KAS own log lines ─────────────────────────────────────────
-            # "INFO     kas: Running bitbake ..."
-            m = _RE_KAS_INFO.match(clean)
-            if m:
-                self.call_from_thread(
-                    self._log_important,
-                    f"[dim]◉ {m.group(1)}[/dim]",
-                )
-
-        def _log_important(self, message: str) -> None:
-            """Write *message* to the progress tab's filtered log. UI-thread method."""
-            self.query_one("#progress-log", RichLog).write(message)
-
         def _run_bsp_command(self, *args: str, log_file: Optional[str] = None) -> None:
             """
             Run a `bsp` CLI sub-command in a background thread and stream
@@ -1444,10 +1183,6 @@ if TEXTUAL_AVAILABLE:
             if self._running_process is not None:
                 self._log("[yellow]A command is already running — please wait[/yellow]")
                 return
-
-            # Reset the progress panel and switch to it for the new command
-            self._reset_build_progress()
-            self.query_one("#log-tabs", TabbedContent).active = "tab-progress"
 
             # Build the command, forwarding registry path if set.
             # Use -u (unbuffered) so BitBake log lines flow to the GUI
@@ -1521,19 +1256,10 @@ if TEXTUAL_AVAILABLE:
                         env=_env,
                     )
                     self._running_process = proc
-                    # Show "Building…" immediately — before any output arrives
-                    # so the progress tab is never stuck on "Waiting…" during a run.
-                    self.call_from_thread(self._refresh_progress_ui)
 
                     for line in proc.stdout:
                         stripped = line.rstrip()
                         self.call_from_thread(self._log, stripped)
-                        try:
-                            self._parse_and_update_progress(stripped)
-                        except Exception as _exc:
-                            # Progress-parsing errors must never abort the stream.
-                            # Log at DEBUG so developers can diagnose unexpected failures.
-                            logging.debug("Progress parse error (ignored): %s", _exc)
                         if log_fp is not None:
                             log_fp.write(line)
                             log_fp.flush()
@@ -1545,28 +1271,16 @@ if TEXTUAL_AVAILABLE:
                         self.call_from_thread(
                             self._log, "[green]Command finished successfully[/green]"
                         )
-                        self.call_from_thread(
-                            self._log_important,
-                            "[green]✓ Build completed successfully[/green]",
-                        )
                         self.call_from_thread(self._set_status, "Done")
                     elif rc == -15:  # SIGTERM — user cancelled
                         self.call_from_thread(
                             self._log, "[yellow]Command cancelled by user[/yellow]"
-                        )
-                        self.call_from_thread(
-                            self._log_important,
-                            "[yellow]Build cancelled by user[/yellow]",
                         )
                         self.call_from_thread(self._set_status, "Cancelled")
                     else:
                         self.call_from_thread(
                             self._log,
                             f"[red]Command exited with code {rc}[/red]",
-                        )
-                        self.call_from_thread(
-                            self._log_important,
-                            f"[red]✗ Build failed (exit code {rc})[/red]",
                         )
                         self.call_from_thread(self._set_status, f"Failed (exit {rc})")
 
