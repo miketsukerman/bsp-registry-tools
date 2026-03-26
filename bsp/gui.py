@@ -211,7 +211,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="bsp-launcher",
-        description="BSP Registry Launcher — interactive TUI for Advantech BSP management",
+        description="BSP Registry Explorer — interactive TUI for Advantech BSP management",
     )
     parser.add_argument(
         "--registry", "-r",
@@ -534,7 +534,7 @@ if TEXTUAL_AVAILABLE:
 
     class BspLauncherApp(App):
         """
-        BSP Registry Launcher — interactive TUI for Advantech BSP management.
+        BSP Registry Explorer — interactive TUI for Advantech BSP management.
 
         Features:
         - Browse and select BSPs from the registry
@@ -544,7 +544,7 @@ if TEXTUAL_AVAILABLE:
         - Registry refresh (remote pull or local reload)
         """
 
-        TITLE = "BSP Registry Launcher"
+        TITLE = "BSP Registry Explorer"
         SUB_TITLE = "Advantech Board Support Package Manager"
 
         CSS = """
@@ -813,18 +813,13 @@ if TEXTUAL_AVAILABLE:
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
 
-            # Build registry label showing path + remote URL/branch when applicable
+            # Build registry label showing path only; URL/branch goes to subtitle
             remote_url = self._remote or DEFAULT_REMOTE_URL
             branch = self._branch or DEFAULT_BRANCH
+            registry_label_text = f"Registry: {registry_path}"
             if self._registry_path:
-                # Local registry — show path only
-                registry_label_text = f"Registry: {registry_path}"
                 subtitle = registry_path
             else:
-                # Remote registry — show URL and branch
-                registry_label_text = (
-                    f"Registry: {registry_path}  [{remote_url} @ {branch}]"
-                )
                 subtitle = f"{remote_url} @ {branch}"
 
             label = self.query_one("#registry-label", Label)
@@ -1128,6 +1123,7 @@ if TEXTUAL_AVAILABLE:
                     )
 
             # Named environment and its variables
+            named_env = None
             if release_obj:
                 try:
                     named_env = self._bsp_manager.resolver.get_named_environment(
@@ -1138,14 +1134,33 @@ if TEXTUAL_AVAILABLE:
                         env_lines.append(
                             f"[bold cyan]Environment:[/bold cyan] {env_name}"
                         )
-                        if named_env.variables:
-                            env_lines.append("[bold cyan]Variables:[/bold cyan]")
-                            from .environment import EnvironmentManager
-                            expanded = EnvironmentManager(named_env.variables).get_environment_dict()
-                            for var in named_env.variables:
-                                env_lines.append(
-                                    f"  [dim]{var.name}[/dim] = {expanded.get(var.name, var.value)}"
-                                )
+                except Exception:
+                    pass
+            else:
+                # No matched release — try to show "default" environment directly
+                try:
+                    envs = getattr(registry, "environments", None) or {}
+                    if envs:
+                        env_name = "default"
+                        named_env = envs.get(env_name)
+                        if named_env:
+                            env_lines.append(
+                                f"[bold cyan]Environment:[/bold cyan] {env_name}"
+                            )
+                except Exception:
+                    pass
+
+            # Show named environment variables
+            if named_env:
+                try:
+                    from .environment import EnvironmentManager
+                    if named_env.variables:
+                        env_lines.append("[bold cyan]Variables:[/bold cyan]")
+                        expanded = EnvironmentManager(named_env.variables).get_environment_dict()
+                        for var in named_env.variables:
+                            env_lines.append(
+                                f"  [dim]{var.name}[/dim] = {expanded.get(var.name, var.value)}"
+                            )
                 except Exception:
                     pass
 
