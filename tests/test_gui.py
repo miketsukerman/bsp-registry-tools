@@ -10,6 +10,7 @@ These tests cover:
 
 from unittest.mock import MagicMock, patch
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -258,38 +259,41 @@ class TestResolveBuildPath:
 class TestStreamCommandLogFile:
     """Tests for the log-file-writing behaviour of _stream_command."""
 
-    def test_log_file_created_on_successful_command(self, tmp_path):
-        """A successful command writes output to the log file."""
-        if not TEXTUAL_AVAILABLE:
-            pytest.skip("textual not installed")
-
-        import threading
+    def _make_minimal_app(self, tmp_path):
+        """Return a BspLauncherApp instance with all UI calls stubbed out."""
         from bsp.gui import BspLauncherApp
 
-        log_path = str(tmp_path / "build.log")
         app = BspLauncherApp.__new__(BspLauncherApp)
-        # Minimal initialisation without running the full TUI
         app._running_process = None
+        app._build_task_current = 0
+        app._build_task_total = 0
+        app._build_running_tasks = []
+        app._build_warnings = 0
+        app._build_errors = 0
+        app._in_running_block = False
+        app._progress_lock = threading.Lock()
         app._log_calls = []
+        app._important_calls = []
         app._status_calls = []
 
         def fake_call_from_thread(fn, *a, **kw):
             fn(*a, **kw)
 
         app.call_from_thread = fake_call_from_thread
+        app._log = lambda msg: app._log_calls.append(msg)
+        app._log_important = lambda msg: app._important_calls.append(msg)
+        app._set_status = lambda msg: app._status_calls.append(msg)
+        app._set_cancel_button = lambda *, disabled: None
+        app._refresh_progress_ui = lambda: None
+        return app
 
-        def fake_log(msg):
-            app._log_calls.append(msg)
+    def test_log_file_created_on_successful_command(self, tmp_path):
+        """A successful command writes output to the log file."""
+        if not TEXTUAL_AVAILABLE:
+            pytest.skip("textual not installed")
 
-        def fake_set_status(msg):
-            app._status_calls.append(msg)
-
-        def fake_cancel_button(*, disabled):
-            pass
-
-        app._log = fake_log
-        app._set_status = fake_set_status
-        app._set_cancel_button = fake_cancel_button
+        log_path = str(tmp_path / "build.log")
+        app = self._make_minimal_app(tmp_path)
 
         cmd = [sys.executable, "-c", "print('hello from build')"]
         app._stream_command(cmd, log_file=log_path)
@@ -297,6 +301,28 @@ class TestStreamCommandLogFile:
         assert Path(log_path).exists()
         content = Path(log_path).read_text()
         assert "hello from build" in content
+
+    def test_completion_logged_to_progress_tab(self, tmp_path):
+        """_log_important is called with a success message on exit code 0."""
+        if not TEXTUAL_AVAILABLE:
+            pytest.skip("textual not installed")
+
+        app = self._make_minimal_app(tmp_path)
+        cmd = [sys.executable, "-c", ""]
+        app._stream_command(cmd)
+
+        assert any("success" in m.lower() or "✓" in m for m in app._important_calls)
+
+    def test_failure_logged_to_progress_tab(self, tmp_path):
+        """_log_important is called with a failure message on non-zero exit."""
+        if not TEXTUAL_AVAILABLE:
+            pytest.skip("textual not installed")
+
+        app = self._make_minimal_app(tmp_path)
+        cmd = [sys.executable, "-c", "raise SystemExit(1)"]
+        app._stream_command(cmd)
+
+        assert any("fail" in m.lower() or "✗" in m for m in app._important_calls)
 
 
 # =============================================================================
@@ -460,3 +486,202 @@ class TestBspLauncherMain:
                 gui_main()
         _, kwargs = mock_gui.call_args
         assert kwargs.get("remote") == "https://example.com/reg.git"
+
+
+# =============================================================================
+# Progress tab widget presence
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestProgressTabWidgets:
+    """Verify that the progress-tab widgets are composed into the app."""
+
+    async def test_progress_widgets_present(self, registry_file):
+        """All progress-tab widgets are accessible by ID after composition."""
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            assert app.query_one("#log-tabs") is not None
+            assert app.query_one("#progress-status") is not None
+            assert app.query_one("#build-progress") is not None
+            assert app.query_one("#progress-log") is not None
+            # Raw log tab must still be present
+            assert app.query_one("#output-log") is not None
+
+    async def test_progress_tab_is_default_active(self, registry_file):
+        """The Progress tab is the first (default active) tab."""
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import TabbedContent
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            tabs = app.query_one("#log-tabs", TabbedContent)
+            assert tabs.active == "tab-progress"
+
+
+# =============================================================================
+# BitBake progress parsing
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestBitBakeProgressParsing:
+    """Unit tests for _parse_and_update_progress line classification."""
+
+    def _make_app(self):
+        """Return a minimal BspLauncherApp with all UI calls stubbed."""
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._build_task_current = 0
+        app._build_task_total = 0
+        app._build_running_tasks = []
+        app._build_warnings = 0
+        app._build_errors = 0
+        app._in_running_block = False
+        app._progress_lock = threading.Lock()
+        app._important_calls = []
+        app._refresh_calls = []
+
+        app.call_from_thread = lambda fn, *a, **kw: fn(*a, **kw)
+        app._log_important = lambda msg: app._important_calls.append(msg)
+        app._refresh_progress_ui = lambda: app._refresh_calls.append(True)
+        return app
+
+    def _assert_important_contains(self, app, keyword: str) -> None:
+        """Assert that at least one progress-log message contains *keyword*."""
+        assert any(keyword in m for m in app._important_calls), (
+            f"{keyword!r} not found in important_calls: {app._important_calls}"
+        )
+
+    def test_parses_task_count_line(self):
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "Currently  3 running tasks (19 of 2411):"
+        )
+        assert app._build_task_current == 19
+        assert app._build_task_total == 2411
+        assert app._in_running_block is True
+        assert app._build_running_tasks == []
+
+    def test_entering_running_block_clears_previous_tasks(self):
+        app = self._make_app()
+        app._build_running_tasks = ["old-task do_compile"]
+        app._parse_and_update_progress(
+            # BitBake uses the plural form "tasks" even for a single running task.
+            "Currently  1 running tasks (5 of 100):"
+        )
+        assert app._build_running_tasks == []
+
+    def test_parses_running_task_line(self):
+        app = self._make_app()
+        app._in_running_block = True
+        app._parse_and_update_progress(
+            "0: python3-native-3.11.1-r0 do_fetch (pid 12345)"
+        )
+        assert len(app._build_running_tasks) == 1
+        assert "python3-native-3.11.1-r0" in app._build_running_tasks[0]
+        assert "do_fetch" in app._build_running_tasks[0]
+
+    def test_non_task_line_ends_running_block(self):
+        app = self._make_app()
+        app._in_running_block = True
+        app._parse_and_update_progress("Some unrelated NOTE line")
+        assert app._in_running_block is False
+
+    def test_multiple_running_tasks_accumulated(self):
+        app = self._make_app()
+        app._in_running_block = True
+        app._parse_and_update_progress("0: pkg-a-1.0-r0 do_compile (pid 100)")
+        app._parse_and_update_progress("1: pkg-b-2.0-r0 do_fetch (pid 101)")
+        assert len(app._build_running_tasks) == 2
+
+    def test_counts_warnings(self):
+        app = self._make_app()
+        app._parse_and_update_progress("WARNING: File not found")
+        assert app._build_warnings == 1
+        self._assert_important_contains(app, "WARNING")
+
+    def test_counts_multiple_warnings(self):
+        app = self._make_app()
+        app._parse_and_update_progress("WARNING: First warning")
+        app._parse_and_update_progress("WARNING: Second warning")
+        assert app._build_warnings == 2
+
+    def test_counts_errors(self):
+        app = self._make_app()
+        app._parse_and_update_progress("ERROR: Task failed")
+        assert app._build_errors == 1
+        self._assert_important_contains(app, "ERROR")
+
+    def test_counts_fatal_as_error(self):
+        app = self._make_app()
+        app._parse_and_update_progress("FATAL: Build exploded")
+        assert app._build_errors == 1
+        self._assert_important_contains(app, "FATAL")
+
+    def test_tasks_summary_logged_to_progress_tab(self):
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "NOTE: Tasks Summary: Attempted 450 tasks of which 449 didn't need to be rerun"
+        )
+        assert any("Tasks Summary" in m for m in app._important_calls)
+
+    def test_ordinary_note_not_logged_to_progress_tab(self):
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: Executing Tasks")
+        # "Executing Tasks" is not in _TASKS_SUMMARY pattern, so not logged
+        # (only "Tasks Summary" is caught)
+        # This just ensures no crash and the line is handled gracefully
+        assert app._build_warnings == 0
+        assert app._build_errors == 0
+
+    def test_unrecognised_line_ignored(self):
+        app = self._make_app()
+        app._parse_and_update_progress("Loading cache: 100%|#####| Time: 0:00:01")
+        assert app._build_warnings == 0
+        assert app._build_errors == 0
+        assert app._important_calls == []
+
+    def test_refresh_called_on_task_count(self):
+        app = self._make_app()
+        app._parse_and_update_progress("Currently  2 running tasks (10 of 50):")
+        assert app._refresh_calls
+
+    def test_refresh_called_on_warning(self):
+        app = self._make_app()
+        app._parse_and_update_progress("WARNING: something")
+        assert app._refresh_calls
+
+
+# =============================================================================
+# _reset_build_progress
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestResetBuildProgress:
+    """Verify that _reset_build_progress resets all tracking state."""
+
+    async def test_reset_clears_progress_state(self, registry_file):
+        """_reset_build_progress zeroes counters and clears running tasks."""
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            # Simulate some accumulated progress (lock is already initialised)
+            with app._progress_lock:
+                app._build_task_current = 42
+                app._build_task_total = 100
+                app._build_running_tasks = ["pkg do_compile"]
+                app._build_warnings = 3
+                app._build_errors = 1
+                app._in_running_block = True
+
+            app._reset_build_progress()
+
+            assert app._build_task_current == 0
+            assert app._build_task_total == 0
+            assert app._build_running_tasks == []
+            assert app._build_warnings == 0
+            assert app._build_errors == 0
+            assert app._in_running_block is False
