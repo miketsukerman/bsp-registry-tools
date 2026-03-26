@@ -261,13 +261,14 @@ class TestStreamCommandLogFile:
 
     def _make_minimal_app(self, tmp_path):
         """Return a BspLauncherApp instance with all UI calls stubbed out."""
-        from bsp.gui import BspLauncherApp
+        from bsp.gui import BspLauncherApp, _MAX_DISPLAYED_RUNNING_TASKS
+        from collections import deque
 
         app = BspLauncherApp.__new__(BspLauncherApp)
         app._running_process = None
         app._build_task_current = 0
         app._build_task_total = 0
-        app._build_running_tasks = []
+        app._build_running_tasks = deque(maxlen=_MAX_DISPLAYED_RUNNING_TASKS)
         app._build_warnings = 0
         app._build_errors = 0
         app._in_running_block = False
@@ -530,12 +531,13 @@ class TestBitBakeProgressParsing:
 
     def _make_app(self):
         """Return a minimal BspLauncherApp with all UI calls stubbed."""
-        from bsp.gui import BspLauncherApp
+        from bsp.gui import BspLauncherApp, _MAX_DISPLAYED_RUNNING_TASKS
+        from collections import deque
 
         app = BspLauncherApp.__new__(BspLauncherApp)
         app._build_task_current = 0
         app._build_task_total = 0
-        app._build_running_tasks = []
+        app._build_running_tasks = deque(maxlen=_MAX_DISPLAYED_RUNNING_TASKS)
         app._build_warnings = 0
         app._build_errors = 0
         app._in_running_block = False
@@ -562,7 +564,7 @@ class TestBitBakeProgressParsing:
         assert app._build_task_current == 19
         assert app._build_task_total == 2411
         assert app._in_running_block is True
-        assert app._build_running_tasks == []
+        assert list(app._build_running_tasks) == []
 
     def test_entering_running_block_clears_previous_tasks(self):
         app = self._make_app()
@@ -571,7 +573,7 @@ class TestBitBakeProgressParsing:
             # BitBake uses the plural form "tasks" even for a single running task.
             "Currently  1 running tasks (5 of 100):"
         )
-        assert app._build_running_tasks == []
+        assert list(app._build_running_tasks) == []
 
     def test_parses_running_task_line(self):
         app = self._make_app()
@@ -653,6 +655,94 @@ class TestBitBakeProgressParsing:
         app._parse_and_update_progress("WARNING: something")
         assert app._refresh_calls
 
+    # ── Non-interactive/piped-mode tests ──────────────────────────────────────
+
+    def test_noninteractive_running_task_sets_progress(self):
+        """NOTE: Running task X of Y updates task counts."""
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "NOTE: Running task 42 of 2411 (ID: 2, /path/recipe.bb, do_fetch) [cpu: 0.00s]"
+        )
+        assert app._build_task_current == 42
+        assert app._build_task_total == 2411
+        assert app._refresh_calls
+
+    def test_noninteractive_noexec_task_sets_progress(self):
+        """NOTE: Running noexec task X of Y also updates task counts."""
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "NOTE: Running noexec task 1 of 500 (/path/recipe.bb, do_build) [cpu: 0.00s]"
+        )
+        assert app._build_task_current == 1
+        assert app._build_task_total == 500
+
+    def test_noninteractive_progress_advances(self):
+        """Successive Running task lines advance the counter."""
+        app = self._make_app()
+        app._parse_and_update_progress(
+            "NOTE: Running task 10 of 100 (ID: 10, /path/recipe.bb, do_fetch)"
+        )
+        app._parse_and_update_progress(
+            "NOTE: Running noexec task 11 of 100 (/path/recipe.bb, do_build)"
+        )
+        assert app._build_task_current == 11
+        assert app._build_task_total == 100
+
+    def test_noninteractive_active_recipe_tracked(self):
+        """NOTE: recipe do_task: msg adds to the running tasks list."""
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: glibc-2.35-r0 do_compile: Compiling glibc")
+        assert any("glibc-2.35-r0" in t for t in app._build_running_tasks)
+        assert any("do_compile" in t for t in app._build_running_tasks)
+        assert app._refresh_calls
+
+    def test_noninteractive_multiple_active_recipes_accumulated(self):
+        """Multiple recipe NOTE lines accumulate in the running task list."""
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: glibc-2.35-r0 do_compile: Compiling")
+        app._parse_and_update_progress("NOTE: python3-native-3.11.9-r0 do_fetch: Fetching")
+        assert len(app._build_running_tasks) == 2
+
+    def test_noninteractive_active_recipe_rolling_window(self):
+        """Running tasks list is capped at _MAX_DISPLAYED_RUNNING_TASKS."""
+        from bsp.gui import _MAX_DISPLAYED_RUNNING_TASKS
+        app = self._make_app()
+        for i in range(_MAX_DISPLAYED_RUNNING_TASKS + 3):
+            app._parse_and_update_progress(f"NOTE: pkg-{i}-1.0-r0 do_compile: msg")
+        assert len(app._build_running_tasks) <= _MAX_DISPLAYED_RUNNING_TASKS
+
+    def test_noninteractive_duplicate_recipe_not_added_twice(self):
+        """Duplicate recipe+task entries are not added to the running list."""
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: glibc-2.35-r0 do_compile: start")
+        app._parse_and_update_progress("NOTE: glibc-2.35-r0 do_compile: progress")
+        count = list(app._build_running_tasks).count("glibc-2.35-r0 do_compile")
+        assert count == 1, f"Expected 1 occurrence, found {count}"
+
+    def test_active_recipe_does_not_match_generic_note_lines(self):
+        """NOTE lines without do_task format are NOT captured as active recipes."""
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: Preparing RunQueue")
+        app._parse_and_update_progress("NOTE: Executing Tasks")
+        assert list(app._build_running_tasks) == []
+        assert app._build_warnings == 0
+
+    def test_ansi_codes_stripped_before_parsing(self):
+        """ANSI escape sequences are stripped so patterns still match."""
+        app = self._make_app()
+        # Running task line wrapped in ANSI bold
+        app._parse_and_update_progress(
+            "\x1b[1mNOTE: Running task 7 of 200\x1b[0m (ID: 7, /path, do_fetch)"
+        )
+        assert app._build_task_current == 7
+        assert app._build_task_total == 200
+
+    def test_ansi_codes_stripped_for_warning(self):
+        """ANSI-wrapped WARNING lines still increment the warning counter."""
+        app = self._make_app()
+        app._parse_and_update_progress("\x1b[33mWARNING: Something deprecated\x1b[0m")
+        assert app._build_warnings == 1
+
 
 # =============================================================================
 # _reset_build_progress
@@ -672,7 +762,7 @@ class TestResetBuildProgress:
             with app._progress_lock:
                 app._build_task_current = 42
                 app._build_task_total = 100
-                app._build_running_tasks = ["pkg do_compile"]
+                app._build_running_tasks.append("pkg do_compile")
                 app._build_warnings = 3
                 app._build_errors = 1
                 app._in_running_block = True
@@ -681,7 +771,7 @@ class TestResetBuildProgress:
 
             assert app._build_task_current == 0
             assert app._build_task_total == 0
-            assert app._build_running_tasks == []
+            assert list(app._build_running_tasks) == []
             assert app._build_warnings == 0
             assert app._build_errors == 0
             assert app._in_running_block is False

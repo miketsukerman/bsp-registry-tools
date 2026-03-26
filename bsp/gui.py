@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections import deque
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -51,12 +52,27 @@ except ImportError:
 # BitBake / KAS output parsing helpers
 # =============================================================================
 
+# ANSI escape sequences (color/style codes) — stripped before any parsing.
+_RE_ANSI = re.compile(r"\x1b\[[0-9;]*[mK]")
+
+# ── Interactive/TTY mode (BitBake Cooker UI) ─────────────────────────────────
 # "Currently  3 running tasks (19 of 2411):"
 _RE_TASK_PROGRESS = re.compile(
     r"Currently\s+(\d+)\s+running tasks?\s+\((\d+)\s+of\s+(\d+)\)"
 )
 # "  0: python3-native-3.11.1-r0 do_fetch (pid 12345)"
 _RE_RUNNING_TASK = re.compile(r"^\s*\d+:\s+(\S+)\s+(do_\w+)")
+
+# ── Non-interactive/piped mode (BitBake plain log output) ────────────────────
+# "NOTE: Running task 42 of 2411 (ID: 3, /path/recipe.bb, do_fetch) [cpu: ...]"
+# "NOTE: Running noexec task 1 of 2411 (/path/recipe.bb, do_build) [cpu: ...]"
+_RE_TASK_NONINTERACTIVE = re.compile(
+    r"^NOTE:\s+Running\s+(?:noexec\s+)?task\s+(\d+)\s+of\s+(\d+)"
+)
+# "NOTE: glibc-2.35-r0 do_compile: Compiling glibc ..."
+_RE_ACTIVE_RECIPE = re.compile(r"^NOTE:\s+(\S+)\s+(do_\w+):\s*(.*)")
+
+# ── Common patterns ───────────────────────────────────────────────────────────
 # "NOTE:", "WARNING:", "ERROR:", "FATAL:"
 _RE_LOG_LEVEL = re.compile(r"^(NOTE|WARNING|ERROR|FATAL):\s+(.*)")
 # "NOTE: Tasks Summary: Attempted N tasks …"
@@ -668,7 +684,8 @@ if TEXTUAL_AVAILABLE:
             # Build progress tracking (updated from the streaming thread)
             self._build_task_current: int = 0
             self._build_task_total: int = 0
-            self._build_running_tasks: List[str] = []
+            # deque with maxlen ensures O(1) append/drop; acts as rolling window
+            self._build_running_tasks: deque = deque(maxlen=_MAX_DISPLAYED_RUNNING_TASKS)
             self._build_warnings: int = 0
             self._build_errors: int = 0
             self._in_running_block: bool = False
@@ -1237,7 +1254,7 @@ if TEXTUAL_AVAILABLE:
             with self._progress_lock:
                 self._build_task_current = 0
                 self._build_task_total = 0
-                self._build_running_tasks = []
+                self._build_running_tasks.clear()
                 self._build_warnings = 0
                 self._build_errors = 0
                 self._in_running_block = False
@@ -1279,7 +1296,7 @@ if TEXTUAL_AVAILABLE:
             if running_tasks:
                 task_lines = "\n".join(
                     f"  [cyan]• {t}[/cyan]"
-                    for t in running_tasks[:_MAX_DISPLAYED_RUNNING_TASKS]
+                    for t in running_tasks
                 )
                 parts.append(f"\n[dim]Running:[/dim]\n{task_lines}")
 
@@ -1289,17 +1306,25 @@ if TEXTUAL_AVAILABLE:
         def _parse_and_update_progress(self, line: str) -> None:
             """Parse one BitBake/KAS output line and schedule UI updates.
 
+            Handles both BitBake's interactive/TTY mode output (when a pseudo-TTY
+            is allocated) and its non-interactive plain-log mode (when stdout is
+            piped, which is the normal case for this GUI).
+
             Runs on the background streaming thread.  All UI mutations are
             dispatched via :py:meth:`call_from_thread`.
             """
+            # Strip ANSI colour/style codes — BitBake may emit them even on pipes.
+            clean = _RE_ANSI.sub("", line)
+
+            # ── Interactive/TTY mode ──────────────────────────────────────
             # "Currently  3 running tasks (19 of 2411):"
-            m = _RE_TASK_PROGRESS.search(line)
+            m = _RE_TASK_PROGRESS.search(clean)
             if m:
                 with self._progress_lock:
                     self._build_task_current = int(m.group(2))
                     self._build_task_total = int(m.group(3))
                     self._in_running_block = True
-                    self._build_running_tasks = []
+                    self._build_running_tasks.clear()
                 self.call_from_thread(self._refresh_progress_ui)
                 return
 
@@ -1308,7 +1333,7 @@ if TEXTUAL_AVAILABLE:
                 in_block = self._in_running_block
 
             if in_block:
-                m = _RE_RUNNING_TASK.match(line)
+                m = _RE_RUNNING_TASK.match(clean)
                 if m:
                     with self._progress_lock:
                         self._build_running_tasks.append(
@@ -1320,8 +1345,30 @@ if TEXTUAL_AVAILABLE:
                     with self._progress_lock:
                         self._in_running_block = False
 
+            # ── Non-interactive/piped mode ────────────────────────────────
+            # "NOTE: Running [noexec] task X of Y (ID: ..., /path, do_task) ..."
+            m = _RE_TASK_NONINTERACTIVE.search(clean)
+            if m:
+                with self._progress_lock:
+                    self._build_task_current = int(m.group(1))
+                    self._build_task_total = int(m.group(2))
+                self.call_from_thread(self._refresh_progress_ui)
+                return
+
+            # "NOTE: glibc-2.35-r0 do_compile: Compiling glibc ..."
+            # Track recently active recipes as a rolling window (deque maxlen).
+            m = _RE_ACTIVE_RECIPE.match(clean)
+            if m:
+                entry = f"{m.group(1)} {m.group(2)}"
+                with self._progress_lock:
+                    if entry not in self._build_running_tasks:
+                        self._build_running_tasks.append(entry)
+                self.call_from_thread(self._refresh_progress_ui)
+                return
+
+            # ── Common log-level lines ────────────────────────────────────
             # "WARNING: …", "ERROR: …", "NOTE: …", "FATAL: …"
-            m = _RE_LOG_LEVEL.match(line)
+            m = _RE_LOG_LEVEL.match(clean)
             if m:
                 level, msg = m.group(1), m.group(2)
                 if level == "WARNING":
