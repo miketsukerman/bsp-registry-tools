@@ -52,8 +52,13 @@ except ImportError:
 # BitBake / KAS output parsing helpers
 # =============================================================================
 
-# ANSI escape sequences (color/style codes) — stripped before any parsing.
-_RE_ANSI = re.compile(r"\x1b\[[0-9;]*[mK]")
+# Control characters and ANSI escape sequences stripped before any parsing.
+# Covers:
+#   \r           — carriage return (used by BitBake to overwrite lines)
+#   \x1b[...m/K  — SGR colour / erase-to-end-of-line (already handled)
+#   \x1b[...A/B/C/D/E/F/G/H/J/S/T/f  — VT100 cursor-movement sequences
+#   \x1b[...;...H/f — cursor position
+_RE_ANSI = re.compile(r"\r|\x1b\[[0-9;]*[mKABCDEFGHJSTf]")
 
 # ── Interactive/TTY mode (BitBake Cooker UI) ─────────────────────────────────
 # "Currently  3 running tasks (19 of 2411):"
@@ -1313,8 +1318,9 @@ if TEXTUAL_AVAILABLE:
             Runs on the background streaming thread.  All UI mutations are
             dispatched via :py:meth:`call_from_thread`.
             """
-            # Strip ANSI colour/style codes — BitBake may emit them even on pipes.
-            clean = _RE_ANSI.sub("", line)
+            # Strip ANSI/VT100 sequences and any remaining leading control chars
+            # (e.g. bare \r that BitBake inserts before NOTE: lines on a pipe).
+            clean = _RE_ANSI.sub("", line).lstrip()
 
             # ── Interactive/TTY mode ──────────────────────────────────────
             # "Currently  3 running tasks (19 of 2411):"
@@ -1415,8 +1421,10 @@ if TEXTUAL_AVAILABLE:
             self._reset_build_progress()
             self.query_one("#log-tabs", TabbedContent).active = "tab-progress"
 
-            # Build the command, forwarding registry path if set
-            cmd = [sys.executable, "-m", "bsp.cli_runner"]
+            # Build the command, forwarding registry path if set.
+            # Use -u (unbuffered) so BitBake log lines flow to the GUI
+            # line-by-line rather than waiting for an 8 KB buffer to fill.
+            cmd = [sys.executable, "-u", "-m", "bsp.cli_runner"]
             if self._registry_path:
                 cmd += ["--registry", self._registry_path]
             if self._remote:
@@ -1470,12 +1478,19 @@ if TEXTUAL_AVAILABLE:
 
             with _open_log() as log_fp:
                 try:
+                    # PYTHONUNBUFFERED=1 propagates through the process tree
+                    # (bsp.cli_runner → kas → bitbake) so that each NOTE:/WARNING:/
+                    # ERROR: line from BitBake is flushed immediately rather than
+                    # waiting for a full 8 KB stdout block buffer to fill.
+                    _env = os.environ.copy()
+                    _env["PYTHONUNBUFFERED"] = "1"
                     proc = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
                         start_new_session=True,
+                        env=_env,
                     )
                     self._running_process = proc
 
