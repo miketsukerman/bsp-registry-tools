@@ -10,6 +10,7 @@ These tests cover:
 
 from unittest.mock import MagicMock, patch
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -169,6 +170,137 @@ class TestBspLauncherAppComposition:
         async with app.run_test(headless=True) as _:
             btn = app.query_one("#btn-flash", Button)
             assert btn.disabled is True
+
+
+# =============================================================================
+# BuildTargetScreen tests
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestBuildTargetScreen:
+    """Tests for the BuildTargetScreen dialog."""
+
+    async def test_build_target_screen_compose(self, registry_file):
+        """BuildTargetScreen can be pushed and contains expected widgets."""
+        from bsp.gui import BspLauncherApp, BuildTargetScreen
+        from textual.widgets import Button, Checkbox
+
+        pushed_screen = BuildTargetScreen("my-bsp", "/tmp/build")
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as pilot:
+            await app.push_screen(pushed_screen)
+            await pilot.pause(0.1)
+            # After pushing, app.screen IS the modal screen
+            modal = app.screen
+            assert modal.query_one("#build-confirm", Button) is not None
+            assert modal.query_one("#build-cancel", Button) is not None
+            assert modal.query_one("#opt-clean", Checkbox) is not None
+            assert modal.query_one("#opt-checkout-only", Checkbox) is not None
+
+    async def test_build_target_cancel_dismisses_none(self, registry_file):
+        """Pressing Cancel dismisses the BuildTargetScreen with None."""
+        from bsp.gui import BspLauncherApp, BuildTargetScreen
+        from textual.widgets import Button
+
+        results = []
+        app = BspLauncherApp(registry_path=str(registry_file))
+
+        async with app.run_test(headless=True) as pilot:
+            await app.push_screen(
+                BuildTargetScreen("my-bsp", "/tmp/build"),
+                lambda v: results.append(v),
+            )
+            await pilot.pause()
+            await pilot.click("#build-cancel")
+            await pilot.pause()
+
+        assert results == [None]
+
+    async def test_build_target_confirm_returns_options(self, registry_file):
+        """Pressing Build dismisses with a dict containing build options."""
+        from bsp.gui import BspLauncherApp, BuildTargetScreen
+
+        results = []
+        app = BspLauncherApp(registry_path=str(registry_file))
+
+        async with app.run_test(headless=True) as pilot:
+            await app.push_screen(
+                BuildTargetScreen("my-bsp", "/tmp/build"),
+                lambda v: results.append(v),
+            )
+            await pilot.pause()
+            await pilot.click("#build-confirm")
+            await pilot.pause()
+
+        assert len(results) == 1
+        assert isinstance(results[0], dict)
+        assert "clean" in results[0]
+        assert "checkout_only" in results[0]
+
+
+# =============================================================================
+# _resolve_build_path tests
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestResolveBuildPath:
+    """Tests for BspLauncherApp._resolve_build_path."""
+
+    def test_returns_empty_string_without_manager(self, registry_file):
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        # _bsp_manager is None before mount
+        result = app._resolve_build_path("any-bsp")
+        assert result == ""
+
+
+# =============================================================================
+# Build log file saving
+# =============================================================================
+
+class TestStreamCommandLogFile:
+    """Tests for the log-file-writing behaviour of _stream_command."""
+
+    def test_log_file_created_on_successful_command(self, tmp_path):
+        """A successful command writes output to the log file."""
+        if not TEXTUAL_AVAILABLE:
+            pytest.skip("textual not installed")
+
+        import threading
+        from bsp.gui import BspLauncherApp
+
+        log_path = str(tmp_path / "build.log")
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        # Minimal initialisation without running the full TUI
+        app._running_process = None
+        app._log_calls = []
+        app._status_calls = []
+
+        def fake_call_from_thread(fn, *a, **kw):
+            fn(*a, **kw)
+
+        app.call_from_thread = fake_call_from_thread
+
+        def fake_log(msg):
+            app._log_calls.append(msg)
+
+        def fake_set_status(msg):
+            app._status_calls.append(msg)
+
+        def fake_cancel_button(*, disabled):
+            pass
+
+        app._log = fake_log
+        app._set_status = fake_set_status
+        app._set_cancel_button = fake_cancel_button
+
+        cmd = [sys.executable, "-c", "print('hello from build')"]
+        app._stream_command(cmd, log_file=log_path)
+
+        assert Path(log_path).exists()
+        content = Path(log_path).read_text()
+        assert "hello from build" in content
 
 
 # =============================================================================
