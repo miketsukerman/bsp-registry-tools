@@ -804,26 +804,31 @@ if TEXTUAL_AVAILABLE:
             def _add_device_subtree(parent_node, device_slug: str,
                                     release_map: dict[str, list]) -> None:
                 nonlocal preset_count
-                dev_node = parent_node.add(device_label(device_slug), expand=True)
+                dev_node = parent_node.add(
+                    f"[green]{device_label(device_slug)}[/green]", expand=True
+                )
                 for rel_slug, names in sorted(release_map.items()):
                     rel_label = release_labels.get(rel_slug, rel_slug)
                     rel_node = dev_node.add(
-                        f"[italic]{rel_label}[/italic]", expand=True
+                        f"[italic cyan]{rel_label}[/italic cyan]", expand=True
                     )
                     for preset_name in sorted(names):
-                        rel_node.add_leaf(preset_name, data=preset_name)
+                        rel_node.add_leaf(
+                            f"[dim white]{preset_name}[/dim white]",
+                            data=preset_name,
+                        )
                         preset_count += 1
 
             # Add vendor → device → release → preset sub-trees
             for vendor_slug, device_map in sorted(vendor_device_release.items()):
                 display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
-                vendor_node = tree.root.add(f"[bold]{display_name}[/bold]", expand=True)
+                vendor_node = tree.root.add(f"[bold yellow]{display_name}[/bold yellow]", expand=True)
                 for device_slug, release_map in sorted(device_map.items()):
                     _add_device_subtree(vendor_node, device_slug, release_map)
 
             # Devices that had no matching vendor go under "Other"
             if no_vendor_presets:
-                other_node = tree.root.add("[bold]Other[/bold]", expand=True)
+                other_node = tree.root.add("[bold yellow]Other[/bold yellow]", expand=True)
                 for device_slug, release_map in sorted(no_vendor_presets.items()):
                     _add_device_subtree(other_node, device_slug, release_map)
 
