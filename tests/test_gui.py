@@ -169,6 +169,133 @@ class TestBspLauncherAppComposition:
 
 
 # =============================================================================
+# BSP tree filter tests
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestBspTreeFilter:
+    """Unit tests for _render_tree filter logic (no full UI needed)."""
+
+    def _make_app_with_tree_data(self):
+        """Return a BspLauncherApp whose _tree_data is pre-populated."""
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Tree
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+
+        # Minimal _tree_data mimicking the real structure:
+        #   vendor: Acme (acme)
+        #     device: board-a (description "Board Alpha")
+        #       release: scarthgap → preset "acme-board-a-scarthgap"
+        #       release: styhead  → preset "acme-board-a-styhead"
+        #     device: board-b (description "Board Beta")
+        #       release: scarthgap → preset "acme-board-b-scarthgap"
+        #   no-vendor device: generic
+        #       release: "" → preset "generic-preset"
+
+        app._tree_data = {
+            "vendor_names": {"acme": "Acme Corp"},
+            "device_display": lambda slug: {
+                "board-a": "Board Alpha",
+                "board-b": "Board Beta",
+                "generic": "generic",
+            }.get(slug, slug),
+            "release_labels": {
+                "scarthgap": "Scarthgap",
+                "styhead": "Styhead",
+            },
+            "vendor_device_release": {
+                "acme": {
+                    "board-a": {
+                        "scarthgap": ["acme-board-a-scarthgap"],
+                        "styhead": ["acme-board-a-styhead"],
+                    },
+                    "board-b": {
+                        "scarthgap": ["acme-board-b-scarthgap"],
+                    },
+                },
+            },
+            "no_vendor_presets": {
+                "generic": {"": ["generic-preset"]},
+            },
+        }
+
+        # Provide a minimal tree widget backed by a real Tree instance,
+        # using a dict-based query_one stub.
+        _tree = Tree("root")
+        app.query_one = lambda selector, widget_type=None: _tree
+
+        return app
+
+    def test_no_filter_returns_all_presets(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("")
+        assert count == 4  # 3 acme + 1 generic
+
+    def test_filter_by_vendor_name(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("Acme")
+        assert count == 3  # all acme presets, no generic
+
+    def test_filter_by_device_label(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("Alpha")
+        assert count == 2  # board-a has 2 releases
+
+    def test_filter_by_release_label(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("Styhead")
+        assert count == 1  # only acme-board-a-styhead
+
+    def test_filter_is_case_insensitive(self):
+        app = self._make_app_with_tree_data()
+        assert app._render_tree("styhead") == app._render_tree("Styhead")
+
+    def test_filter_with_multiple_tokens(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("Acme Scarthgap")
+        assert count == 2  # board-a-scarthgap + board-b-scarthgap
+
+    def test_filter_matching_nothing_returns_zero(self):
+        app = self._make_app_with_tree_data()
+        count = app._render_tree("xyzzy")
+        assert count == 0
+
+    def test_filter_clears_tree_data_none(self):
+        from bsp.gui import BspLauncherApp
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._tree_data = None
+        assert app._render_tree("anything") == 0
+
+
+# =============================================================================
+# Filter widget present in composed app
+# =============================================================================
+
+@pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
+class TestFilterWidgetPresence:
+    """Verify that the filter Input is composed into the left panel."""
+
+    async def test_filter_input_present(self, registry_file):
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Input
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            widget = app.query_one("#filter-input", Input)
+            assert widget is not None
+
+    async def test_filter_input_starts_empty(self, registry_file):
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Input
+
+        app = BspLauncherApp(registry_path=str(registry_file))
+        async with app.run_test(headless=True) as _:
+            widget = app.query_one("#filter-input", Input)
+            assert widget.value == ""
+
+
+# =============================================================================
 # BuildTargetScreen tests
 # =============================================================================
 

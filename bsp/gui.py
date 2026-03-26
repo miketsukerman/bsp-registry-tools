@@ -553,6 +553,11 @@ if TEXTUAL_AVAILABLE:
         }
 
         /* ── BSP tree ────────────────────────────────────────── */
+        #filter-input {
+            height: 3;
+            margin: 0 0 1 0;
+        }
+
         #bsp-tree {
             height: 1fr;
         }
@@ -627,6 +632,8 @@ if TEXTUAL_AVAILABLE:
             self._running_process: Optional[subprocess.Popen] = None
             self._is_loading: bool = False
             self._load_lock = threading.Lock()
+            # Cached data for re-filtering without reloading the registry
+            self._tree_data: Optional[dict] = None
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -642,6 +649,10 @@ if TEXTUAL_AVAILABLE:
             with Horizontal(id="main-layout"):
                 with Vertical(id="left-panel"):
                     yield Label("BSP Presets", classes="detail-key")
+                    yield Input(
+                        placeholder="Filter by vendor, device or release…",
+                        id="filter-input",
+                    )
                     yield Tree("Vendors", id="bsp-tree")
 
                 with Vertical(id="right-panel"):
@@ -799,7 +810,7 @@ if TEXTUAL_AVAILABLE:
                 for r in (registry.releases or [])
             }
 
-            def device_label(device_slug: str) -> str:
+            def device_display(device_slug: str) -> str:
                 d: Optional[DeviceModel] = devices.get(device_slug)
                 return (d.description if d and d.description else device_slug)
 
@@ -825,15 +836,74 @@ if TEXTUAL_AVAILABLE:
                     dr = no_vendor_presets.setdefault(bsp.device, {})
                     dr.setdefault(release_slug, []).append(bsp.name)
 
+            # Cache the registry data so the filter can re-render without
+            # reloading everything from disk.
+            self._tree_data = {
+                "vendor_names": vendor_names,
+                "device_display": device_display,
+                "release_labels": release_labels,
+                "vendor_device_release": vendor_device_release,
+                "no_vendor_presets": no_vendor_presets,
+            }
+
+            filter_text = self.query_one("#filter-input", Input).value
+            preset_count = self._render_tree(filter_text)
+
+            if preset_count:
+                self._set_status(f"Loaded {preset_count} BSP preset(s)")
+                self._log(f"[green]Registry loaded:[/green] {preset_count} BSP(s) available")
+            else:
+                self._set_status("No BSPs found in registry")
+                self._log("[yellow]No BSPs found in registry[/yellow]")
+
+        def _render_tree(self, filter_text: str = "") -> int:
+            """Rebuild the tree widget contents applying *filter_text*.
+
+            Each token in *filter_text* (whitespace-separated) must appear in
+            at least one of the vendor name, device label, or release label for
+            a preset to be included.  Returns the number of visible presets.
+            """
+            if self._tree_data is None:
+                return 0
+
+            tokens = [t.lower() for t in filter_text.split() if t]
+            vendor_names = self._tree_data["vendor_names"]
+            device_display = self._tree_data["device_display"]
+            release_labels = self._tree_data["release_labels"]
+            vendor_device_release = self._tree_data["vendor_device_release"]
+            no_vendor_presets = self._tree_data["no_vendor_presets"]
+
+            tree = self.query_one("#bsp-tree", Tree)
+            tree.clear()
+
             preset_count = 0
 
-            def _add_device_subtree(parent_node, device_slug: str,
-                                    release_map: dict[str, list]) -> None:
-                nonlocal preset_count
-                dev_node = parent_node.add(
-                    f"[green]{device_label(device_slug)}[/green]", expand=True
-                )
+            def _matches(vendor_label: str, device_slug: str, rel_slug: str) -> bool:
+                """Return True if every token matches vendor, device, or release."""
+                if not tokens:
+                    return True
+                dev_label = device_display(device_slug).lower()
+                rel_label = release_labels.get(rel_slug, rel_slug).lower()
+                searchable = f"{vendor_label.lower()} {dev_label} {rel_label}"
+                return all(tok in searchable for tok in tokens)
+
+            def _add_device_subtree(parent_node, vendor_label: str,
+                                    device_slug: str,
+                                    release_map: dict[str, list]) -> int:
+                """Add a device sub-tree, skipping releases that don't match.
+
+                Returns the number of preset leaves added.
+                """
+                dev_label = device_display(device_slug)
+                dev_node = None
+                added = 0
                 for rel_slug, names in sorted(release_map.items()):
+                    if not _matches(vendor_label, device_slug, rel_slug):
+                        continue
+                    if dev_node is None:
+                        dev_node = parent_node.add(
+                            f"[green]{dev_label}[/green]", expand=True
+                        )
                     rel_label = release_labels.get(rel_slug, rel_slug)
                     rel_node = dev_node.add(
                         f"[italic cyan]{rel_label}[/italic cyan]", expand=True
@@ -843,27 +913,57 @@ if TEXTUAL_AVAILABLE:
                             f"[dim white]{preset_name}[/dim white]",
                             data=preset_name,
                         )
-                        preset_count += 1
+                        added += 1
+                return added
 
-            # Add vendor → device → release → preset sub-trees
+            # Add vendor → device → release → preset sub-trees.
+            # Pre-check each vendor to avoid inserting an empty vendor node.
             for vendor_slug, device_map in sorted(vendor_device_release.items()):
                 display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
-                vendor_node = tree.root.add(f"[bold yellow]{display_name}[/bold yellow]", expand=True)
+                # Check whether any device/release under this vendor passes the filter
+                has_match = any(
+                    _matches(display_name, dev_slug, rel_slug)
+                    for dev_slug, release_map in device_map.items()
+                    for rel_slug in release_map
+                )
+                if not has_match:
+                    continue
+                vendor_node = tree.root.add(
+                    f"[bold yellow]{display_name}[/bold yellow]", expand=True
+                )
                 for device_slug, release_map in sorted(device_map.items()):
-                    _add_device_subtree(vendor_node, device_slug, release_map)
+                    preset_count += _add_device_subtree(
+                        vendor_node, display_name, device_slug, release_map
+                    )
 
             # Devices that had no matching vendor go under "Other"
-            if no_vendor_presets:
-                other_node = tree.root.add("[bold yellow]Other[/bold yellow]", expand=True)
+            other_label = "Other"
+            has_other = any(
+                _matches(other_label, dev_slug, rel_slug)
+                for dev_slug, release_map in no_vendor_presets.items()
+                for rel_slug in release_map
+            )
+            if no_vendor_presets and has_other:
+                other_node = tree.root.add(
+                    f"[bold yellow]{other_label}[/bold yellow]", expand=True
+                )
                 for device_slug, release_map in sorted(no_vendor_presets.items()):
-                    _add_device_subtree(other_node, device_slug, release_map)
+                    preset_count += _add_device_subtree(
+                        other_node, other_label, device_slug, release_map
+                    )
 
-            if preset_count:
-                self._set_status(f"Loaded {preset_count} BSP preset(s)")
-                self._log(f"[green]Registry loaded:[/green] {preset_count} BSP(s) available")
+            return preset_count
+
+        @on(Input.Changed, "#filter-input")
+        def on_filter_changed(self, event: Input.Changed) -> None:
+            """Re-render the BSP tree whenever the filter text changes."""
+            if self._tree_data is None:
+                return
+            count = self._render_tree(event.value)
+            if count:
+                self._set_status(f"Showing {count} BSP preset(s)")
             else:
-                self._set_status("No BSPs found in registry")
-                self._log("[yellow]No BSPs found in registry[/yellow]")
+                self._set_status("No BSPs match filter")
 
         # ── BSP selection ────────────────────────────────────────
 
