@@ -82,6 +82,15 @@ _RE_ACTIVE_RECIPE = re.compile(r"^NOTE:\s+(\S+)\s+(do_\w+):\s*(.*)")
 _RE_LOG_LEVEL = re.compile(r"^(NOTE|WARNING|ERROR|FATAL):\s+(.*)")
 # "NOTE: Tasks Summary: Attempted N tasks …"
 _RE_TASKS_SUMMARY = re.compile(r"Tasks Summary:")
+# BitBake build-phase milestone lines worth surfacing in the progress tab
+# e.g. "NOTE: Preparing RunQueue", "NOTE: Executing Tasks"
+_RE_BUILD_PHASE = re.compile(
+    r"Preparing RunQueue|Executing Tasks|Parsing recipes|"
+    r"Resolving any missing task queue|Taskdata saved"
+)
+# KAS own log lines: "INFO     kas: Running bitbake ..."
+# Format: <LEVEL><spaces><logger>: <message>
+_RE_KAS_INFO = re.compile(r"^(?:INFO|DEBUG)\s+\S+:\s+(.*)")
 
 # Maximum number of concurrently-running tasks shown in the progress tab.
 _MAX_DISPLAYED_RUNNING_TASKS = 6
@@ -1393,11 +1402,30 @@ if TEXTUAL_AVAILABLE:
                         f"[red]{level}:[/red] {msg}",
                     )
                     self.call_from_thread(self._refresh_progress_ui)
-                elif level == "NOTE" and _RE_TASKS_SUMMARY.search(msg):
-                    self.call_from_thread(
-                        self._log_important,
-                        f"[dim]NOTE:[/dim] {msg}",
-                    )
+                elif level == "NOTE":
+                    if _RE_TASKS_SUMMARY.search(msg):
+                        self.call_from_thread(
+                            self._log_important,
+                            f"[dim]NOTE:[/dim] {msg}",
+                        )
+                    elif _RE_BUILD_PHASE.search(msg):
+                        # Milestone lines (Preparing RunQueue, Executing Tasks …)
+                        # are surfaced in the progress tab so the user sees
+                        # build activity even before tasks start counting.
+                        self.call_from_thread(
+                            self._log_important,
+                            f"[dim]◉ {msg}[/dim]",
+                        )
+                return
+
+            # ── KAS own log lines ─────────────────────────────────────────
+            # "INFO     kas: Running bitbake ..."
+            m = _RE_KAS_INFO.match(clean)
+            if m:
+                self.call_from_thread(
+                    self._log_important,
+                    f"[dim]◉ {m.group(1)}[/dim]",
+                )
 
         def _log_important(self, message: str) -> None:
             """Write *message* to the progress tab's filtered log. UI-thread method."""
@@ -1493,11 +1521,19 @@ if TEXTUAL_AVAILABLE:
                         env=_env,
                     )
                     self._running_process = proc
+                    # Show "Building…" immediately — before any output arrives
+                    # so the progress tab is never stuck on "Waiting…" during a run.
+                    self.call_from_thread(self._refresh_progress_ui)
 
                     for line in proc.stdout:
                         stripped = line.rstrip()
                         self.call_from_thread(self._log, stripped)
-                        self._parse_and_update_progress(stripped)
+                        try:
+                            self._parse_and_update_progress(stripped)
+                        except Exception as _exc:
+                            # Progress-parsing errors must never abort the stream.
+                            # Log at DEBUG so developers can diagnose unexpected failures.
+                            logging.debug("Progress parse error (ignored): %s", _exc)
                         if log_fp is not None:
                             log_fp.write(line)
                             log_fp.flush()

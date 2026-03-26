@@ -629,14 +629,29 @@ class TestBitBakeProgressParsing:
         )
         assert any("Tasks Summary" in m for m in app._important_calls)
 
-    def test_ordinary_note_not_logged_to_progress_tab(self):
+    def test_build_phase_preparing_runqueue_logged(self):
+        """NOTE: Preparing RunQueue is forwarded to the progress-log."""
+        app = self._make_app()
+        app._parse_and_update_progress("NOTE: Preparing RunQueue")
+        assert any("Preparing RunQueue" in m for m in app._important_calls)
+
+    def test_build_phase_executing_tasks_logged(self):
+        """NOTE: Executing Tasks is forwarded to the progress-log."""
         app = self._make_app()
         app._parse_and_update_progress("NOTE: Executing Tasks")
-        # "Executing Tasks" is not in _TASKS_SUMMARY pattern, so not logged
-        # (only "Tasks Summary" is caught)
-        # This just ensures no crash and the line is handled gracefully
-        assert app._build_warnings == 0
-        assert app._build_errors == 0
+        assert any("Executing Tasks" in m for m in app._important_calls)
+
+    def test_kas_info_line_logged_to_progress_tab(self):
+        """KAS INFO log lines are forwarded to the progress-log."""
+        app = self._make_app()
+        app._parse_and_update_progress("INFO     kas: Running bitbake ...")
+        assert any("Running bitbake" in m for m in app._important_calls)
+
+    def test_kas_info_config_file_logged(self):
+        """KAS INFO log lines about config files are forwarded."""
+        app = self._make_app()
+        app._parse_and_update_progress("INFO     kas: Using KAS project config files: /path")
+        assert any("Using KAS project config files" in m for m in app._important_calls)
 
     def test_unrecognised_line_ignored(self):
         app = self._make_app()
