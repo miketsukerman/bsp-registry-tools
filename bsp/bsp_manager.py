@@ -1305,6 +1305,27 @@ class BspManager:
         import shutil as _shutil
         import subprocess as _sp
 
+        def _privilege_prefix() -> list:
+            """Return a privilege-escalation prefix for subprocess commands.
+
+            Prefers ``pkexec`` (shows a graphical Polkit password dialog, suitable
+            for GUI applications) and falls back to ``sudo`` (works in terminals).
+            Logs a warning and returns an empty list when neither is found.
+            """
+            for tool in ("pkexec", "sudo"):
+                if _shutil.which(tool):
+                    return [tool]
+            logging.warning(
+                "Neither 'pkexec' nor 'sudo' found; flash command will run without "
+                "elevated privileges and may fail on restricted devices."
+            )
+            print(
+                "Warning: Neither 'pkexec' nor 'sudo' is available. "
+                "The flash command will run without elevated privileges.",
+                file=sys.stderr,
+            )
+            return []
+
         logging.info(f"Flashing BSP preset '{bsp_name}' to '{target}'")
 
         if image_path:
@@ -1352,6 +1373,7 @@ class BspManager:
         # A file is a "wic" image if .wic appears in its suffix chain
         # (handles both plain .wic and compressed variants like .wic.gz).
         is_wic = ".wic" in selected_image.suffixes
+        priv = _privilege_prefix()
 
         if is_wic and bmaptool:
             # bmaptool handles both plain and compressed wic images natively.
@@ -1359,11 +1381,11 @@ class BspManager:
             if bmap_path.exists():
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
-                result = _sp.run(["bmaptool", "copy", str(selected_image), target])
+                result = _sp.run([*priv, "bmaptool", "copy", str(selected_image), target])
             else:
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
-                result = _sp.run(["bmaptool", "copy", "--nobmap", str(selected_image), target])
+                result = _sp.run([*priv, "bmaptool", "copy", "--nobmap", str(selected_image), target])
         elif is_wic and selected_image.suffix != ".wic":
             # Compressed wic but no bmaptool — decompress then pipe into dd.
             compression_ext = selected_image.suffix  # e.g. ".gz", ".bz2"
@@ -1394,7 +1416,7 @@ class BspManager:
                 stdout=_sp.PIPE,
             )
             result = _sp.run(
-                ["dd", f"of={target}", "bs=4M", "conv=fsync", "status=progress"],
+                [*priv, "dd", f"of={target}", "bs=4M", "conv=fsync", "status=progress"],
                 stdin=decomp.stdout,
             )
             if decomp.stdout:
@@ -1421,6 +1443,7 @@ class BspManager:
             print(f"Flashing {selected_image.name} → {target} (dd)…")
             print("⚠  This will overwrite all data on the target device!")
             result = _sp.run([
+                *priv,
                 "dd",
                 f"if={selected_image}",
                 f"of={target}",
