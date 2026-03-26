@@ -960,6 +960,7 @@ class BspManager:
         resolved: ResolvedConfig,
         checkout_only: bool = False,
         label: str = "",
+        target: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -968,6 +969,7 @@ class BspManager:
             resolved: Resolved build configuration
             checkout_only: If True, only checkout and validate without building
             label: Descriptive label for log messages
+            target: Optional KAS build target (e.g. 'core-image-minimal')
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1004,18 +1006,19 @@ class BspManager:
                 kas_mgr.checkout_project()
                 logging.info(f"Checkout and validation completed successfully!")
             else:
-                kas_mgr.build_project()
+                kas_mgr.build_project(target=target)
                 logging.info(f"Build completed successfully!")
         finally:
             self._cleanup_temp_kas_file()
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
+    def build_bsp(self, bsp_name: str, checkout_only: bool = False, target: Optional[str] = None) -> None:
         """
         Build a BSP by preset name.
 
         Args:
             bsp_name: Name of the BSP preset to build
             checkout_only: If True, only checkout and validate without building
+            target: Optional KAS build target (e.g. 'core-image-minimal')
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1026,6 +1029,7 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{preset.name} - {preset.description}",
+            target=target,
         )
 
     def build_by_components(
@@ -1034,6 +1038,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         checkout_only: bool = False,
+        target: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1043,6 +1048,7 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
             checkout_only: If True, only checkout and validate without building
+            target: Optional KAS build target (e.g. 'core-image-minimal')
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1057,6 +1063,7 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{device_slug}/{release_slug}",
+            target=target,
         )
 
     # ------------------------------------------------------------------

@@ -108,6 +108,13 @@ def main() -> int:
             action="store_true",
             help="Checkout and validate build configuration without building (fast)"
         )
+        build_parser.add_argument(
+            "--target",
+            type=str,
+            dest="kas_target",
+            metavar="TARGET",
+            help="KAS build target to pass to BitBake (e.g. core-image-minimal)"
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -316,14 +323,15 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            kas_target = getattr(args, "kas_target", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only, target=kas_target)
             elif device and release:
                 bsp_mgr.build_by_components(
-                    device, release, features, checkout_only=checkout_only
+                    device, release, features, checkout_only=checkout_only, target=kas_target
                 )
             else:
                 logging.error(
