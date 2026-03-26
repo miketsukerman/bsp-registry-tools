@@ -11,12 +11,14 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import platform
+import re
 import signal
 import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 try:
     from textual import on
@@ -30,6 +32,8 @@ try:
         Header,
         Input,
         Label,
+        ListItem,
+        ListView,
         RichLog,
         Static,
         TabbedContent,
@@ -39,6 +43,99 @@ try:
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
+
+
+# =============================================================================
+# Utility: enumerate removable / flashable block devices
+# =============================================================================
+
+def _list_removable_drives() -> List[Tuple[str, str]]:
+    """
+    Return a list of ``(device_path, display_label)`` tuples for block
+    devices that are suitable flash targets (removable USB drives, SD cards,
+    eMMC controllers).
+
+    Supports Linux (via ``/sys/block``) and macOS (via ``diskutil``).
+    Returns an empty list on unsupported platforms or when discovery fails.
+    """
+    drives: List[Tuple[str, str]] = []
+
+    if platform.system() == "Linux":
+        sys_block = Path("/sys/block")
+        if not sys_block.exists():
+            return drives
+
+        for dev in sorted(sys_block.iterdir()):
+            name = dev.name
+            # Skip virtual / loop / device-mapper / zram devices
+            if (name.startswith("loop") or name.startswith("dm-")
+                    or name.startswith("zram") or name.startswith("ram")):
+                continue
+
+            removable_file = dev / "removable"
+            is_removable = (
+                removable_file.exists()
+                and removable_file.read_text().strip() == "1"
+            )
+            # eMMC parent devices (mmcblkN, not mmcblkNpM partitions)
+            is_mmc = bool(re.match(r"^mmcblk\d+$", name))
+
+            if not (is_removable or is_mmc):
+                continue
+
+            # Size (sectors × 512 bytes)
+            size_str = ""
+            size_file = dev / "size"
+            if size_file.exists():
+                try:
+                    sectors = int(size_file.read_text().strip())
+                    size_bytes = sectors * 512
+                    if size_bytes >= 1_073_741_824:
+                        size_str = f"{size_bytes / 1_073_741_824:.1f} GB"
+                    elif size_bytes > 0:
+                        size_str = f"{size_bytes / 1_048_576:.0f} MB"
+                except ValueError:
+                    pass
+
+            # Model name from sysfs
+            model = ""
+            for model_path in (dev / "device" / "model", dev / "device" / "name"):
+                if model_path.exists():
+                    model = model_path.read_text().strip()
+                    break
+
+            dev_path = f"/dev/{name}"
+            parts = [x for x in [model, size_str] if x]
+            label = f"{dev_path}  ({', '.join(parts)})" if parts else dev_path
+            drives.append((dev_path, label))
+
+    elif platform.system() == "Darwin":
+        try:
+            import plistlib
+            result = subprocess.run(
+                ["diskutil", "list", "-plist", "external"],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                data = plistlib.loads(result.stdout)
+                for disk in data.get("AllDisksAndPartitions", []):
+                    dev_id = disk.get("DeviceIdentifier", "")
+                    if not dev_id:
+                        continue
+                    dev_path = f"/dev/{dev_id}"
+                    size_bytes = disk.get("Size", 0)
+                    size_str = ""
+                    if size_bytes >= 1_073_741_824:
+                        size_str = f"{size_bytes / 1_073_741_824:.1f} GB"
+                    elif size_bytes > 0:
+                        size_str = f"{size_bytes / 1_048_576:.0f} MB"
+                    label = f"{dev_path}  ({size_str})" if size_str else dev_path
+                    drives.append((dev_path, label))
+        except Exception:
+            pass
+
+    return drives
 
 # =============================================================================
 # Guard for missing textual dependency
@@ -212,13 +309,30 @@ if TEXTUAL_AVAILABLE:
             background: $surface;
             border: thick $warning;
             padding: 1 2;
-            width: 60;
-            height: 12;
+            width: 64;
+            height: auto;
+            max-height: 30;
         }
         FlashScreen Label {
             width: 100%;
             text-align: center;
             padding: 1 0;
+        }
+        FlashScreen #drives-label {
+            text-align: left;
+            color: $text-muted;
+            padding: 0;
+        }
+        FlashScreen #drive-list {
+            height: auto;
+            max-height: 10;
+            border: solid $primary-darken-2;
+            margin: 0 0 1 0;
+        }
+        FlashScreen #no-drives-label {
+            color: $text-muted;
+            text-style: italic;
+            padding: 0 0 1 0;
         }
         FlashScreen Input {
             width: 100%;
@@ -236,14 +350,37 @@ if TEXTUAL_AVAILABLE:
         def __init__(self, bsp_name: str) -> None:
             super().__init__()
             self._bsp_name = bsp_name
+            self._drives = _list_removable_drives()
+
+        def _make_drive_items(self) -> List[ListItem]:
+            """Build the list of drive ListItem widgets for the ListView."""
+            return [ListItem(Label(label), name=path) for path, label in self._drives]
 
         def compose(self) -> ComposeResult:
             with Container():
-                yield Label(f"Flash '{self._bsp_name}' — Target device:")
-                yield Input(placeholder="/dev/sda or /dev/mmcblk0", id="flash-target-input")
+                yield Label(f"Flash '{self._bsp_name}' — Select or enter target device:")
+                if self._drives:
+                    yield Label("Removable drives detected:", id="drives-label")
+                    yield ListView(*self._make_drive_items(), id="drive-list")
+                else:
+                    yield Label(
+                        "No removable drives detected — enter path manually.",
+                        id="no-drives-label",
+                    )
+                yield Input(
+                    placeholder="/dev/sda or /dev/mmcblk0",
+                    id="flash-target-input",
+                )
                 with Horizontal():
                     yield Button("⚡ Flash", variant="warning", id="flash-confirm")
                     yield Button("Cancel", variant="default", id="flash-cancel")
+
+        @on(ListView.Selected, "#drive-list")
+        def on_drive_selected(self, event: ListView.Selected) -> None:
+            """Populate the input field when a drive is chosen from the list."""
+            path = event.item.name
+            if path:
+                self.query_one("#flash-target-input", Input).value = path
 
         @on(Button.Pressed, "#flash-confirm")
         def on_flash(self) -> None:

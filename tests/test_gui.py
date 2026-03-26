@@ -172,6 +172,59 @@ class TestBspLauncherAppComposition:
 
 
 # =============================================================================
+# _list_removable_drives utility
+# =============================================================================
+
+class TestListRemovableDrives:
+    """Tests for the _list_removable_drives() helper."""
+
+    def test_returns_list(self):
+        from bsp.gui import _list_removable_drives
+        result = _list_removable_drives()
+        assert isinstance(result, list)
+
+    def test_each_entry_is_two_tuple(self):
+        from bsp.gui import _list_removable_drives
+        for item in _list_removable_drives():
+            assert isinstance(item, tuple) and len(item) == 2
+
+    def test_each_path_starts_with_dev(self):
+        from bsp.gui import _list_removable_drives
+        for path, _label in _list_removable_drives():
+            assert path.startswith("/dev/"), f"Unexpected path: {path}"
+
+    def test_empty_list_on_unknown_platform(self, monkeypatch):
+        import bsp.gui as gui_mod
+        monkeypatch.setattr(gui_mod.platform, "system", lambda: "Windows")
+        result = gui_mod._list_removable_drives()
+        assert result == []
+
+    def test_linux_removable_drive_parsed(self, tmp_path, monkeypatch):
+        """Linux sysfs parsing includes drives marked removable=1 with model/size."""
+        import bsp.gui as gui_mod
+
+        # Build a minimal /sys/block/sda structure
+        sda = tmp_path / "sda"
+        sda.mkdir()
+        (sda / "removable").write_text("1\n")
+        # 2 097 152 sectors × 512 B = 1 GiB
+        (sda / "size").write_text("2097152\n")
+        (sda / "device").mkdir()
+        (sda / "device" / "model").write_text("FakeUSBDrive\n")
+
+        monkeypatch.setattr(gui_mod.platform, "system", lambda: "Linux")
+        # Redirect the /sys/block path lookup to tmp_path
+        monkeypatch.setattr(gui_mod, "Path", lambda p: tmp_path if p == "/sys/block" else __builtins__["__import__"]("pathlib").Path(p))
+
+        result = gui_mod._list_removable_drives()
+        assert len(result) == 1
+        path, label = result[0]
+        assert path == "/dev/sda"
+        assert "FakeUSBDrive" in label
+        assert "GB" in label or "MB" in label
+
+
+# =============================================================================
 # CLI routing: --gui flag and 'bsp gui' subcommand
 # =============================================================================
 
