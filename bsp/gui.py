@@ -447,7 +447,7 @@ if TEXTUAL_AVAILABLE:
                     )
                 yield Checkbox("Clean build (--clean)", id="opt-clean")
                 yield Checkbox(
-                    "Checkout only — no build (--checkout-only)",
+                    "Checkout only — no build (--checkout)",
                     id="opt-checkout-only",
                 )
                 with Horizontal():
@@ -1045,7 +1045,7 @@ if TEXTUAL_AVAILABLE:
                 if options.get("clean"):
                     cmd_args.append("--clean")
                 if options.get("checkout_only"):
-                    cmd_args.append("--checkout-only")
+                    cmd_args.append("--checkout")
                 log_file = (
                     str(Path(build_path) / "bsp-build.log") if build_path else None
                 )
