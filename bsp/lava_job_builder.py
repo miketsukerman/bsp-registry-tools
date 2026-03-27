@@ -108,10 +108,12 @@ actions:
           from: file
           name: "{{ suite | basename | replace('.robot', '') }}"
           path: {{ suite }}
+{% if robot_variables %}
           parameters:
 {% for var_name, var_value in robot_variables.items() %}
             {{ var_name }}: "{{ var_value }}"
 {% endfor %}
+{% endif %}
 {% endfor %}
 {% else %}
   - test:
