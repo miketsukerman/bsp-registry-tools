@@ -508,6 +508,90 @@ class Feature:
 
 
 @dataclass
+class LavaServerConfig:
+    """
+    LAVA server connection settings (top-level ``lava:`` block in the registry).
+
+    All fields support ``$ENV{VAR}`` expansion so that credentials and URLs can
+    be kept outside the registry file and injected at runtime via environment
+    variables.
+
+    Attributes:
+        server: Base URL of the LAVA server (e.g. ``https://lava.example.com``).
+        token: LAVA authentication token.  Use ``$ENV{LAVA_TOKEN}`` to read it
+               from the environment.
+        username: LAVA username.  Use ``$ENV{LAVA_USER}`` to read it from the
+                  environment.
+        wait_timeout: Maximum number of seconds to wait for a submitted job to
+                      complete when ``--wait`` is requested (default: 3600).
+        poll_interval: Polling interval in seconds when waiting for job
+                       completion (default: 30).
+    """
+    server: str = ""
+    token: str = ""
+    username: str = ""
+    wait_timeout: int = 3600
+    poll_interval: int = 30
+
+
+@dataclass
+class RobotTestConfig:
+    """
+    Robot Framework test suite configuration embedded in a LAVA job.
+
+    Attributes:
+        suites: List of ``.robot`` suite file paths (relative to the registry
+                directory) that LAVA should execute as test actions.
+        variables: Optional key/value pairs passed to Robot Framework via
+                   ``--variable NAME:VALUE``.  Values support ``$ENV{}``
+                   expansion.
+    """
+    suites: List[str] = field(default_factory=empty_list)
+    variables: Dict[str, str] = field(default_factory=empty_dict)
+
+
+@dataclass
+class LavaTestConfig:
+    """
+    LAVA-specific test configuration for a BSP preset or device.
+
+    Attributes:
+        device_type: LAVA device-type label (must match a ``device_type``
+                     configured in the LAVA instance, e.g.
+                     ``"qemu-aarch64"`` or ``"imx8mp-evk"``).
+        job_template: Path to a Jinja2 LAVA job template (``.yaml.j2`` or
+                      ``.yml.j2``).  Resolved relative to the registry
+                      directory.  When omitted a built-in minimal template is
+                      used.
+        artifact_url: Base URL where built image artifacts are served (e.g.
+                      ``http://fileserver/builds``).  Combined with the
+                      resolved ``build_path`` to form the full image URL
+                      inside the LAVA job.  Overridden by ``--artifact-url``
+                      on the command line.
+        tags: Optional list of LAVA device tags that the scheduler must
+              match when allocating a worker (e.g. ``["hil", "imx8"]``).
+        robot: Optional Robot Framework test configuration embedded in the
+               LAVA job.
+    """
+    device_type: str = ""
+    job_template: Optional[str] = None
+    artifact_url: str = ""
+    tags: List[str] = field(default_factory=empty_list)
+    robot: Optional[RobotTestConfig] = None
+
+
+@dataclass
+class TestingConfig:
+    """
+    Testing configuration block attached to a ``BspPreset``.
+
+    Attributes:
+        lava: LAVA-specific test settings (device type, job template, tags).
+    """
+    lava: Optional[LavaTestConfig] = None
+
+
+@dataclass
 class BspPreset:
     """
     Named BSP preset (optional shortcut for a device+release+features combination).
@@ -551,6 +635,9 @@ class BspPreset:
                device, release, and feature slugs.  When ``releases`` is used,
                the ``path`` sub-field is ignored and the path is always
                auto-composed; the ``container`` override is still applied.
+        testing: Optional HIL test configuration for this preset.  When set,
+                 ``bsp test <preset>`` will submit a LAVA job using the
+                 configuration defined here.
     """
     name: str
     description: str
@@ -563,6 +650,7 @@ class BspPreset:
     local_conf: Optional[str] = None
     targets: List[str] = field(default_factory=empty_list)
     build: Optional[BspBuild] = None
+    testing: Optional[TestingConfig] = None
 
 
 @dataclass
@@ -608,9 +696,13 @@ class RegistryRoot:
                       bundles a container reference and environment variables.
                       The special name ``"default"`` is applied to any release
                       that does not explicitly name an environment.
+        lava: Optional top-level LAVA server connection settings shared across
+              all presets in this registry.  Individual preset ``testing.lava``
+              blocks inherit these settings and can override them on the CLI.
     """
     specification: Specification
     registry: Registry
     containers: Optional[Dict[str, Docker]] = field(default_factory=empty_dict)
     environment: Optional[GlobalEnvironment] = None
     environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
+    lava: Optional[LavaServerConfig] = None

@@ -85,6 +85,38 @@ def main() -> int:
             action="store_true",
             help="Checkout and validate build configuration without building (fast)"
         )
+        build_parser.add_argument(
+            "--test",
+            action="store_true",
+            dest="run_test",
+            help="Submit a LAVA HIL test job after a successful build"
+        )
+        build_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the LAVA job to complete (requires --test)"
+        )
+        build_parser.add_argument(
+            "--lava-server",
+            type=str,
+            dest="lava_server",
+            metavar="URL",
+            help="LAVA server base URL (overrides registry 'lava.server')"
+        )
+        build_parser.add_argument(
+            "--lava-token",
+            type=str,
+            dest="lava_token",
+            metavar="TOKEN",
+            help="LAVA authentication token (overrides registry 'lava.token')"
+        )
+        build_parser.add_argument(
+            "--artifact-url",
+            type=str,
+            dest="artifact_url",
+            metavar="URL",
+            help="Base URL where build artifacts are served to the LAVA lab"
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -194,6 +226,65 @@ def main() -> int:
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
         )
 
+        # ----------------------------------------------------------------
+        # Test command
+        # ----------------------------------------------------------------
+        test_parser = subparsers.add_parser(
+            "test",
+            help="Submit a LAVA HIL test job for a BSP preset or component combination"
+        )
+        test_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="Name of the BSP preset to test (mutually exclusive with --device/--release)"
+        )
+        test_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based test)"
+        )
+        test_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based test)"
+        )
+        test_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        )
+        test_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Block until the LAVA job completes and print test results"
+        )
+        test_parser.add_argument(
+            "--lava-server",
+            type=str,
+            dest="lava_server",
+            metavar="URL",
+            help="LAVA server base URL (overrides registry 'lava.server')"
+        )
+        test_parser.add_argument(
+            "--lava-token",
+            type=str,
+            dest="lava_token",
+            metavar="TOKEN",
+            help="LAVA authentication token (overrides registry 'lava.token')"
+        )
+        test_parser.add_argument(
+            "--artifact-url",
+            type=str,
+            dest="artifact_url",
+            metavar="URL",
+            help="Base URL where build artifacts are served to the LAVA lab"
+        )
+
         args = parser.parse_args()
 
         # Setup logging based on verbosity
@@ -258,15 +349,42 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            run_test = getattr(args, "run_test", False)
+            wait = getattr(args, "wait", False)
+            lava_server = getattr(args, "lava_server", None)
+            lava_token = getattr(args, "lava_token", None)
+            artifact_url = getattr(args, "artifact_url", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
             if bsp_name:
                 bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+                if run_test:
+                    passed = bsp_mgr.test_bsp(
+                        bsp_name,
+                        lava_server=lava_server,
+                        lava_token=lava_token,
+                        artifact_url=artifact_url,
+                        wait=wait,
+                    )
+                    if not passed:
+                        return 1
             elif device and release:
                 bsp_mgr.build_by_components(
                     device, release, features, checkout_only=checkout_only
                 )
+                if run_test:
+                    passed = bsp_mgr.test_by_components(
+                        device,
+                        release,
+                        features,
+                        lava_server=lava_server,
+                        lava_token=lava_token,
+                        artifact_url=artifact_url,
+                        wait=wait,
+                    )
+                    if not passed:
+                        return 1
             else:
                 logging.error(
                     "Specify either a BSP preset name or both --device and --release."
@@ -340,6 +458,45 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 shell_parser.print_help()
+                return 1
+
+        elif args.command == "test":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            wait = getattr(args, "wait", False)
+            lava_server = getattr(args, "lava_server", None)
+            lava_token = getattr(args, "lava_token", None)
+            artifact_url = getattr(args, "artifact_url", None)
+
+            if _check_exclusive(bsp_name, device, release, test_parser):
+                return 1
+            if bsp_name:
+                passed = bsp_mgr.test_bsp(
+                    bsp_name,
+                    lava_server=lava_server,
+                    lava_token=lava_token,
+                    artifact_url=artifact_url,
+                    wait=wait,
+                )
+            elif device and release:
+                passed = bsp_mgr.test_by_components(
+                    device,
+                    release,
+                    features,
+                    lava_server=lava_server,
+                    lava_token=lava_token,
+                    artifact_url=artifact_url,
+                    wait=wait,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                test_parser.print_help()
+                return 1
+            if not passed:
                 return 1
 
         else:

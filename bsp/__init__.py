@@ -66,6 +66,10 @@ from .models import (
     Release,
     FeatureCompatibility,
     Feature,
+    LavaServerConfig,
+    RobotTestConfig,
+    LavaTestConfig,
+    TestingConfig,
     BspPreset,
     Registry,
     RegistryRoot,
@@ -81,6 +85,8 @@ from .resolver import ResolvedConfig, V2Resolver
 from .path_resolver import PathResolver, resolver
 from .environment import EnvironmentManager
 from .kas_manager import KasManager
+from .lava_client import LavaClient, LavaTestCase, LavaTestSuite
+from .lava_job_builder import build_lava_job
 from .bsp_manager import BspManager
 from .cli import main
 
@@ -119,6 +125,10 @@ __all__ = [
     "Release",
     "FeatureCompatibility",
     "Feature",
+    "LavaServerConfig",
+    "RobotTestConfig",
+    "LavaTestConfig",
+    "TestingConfig",
     "BspPreset",
     "Registry",
     "RegistryRoot",
@@ -136,6 +146,10 @@ __all__ = [
     "resolver",
     "EnvironmentManager",
     "KasManager",
+    "LavaClient",
+    "LavaTestCase",
+    "LavaTestSuite",
+    "build_lava_job",
     "BspManager",
     # CLI
     "main",
