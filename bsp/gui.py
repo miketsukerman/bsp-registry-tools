@@ -9,6 +9,7 @@ to the CLI with real-time log output, BSP selection, and action buttons.
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import platform
 import re
@@ -17,7 +18,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 try:
     from textual import on
@@ -1247,7 +1248,7 @@ if TEXTUAL_AVAILABLE:
                         candidates.append(p)
 
             # Deduplicate, skip symlinks for non-kernel files too
-            seen: set[str] = set()
+            seen: Set[str] = set()
             unique: List[Path] = []
             for f in candidates:
                 key = str(f.resolve())
@@ -1256,7 +1257,7 @@ if TEXTUAL_AVAILABLE:
                     unique.append(f)
 
             # Sort: wic/img first by mtime desc, then kernels by mtime desc
-            stat_cache: dict = {}
+            stat_cache: Dict[Path, os.stat_result] = {}
             for f in unique:
                 try:
                     stat_cache[f] = f.stat()
@@ -1304,8 +1305,7 @@ if TEXTUAL_AVAILABLE:
                         size_str = f"{size_bytes / 1024:.0f} KB"
                     else:
                         size_str = f"{size_bytes} B"
-                    import datetime as _dt
-                    mtime = _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+                    mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
                     # Distinguish image types with a small icon prefix
                     name = f.name
                     if any(f.name.endswith(s) for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")):
@@ -1527,7 +1527,6 @@ if TEXTUAL_AVAILABLE:
             even if an exception occurs during streaming.
             """
             import contextlib
-            import datetime
 
             def _open_log():
                 """Open the log file or return a null context manager on failure."""
