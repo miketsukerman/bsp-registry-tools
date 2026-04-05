@@ -572,11 +572,26 @@ if TEXTUAL_AVAILABLE:
 
         #env-pane {
             height: 1fr;
+            border-bottom: solid $primary-darken-2;
         }
 
         #env-label {
             color: $accent;
             text-style: bold;
+        }
+
+        #artifacts-pane {
+            height: 1fr;
+        }
+
+        #artifacts-label {
+            color: $accent;
+            text-style: bold;
+        }
+
+        #artifacts-view {
+            height: 1fr;
+            padding: 0 1;
         }
 
         /* ── Registry bar ────────────────────────────────────── */
@@ -712,6 +727,12 @@ if TEXTUAL_AVAILABLE:
                         yield ScrollableContainer(
                             Static("", id="env-view"),
                             id="env-scroll",
+                        )
+                    with Vertical(id="artifacts-pane"):
+                        yield Label("Build Artifacts", id="artifacts-label")
+                        yield ScrollableContainer(
+                            Static("[dim]No build artifacts found[/dim]", id="artifacts-view"),
+                            id="artifacts-scroll",
                         )
 
             # Action buttons
@@ -1183,7 +1204,122 @@ if TEXTUAL_AVAILABLE:
 
             self.query_one("#env-view", Static).update("\n".join(env_lines))
 
-        # ── Button actions ───────────────────────────────────────
+            # ── Bottom pane: build artifacts ────────────────────────
+            self._update_artifacts_pane(bsp_name)
+
+        def _scan_build_artifacts(self, bsp_name: str) -> List[Path]:
+            """Return a sorted list of build artifacts for *bsp_name*.
+
+            Searches the Yocto deploy/images directory for:
+            - Flash images: ``*.wic``, ``*.wic.gz``, ``*.wic.bz2``, ``*.wic.xz``,
+              ``*.wic.zst``, ``*.img``
+            - Kernel images: ``uImage``, ``uImage-*``, ``zImage``, ``zImage-*``,
+              ``Image``, ``Image-*``, ``fitImage``, ``fitImage-*``
+
+            Returns an empty list if the build directory does not exist yet.
+            """
+            if not self._bsp_manager:
+                return []
+            try:
+                deploy_dir = self._bsp_manager._get_deploy_dir(bsp_name)
+            except Exception:
+                return []
+
+            if not deploy_dir.exists():
+                return []
+
+            candidates: List[Path] = []
+            # Flash images
+            for pattern in ("*.wic", "*.wic.gz", "*.wic.bz2", "*.wic.xz", "*.wic.zst", "*.img"):
+                candidates.extend(deploy_dir.rglob(pattern))
+            # Filter out bmap sidecar files
+            candidates = [f for f in candidates if ".bmap" not in f.name]
+
+            # Kernel images (exact names and name-* variants)
+            for kname in ("uImage", "zImage", "Image", "fitImage", "vmlinuz", "bzImage"):
+                # exact name
+                for p in deploy_dir.rglob(kname):
+                    candidates.append(p)
+                # name-<variant> patterns (e.g. uImage-5.15.0-yocto-standard)
+                for p in deploy_dir.rglob(f"{kname}-*"):
+                    # skip symlinks to keep the list clean
+                    if not p.is_symlink():
+                        candidates.append(p)
+
+            # Deduplicate, skip symlinks for non-kernel files too
+            seen: set[str] = set()
+            unique: List[Path] = []
+            for f in candidates:
+                key = str(f.resolve())
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(f)
+
+            # Sort: wic/img first by mtime desc, then kernels by mtime desc
+            stat_cache: dict = {}
+            for f in unique:
+                try:
+                    stat_cache[f] = f.stat()
+                except OSError:
+                    pass
+
+            def _sort_key(f: Path):
+                is_kernel = f.name.startswith(
+                    ("uImage", "zImage", "Image", "fitImage", "vmlinuz", "bzImage")
+                )
+                mtime = -stat_cache[f].st_mtime if f in stat_cache else 0
+                return (1 if is_kernel else 0, mtime)
+
+            unique.sort(key=_sort_key)
+            return unique
+
+        def _update_artifacts_pane(self, bsp_name: str) -> None:
+            """Populate the Build Artifacts pane for the given BSP."""
+            artifacts = self._scan_build_artifacts(bsp_name)
+            artifacts_widget = self.query_one("#artifacts-view", Static)
+
+            if not artifacts:
+                # Show where we looked so the user knows the build path
+                build_path = self._resolve_build_path(bsp_name)
+                if build_path:
+                    msg = (
+                        f"[dim]No artifacts found in:\n"
+                        f"  {build_path}/build/tmp/deploy/images/[/dim]"
+                    )
+                else:
+                    msg = "[dim]No build artifacts found[/dim]"
+                artifacts_widget.update(msg)
+                return
+
+            lines: List[str] = []
+            for f in artifacts:
+                try:
+                    st = f.stat()
+                    size_bytes = st.st_size
+                    if size_bytes >= 1_073_741_824:
+                        size_str = f"{size_bytes / 1_073_741_824:.1f} GB"
+                    elif size_bytes >= 1_048_576:
+                        size_str = f"{size_bytes / 1_048_576:.1f} MB"
+                    elif size_bytes >= 1024:
+                        size_str = f"{size_bytes / 1024:.0f} KB"
+                    else:
+                        size_str = f"{size_bytes} B"
+                    import datetime as _dt
+                    mtime = _dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+                    # Distinguish image types with a small icon prefix
+                    name = f.name
+                    if any(f.name.endswith(s) for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")):
+                        icon = "💾"
+                    else:
+                        icon = "🐧"
+                    lines.append(
+                        f"{icon} [bold]{name}[/bold]  "
+                        f"[dim]{size_str}  {mtime}[/dim]"
+                    )
+                except OSError:
+                    lines.append(f"  [dim]{f.name}[/dim]")
+
+            artifacts_widget.update("\n".join(lines))
 
         @on(Button.Pressed, "#btn-refresh")
         def on_refresh(self) -> None:
@@ -1219,6 +1355,7 @@ if TEXTUAL_AVAILABLE:
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
             self.query_one("#env-view", Static).update("")
+            self.query_one("#artifacts-view", Static).update("[dim]No build artifacts found[/dim]")
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
             self._load_registry_async()
@@ -1445,6 +1582,11 @@ if TEXTUAL_AVAILABLE:
                             self._log, "[green]Command finished successfully[/green]"
                         )
                         self.call_from_thread(self._set_status, "Done")
+                        # Refresh artifacts pane in case the build produced new images
+                        if self._selected_bsp_name:
+                            self.call_from_thread(
+                                self._update_artifacts_pane, self._selected_bsp_name
+                            )
                     elif rc == -15:  # SIGTERM — user cancelled
                         self.call_from_thread(
                             self._log, "[yellow]Command cancelled by user[/yellow]"
