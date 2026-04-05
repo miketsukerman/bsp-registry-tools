@@ -207,18 +207,20 @@ bsp --gui
 alternative to the CLI — similar in spirit to the
 [Advantech BSP Launcher](https://docs.aim-linux.advantech.com/docs/utility/bsplauncher/).
 
-![BSP Registry Launcher screenshot](https://github.com/user-attachments/assets/f29f14d5-c886-4f65-ba7f-e4f3ccecb8d4)
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
 
 ### Features
 
 | Feature | Description |
 |---------|-------------|
-| **BSP list** | All BSPs from the registry displayed in a navigable table |
-| **BSP details** | Select a BSP to view its description, OS info, build path, and config files |
-| **Build** | Trigger a BSP build with a confirmation prompt (keyboard shortcut: `b`) |
-| **Shell hint** | Shows the equivalent `bsp shell` command to run in your terminal (`s`) |
+| **BSP tree** | Vendor → Device → Release → BSP preset hierarchy with filter support |
+| **BSP details** | Select a BSP to view its description, device, release, features, and build path |
+| **Build environment** | Shows the Docker container, named environment, and resolved variables |
+| **Build artifacts** | Automatically scans the Yocto deploy directory for `.wic` images and kernel images (`uImage`, `zImage`, `Image`, `fitImage`) — updated after each successful build |
+| **Build** | Opens a dialog to choose build options (clean, checkout-only), then streams output to the log (`b`) |
+| **Shell** | Exits the TUI and launches an interactive `bsp shell` session in the restored terminal (`s`) |
+| **Flash** | Selects a flash image and target block device, then writes the image to SD card or eMMC (`f`) |
 | **Export** | Export KAS configuration and stream output to the log panel (`e`) |
-| **Containers** | List all container definitions from the registry (`c`) |
 | **Refresh** | Reload the registry (pull latest from remote if applicable) (`r`) |
 | **Output log** | Real-time streaming of command output in a scrollable panel |
 | **Keyboard-first** | Full keyboard navigation; footer shows all available shortcuts |
