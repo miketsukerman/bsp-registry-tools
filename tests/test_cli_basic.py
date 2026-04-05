@@ -6,9 +6,18 @@ from unittest.mock import patch
 
 import bsp
 from bsp import BspManager, KasManager
+from bsp.utils import SUPPORTED_REGISTRY_VERSION
 
 
 class TestMainCli:
+    def test_main_version_flag(self, capsys):
+        with patch("sys.argv", ["bsp", "--version"]):
+            exit_code = bsp.main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "bsp-registry-tools" in captured.out
+        assert SUPPORTED_REGISTRY_VERSION in captured.out
+
     def test_main_list_command(self, registry_file, capsys):
         with patch("sys.argv", ["bsp", "--registry", str(registry_file), "list"]):
             exit_code = bsp.main()

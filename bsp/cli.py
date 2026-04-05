@@ -5,11 +5,13 @@ CLI entry point for the BSP registry manager.
 import argparse
 import logging
 import sys
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from .bsp_manager import BspManager
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .utils import SUPPORTED_REGISTRY_VERSION
 
 # =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
@@ -28,7 +30,18 @@ def main() -> int:
     """
     try:
         # Parse command line arguments
+        try:
+            _version = _pkg_version("bsp-registry-tools")
+        except PackageNotFoundError:
+            _version = "unknown"
+        _version_str = (
+            f"bsp-registry-tools {_version}\n"
+            f"Supported model description version: {SUPPORTED_REGISTRY_VERSION}"
+        )
+
         parser = argparse.ArgumentParser(description="Advantech Board Support Package Registry")
+        parser.add_argument("--version", action="version", version=_version_str,
+                            help="Show program version and supported model description version")
         parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
         parser.add_argument("--registry", "-r", default=None, help="BSP Registry file (local path)")
         parser.add_argument("--no-color", action="store_true", help="Disable colored output")
