@@ -532,14 +532,17 @@ class KasManager:
         try:
             self._run_kas_command(args, show_output)
             elapsed = time.monotonic() - build_start
-            minutes, seconds = divmod(int(elapsed), 60)
+            total_seconds = round(elapsed)
+            minutes, seconds = divmod(total_seconds, 60)
             hours, minutes = divmod(minutes, 60)
             if hours:
                 duration_str = f"{hours}h {minutes}m {seconds}s"
             elif minutes:
                 duration_str = f"{minutes}m {seconds}s"
-            else:
+            elif total_seconds > 0:
                 duration_str = f"{seconds}s"
+            else:
+                duration_str = f"{elapsed:.2f}s"
             logging.info("Build completed successfully!")
             logging.info(f"Build time: {duration_str}")
         except SystemExit:
