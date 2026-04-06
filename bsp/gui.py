@@ -739,6 +739,10 @@ if TEXTUAL_AVAILABLE:
             border: round $primary;
         }
 
+        #log-panel.log-fullscreen {
+            height: 1fr;
+        }
+
         #output-log {
             height: 1fr;
         }
@@ -759,6 +763,7 @@ if TEXTUAL_AVAILABLE:
             Binding("s", "shell", "Shell"),
             Binding("e", "export_config", "Export"),
             Binding("f", "flash", "Flash"),
+            Binding("l", "toggle_log", "Log"),
             Binding("x", "cancel", "Cancel", show=False),
         ]
 
@@ -1412,6 +1417,14 @@ if TEXTUAL_AVAILABLE:
             self.action_cancel()
 
         # ── Keybinding actions ───────────────────────────────────
+
+        def action_toggle_log(self) -> None:
+            """Toggle the log panel between normal (30%) and full-screen height."""
+            log_panel = self.query_one("#log-panel")
+            expanded = log_panel.has_class("log-fullscreen")
+            for widget_id in ("#registry-bar", "#main-layout", "#action-bar"):
+                self.query_one(widget_id).display = expanded
+            log_panel.toggle_class("log-fullscreen")
 
         def action_refresh(self) -> None:
             """Reload the BSP registry."""
