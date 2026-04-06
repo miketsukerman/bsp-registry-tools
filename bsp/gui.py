@@ -594,6 +594,7 @@ if TEXTUAL_AVAILABLE:
                     "Checkout only — no build (--checkout)",
                     id="opt-checkout-only",
                 )
+                yield Checkbox("Verbose output (--verbose)", id="opt-verbose")
                 with Horizontal():
                     yield Button("▶ Build", variant="success", id="build-confirm")
                     yield Button("Cancel", variant="default", id="build-cancel")
@@ -610,10 +611,12 @@ if TEXTUAL_AVAILABLE:
                 return
             clean = self.query_one("#opt-clean", Checkbox).value
             checkout_only = self.query_one("#opt-checkout-only", Checkbox).value
+            verbose = self.query_one("#opt-verbose", Checkbox).value
             self.dismiss({
                 "target": target,
                 "clean": clean,
                 "checkout_only": checkout_only,
+                "verbose": verbose,
             })
 
         @on(Button.Pressed, "#build-cancel")
@@ -1517,6 +1520,8 @@ if TEXTUAL_AVAILABLE:
                     cmd_args.append("--clean")
                 if options.get("checkout_only"):
                     cmd_args.append("--checkout")
+                if options.get("verbose"):
+                    cmd_args.append("--verbose")
                 log_file = (
                     str(Path(build_path) / "bsp-build.log") if build_path else None
                 )

@@ -319,6 +319,7 @@ class TestBuildTargetScreen:
             assert modal.query_one("#build-cancel", Button) is not None
             assert modal.query_one("#opt-clean", Checkbox) is not None
             assert modal.query_one("#opt-checkout-only", Checkbox) is not None
+            assert modal.query_one("#opt-verbose", Checkbox) is not None
 
     async def test_build_target_cancel_dismisses_none(self, registry_file):
         """Pressing Cancel dismisses the BuildTargetScreen with None."""
@@ -328,7 +329,7 @@ class TestBuildTargetScreen:
         results = []
         app = BspLauncherApp(registry_path=str(registry_file))
 
-        async with app.run_test(headless=True) as pilot:
+        async with app.run_test(headless=True, size=(80, 40)) as pilot:
             await app.push_screen(
                 BuildTargetScreen("my-bsp", "/tmp/build"),
                 lambda v: results.append(v),
@@ -346,7 +347,7 @@ class TestBuildTargetScreen:
         results = []
         app = BspLauncherApp(registry_path=str(registry_file))
 
-        async with app.run_test(headless=True) as pilot:
+        async with app.run_test(headless=True, size=(80, 40)) as pilot:
             await app.push_screen(
                 BuildTargetScreen("my-bsp", "/tmp/build"),
                 lambda v: results.append(v),
@@ -359,6 +360,7 @@ class TestBuildTargetScreen:
         assert isinstance(results[0], dict)
         assert "clean" in results[0]
         assert "checkout_only" in results[0]
+        assert "verbose" in results[0]
 
 
 # =============================================================================
