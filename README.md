@@ -17,6 +17,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
+- 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 
 ## Installation
 
@@ -26,12 +27,21 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 pip install bsp-registry-tools
 ```
 
+To also install the optional HTTP server dependencies:
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
 ### From Source
 
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
 pip install .
+
+# With server extras:
+pip install ".[server]"
 ```
 
 ### Dependencies
@@ -41,6 +51,12 @@ pip install .
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
+
+**Optional — server mode** (`pip install bsp-registry-tools[server]`):
+
+- [FastAPI](https://fastapi.tiangolo.com/) >= 0.100.0
+- [uvicorn](https://www.uvicorn.org/) >= 0.23.0
+- [strawberry-graphql](https://strawberry.rocks/) >= 0.200.0
 
 ## Quick Start
 
@@ -185,12 +201,12 @@ bsp shell poky-qemuarm64-scarthgap
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,tree,export,shell} ...
+           {build,list,containers,tree,export,shell,server} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell}
+  {build,list,containers,tree,export,shell,server}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs
@@ -198,6 +214,7 @@ positional arguments:
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
+    server              Start a GraphQL / REST HTTP server
 
 options:
   -h, --help            show this help message and exit
@@ -386,9 +403,220 @@ bsp export poky-qemuarm64-scarthgap
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
 
+#### `server` — Start an HTTP server (REST + GraphQL)
+
+Starts a FastAPI-based HTTP server that exposes the full BSP registry via both a REST API and a GraphQL API.  Requires the `server` optional extras (`pip install "bsp-registry-tools[server]"`).
+
+```bash
+bsp server [--host HOST] [--port PORT] [--reload]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host HOST` | `127.0.0.1` | Host address to bind to |
+| `--port PORT` | `8080` | Port to listen on |
+| `--reload` | — | Enable auto-reload on code changes (development mode) |
+
+**Examples:**
+
+```bash
+# Start server on localhost:8080 (default)
+bsp server
+
+# Expose on all interfaces on port 9000
+bsp server --host 0.0.0.0 --port 9000
+
+# With a specific registry file
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0 --port 8080
+
+# Development mode with auto-reload
+bsp server --reload
+```
+
+Once started, the following interfaces are available:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
+| `http://localhost:8080/redoc` | ReDoc UI (REST) |
+| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
+| `http://localhost:8080/api/v1/…` | REST API endpoints |
+
+## HTTP Server (REST + GraphQL)
+
+The `bsp server` command exposes the entire BSP registry over HTTP.  Both a REST API and a GraphQL API are available simultaneously on the same port.
+
+### Installation
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
+### Starting the server
+
+```bash
+# Default: http://127.0.0.1:8080
+bsp server
+
+# Custom host/port
+bsp server --host 0.0.0.0 --port 9000
+
+# Using a specific registry file
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0 --port 8080
+```
+
+### REST API (`/api/v1/`)
+
+#### Query endpoints (GET)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/bsp` | List all BSP presets |
+| GET | `/api/v1/devices` | List all hardware devices |
+| GET | `/api/v1/releases` | List all releases |
+| GET | `/api/v1/releases?device=<slug>` | List releases compatible with a device |
+| GET | `/api/v1/features` | List all optional features |
+| GET | `/api/v1/distros` | List all distribution definitions |
+| GET | `/api/v1/frameworks` | List all framework definitions |
+| GET | `/api/v1/containers` | List all Docker container definitions |
+
+**Example:**
+
+```bash
+curl http://localhost:8080/api/v1/devices
+```
+
+```json
+[
+  {
+    "slug": "qemuarm64",
+    "description": "QEMU ARM64 (emulated)",
+    "vendor": "qemu",
+    "soc_vendor": "arm",
+    "soc_family": null,
+    "includes": ["kas/qemu/qemuarm64.yaml"],
+    "local_conf": []
+  }
+]
+```
+
+#### Action endpoints (POST)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/export` | Resolve and return a BSP config as YAML |
+| POST | `/api/v1/build` | Trigger a BSP build (blocking) |
+| POST | `/api/v1/shell` | Run a command inside the build container |
+
+All action endpoints accept a JSON body with either `bsp_name` **or** both `device` + `release`:
+
+```bash
+# Export by preset name
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap"}'
+
+# Export by components
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"device": "qemuarm64", "release": "scarthgap", "features": []}'
+
+# Validate (checkout only) without building
+curl -X POST http://localhost:8080/api/v1/build \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap", "checkout_only": true}'
+```
+
+#### Interactive REST documentation
+
+Navigate to **`http://localhost:8080/docs`** for the full Swagger / OpenAPI UI or **`http://localhost:8080/redoc`** for ReDoc.
+
+### GraphQL API (`/graphql`)
+
+Navigate to **`http://localhost:8080/graphql`** for the interactive GraphiQL editor.
+
+#### Queries
+
+```graphql
+# List all devices
+{ devices { slug description vendor socVendor } }
+
+# List all BSP presets
+{ bsp { name description device release features } }
+
+# List releases compatible with a specific device
+{ releases(device: "qemuarm64") { slug description yoctoVersion } }
+
+# List features, distros, frameworks, and containers
+{ features { slug description compatibleWith }
+  distros { slug description framework }
+  frameworks { slug vendor }
+  containers { name image } }
+```
+
+#### Mutations
+
+```graphql
+# Export BSP config by preset name
+mutation {
+  exportBsp(bspName: "poky-qemuarm64-scarthgap") {
+    yamlContent
+  }
+}
+
+# Export by components
+mutation {
+  exportBsp(device: "qemuarm64", release: "scarthgap") {
+    yamlContent
+  }
+}
+
+# Validate (checkout only) without building
+mutation {
+  buildBsp(bspName: "poky-qemuarm64-scarthgap", checkoutOnly: true) {
+    status
+    message
+  }
+}
+
+# Run a command in the build container
+mutation {
+  shellCommand(bspName: "poky-qemuarm64-scarthgap", command: "bitbake -e") {
+    returnCode
+    output
+  }
+}
+```
+
+### Python API — embedding the server
+
+You can also embed the server directly in Python code:
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+app = create_app(registry_path="/path/to/bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+Or reuse an already-initialised `BspManager`:
+
+```python
+from bsp import BspManager
+from bsp.server import create_app
+import uvicorn
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+app = create_app(manager=manager)
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
 ## Registry Configuration Reference
 
-The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  Key top-level sections:
+The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
 
 ### `specification`
 
@@ -641,6 +869,17 @@ kas = KasManager(
 kas.validate_kas_files()
 ```
 
+### Starting the HTTP server programmatically
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+# Create and run the server (requires bsp-registry-tools[server])
+app = create_app(registry_path="bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
 ## Development
 
 ### Setup Development Environment
@@ -682,7 +921,13 @@ bsp-registry-tools/
 │   ├── models.py             # Dataclass models (v2.0 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
 │   ├── utils.py              # YAML / Docker utilities
-│   └── exceptions.py         # Custom exceptions
+│   ├── exceptions.py         # Custom exceptions
+│   └── server/               # Optional HTTP server (requires [server] extras)
+│       ├── __init__.py       # Exports create_app
+│       ├── app.py            # FastAPI application factory
+│       ├── rest.py           # REST router (/api/v1/*)
+│       ├── graphql_schema.py # Strawberry GraphQL schema
+│       └── types.py          # Pydantic response models
 ├── pyproject.toml            # Package configuration
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
@@ -748,6 +993,7 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
 
 ### Data Classes
 
