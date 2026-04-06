@@ -620,6 +620,20 @@ if TEXTUAL_AVAILABLE:
         def on_build_cancel(self) -> None:
             self.dismiss(None)
 
+    class CopyableTextArea(TextArea):
+        """Read-only TextArea that still handles Ctrl+C for copying selected text.
+
+        Textual's TextArea returns False from check_consume_key() for *all* keys
+        when read_only=True, which causes Ctrl+C to bubble up to the App where it
+        triggers the "help_quit" notification instead of copying. Overriding
+        check_consume_key() to allow Ctrl+C (and Super+C) through fixes this.
+        """
+
+        def check_consume_key(self, key: str, character: str | None = None) -> bool:
+            if key in ("ctrl+c", "super+c"):
+                return True
+            return super().check_consume_key(key, character)
+
     class BspLauncherApp(App):
         """
         BSP Registry Explorer — interactive TUI for Advantech BSP management.
@@ -847,7 +861,7 @@ if TEXTUAL_AVAILABLE:
 
             # Output log panel
             with Vertical(id="log-panel"):
-                yield TextArea(
+                yield CopyableTextArea(
                     id="output-log",
                     read_only=True,
                     soft_wrap=True,
@@ -1748,7 +1762,7 @@ if TEXTUAL_AVAILABLE:
 
         def _log(self, message: str) -> None:
             """Append *message* to the output log widget."""
-            log_widget = self.query_one("#output-log", TextArea)
+            log_widget = self.query_one("#output-log", CopyableTextArea)
             # Strip Rich markup tags so plain text is appended
             plain = re.sub(r"\[/?[^\[\]]*\]", "", message)
             log_widget.insert(plain + "\n", location=log_widget.document.end)
