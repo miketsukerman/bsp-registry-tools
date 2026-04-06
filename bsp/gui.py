@@ -1556,7 +1556,7 @@ if TEXTUAL_AVAILABLE:
                 if options.get("verbose"):
                     cmd_args.append("--verbose")
                 log_file = (
-                    str(Path(build_path) / "bsp-build.log") if build_path else None
+                    str(Path(build_path) / f"bsp-build-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.log") if build_path else None
                 )
                 self._run_bsp_command(*cmd_args, log_file=log_file, show_progress=True)
 
