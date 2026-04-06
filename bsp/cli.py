@@ -172,6 +172,29 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
+        # Server command
+        # ----------------------------------------------------------------
+        server_parser = subparsers.add_parser(
+            "server", help="Start a GraphQL / REST HTTP server"
+        )
+        server_parser.add_argument(
+            "--host",
+            default="127.0.0.1",
+            help="Host address to bind to (default: %(default)s)",
+        )
+        server_parser.add_argument(
+            "--port",
+            type=int,
+            default=8080,
+            help="Port to listen on (default: %(default)s)",
+        )
+        server_parser.add_argument(
+            "--reload",
+            action="store_true",
+            help="Enable auto-reload on code changes (development only)",
+        )
+
+        # ----------------------------------------------------------------
         # Shell command
         # ----------------------------------------------------------------
         shell_parser = subparsers.add_parser("shell", help="Enter interactive shell for BSP")
@@ -332,6 +355,26 @@ def main() -> int:
                 )
                 export_parser.print_help()
                 return 1
+
+        elif args.command == "server":
+            try:
+                import uvicorn
+                from .server import create_app
+            except ImportError:
+                logging.error(
+                    "Server dependencies are not installed. "
+                    "Install them with: pip install bsp-registry-tools[server]"
+                )
+                return 1
+
+            app = create_app(manager=bsp_mgr)
+            uvicorn.run(
+                app,
+                host=args.host,
+                port=args.port,
+                reload=args.reload,
+            )
+            return 0
 
         elif args.command == "shell":
             shell_command = getattr(args, "shell_command", None)
