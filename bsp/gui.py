@@ -1072,31 +1072,11 @@ if TEXTUAL_AVAILABLE:
                 f"[bold cyan]Description:[/bold cyan] {bsp.description}",
             ]
 
-            if bsp.os:
-                lines.append(
-                    f"[bold cyan]OS:[/bold cyan]          {bsp.os.name} / {bsp.os.build_system} {bsp.os.version}"
-                )
-
             lines.append(f"[bold cyan]Build Path:[/bold cyan]  {bsp.build.path}")
 
-            if bsp.build.configuration:
-                lines.append("[bold cyan]Config Files:[/bold cyan]")
-                for cfg in bsp.build.configuration:
-                    lines.append(f"  • {cfg}")
-
-            if bsp.build.environment:
-                env = bsp.build.environment
-                if env.container:
-                    lines.append(f"[bold cyan]Container:[/bold cyan]   {env.container}")
-                elif env.docker and env.docker.image:
-                    lines.append(f"[bold cyan]Image:[/bold cyan]       {env.docker.image}")
             # Bitbake targets
             if bsp.targets:
                 lines.append(f"[bold cyan]Targets:[/bold cyan]     {', '.join(bsp.targets)}")
-
-            # Build path
-            if bsp.build and bsp.build.path:
-                lines.append(f"[bold cyan]Build Path:[/bold cyan]  {bsp.build.path}")
 
             self.query_one("#detail-view", Static).update("\n".join(lines))
 
