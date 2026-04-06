@@ -1379,12 +1379,25 @@ class BspManager:
             # bmaptool handles both plain and compressed wic images natively.
             # bmaptool expects image paths as file:// URIs, not bare filesystem paths.
             # Resolve to an absolute path first so as_uri() doesn't raise on relative paths.
-            image_uri = selected_image.resolve().as_uri()
-            bmap_path = selected_image.parent / (selected_image.name + ".bmap")
+            resolved_image = selected_image.resolve()
+            image_uri = resolved_image.as_uri()
+            # Yocto names the bmap file after the uncompressed image stem, e.g.
+            # "image.wic.bmap" for both "image.wic" and "image.wic.gz".
+            # Check that canonical name first, then fall back to "<image>.bmap".
+            wic_stem = resolved_image.name
+            for suffix in (".gz", ".bz2", ".xz", ".zst", ".lz4"):
+                if wic_stem.endswith(suffix):
+                    wic_stem = wic_stem[: -len(suffix)]
+                    break
+            bmap_path = resolved_image.parent / (wic_stem + ".bmap")
+            if not bmap_path.exists():
+                bmap_path = resolved_image.parent / (resolved_image.name + ".bmap")
             if bmap_path.exists():
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
-                result = _sp.run([*priv, "bmaptool", "copy", image_uri, target])
+                result = _sp.run(
+                    [*priv, "bmaptool", "copy", "--bmap", str(bmap_path), image_uri, target]
+                )
             else:
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
