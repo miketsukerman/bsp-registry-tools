@@ -18,7 +18,7 @@ POST /api/v1/shell                — run a command inside the build container
 from __future__ import annotations
 
 import io
-import subprocess
+import sys
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -156,7 +156,6 @@ def export_bsp(request: Request, body: ExportRequest):
 
     buf = io.StringIO()
     try:
-        import sys
         old_stdout = sys.stdout
         sys.stdout = buf
         if body.bsp_name:
@@ -229,7 +228,6 @@ def shell_command(request: Request, body: ShellCommandRequest):
     buf = io.StringIO()
     rc = 0
     try:
-        import sys
         old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout = buf
         sys.stderr = buf
