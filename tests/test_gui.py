@@ -547,17 +547,17 @@ class TestCliRunnerModule:
 
 
 # =============================================================================
-# bsp-launcher entry point: bsp.gui:main
+# bsp-explorer entry point: bsp.gui:main
 # =============================================================================
 
 class TestBspLauncherMain:
-    """Tests for the bsp-launcher console script entry point (bsp.gui:main)."""
+    """Tests for the bsp-explorer console script entry point (bsp.gui:main)."""
 
     def test_main_calls_launch_gui(self):
-        """bsp-launcher with no args should call launch_gui with defaults."""
+        """bsp-explorer with no args should call launch_gui with defaults."""
         from bsp.gui import main as gui_main
 
-        with patch("sys.argv", ["bsp-launcher"]):
+        with patch("sys.argv", ["bsp-explorer"]):
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 rc = gui_main()
         assert rc == 0
@@ -567,7 +567,7 @@ class TestBspLauncherMain:
         """--registry arg is forwarded to launch_gui."""
         from bsp.gui import main as gui_main
 
-        with patch("sys.argv", ["bsp-launcher", "--registry", str(registry_file)]):
+        with patch("sys.argv", ["bsp-explorer", "--registry", str(registry_file)]):
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args
@@ -577,7 +577,7 @@ class TestBspLauncherMain:
         """--no-update flag is forwarded to launch_gui."""
         from bsp.gui import main as gui_main
 
-        with patch("sys.argv", ["bsp-launcher", "--no-update"]):
+        with patch("sys.argv", ["bsp-explorer", "--no-update"]):
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args
@@ -587,7 +587,7 @@ class TestBspLauncherMain:
         """When --remote is the default URL, launch_gui receives remote=None."""
         from bsp.gui import main as gui_main
 
-        with patch("sys.argv", ["bsp-launcher"]):
+        with patch("sys.argv", ["bsp-explorer"]):
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args
@@ -597,7 +597,7 @@ class TestBspLauncherMain:
         """Custom --remote is forwarded to launch_gui."""
         from bsp.gui import main as gui_main
 
-        with patch("sys.argv", ["bsp-launcher", "--remote", "https://example.com/reg.git"]):
+        with patch("sys.argv", ["bsp-explorer", "--remote", "https://example.com/reg.git"]):
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args

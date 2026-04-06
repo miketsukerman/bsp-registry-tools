@@ -19,7 +19,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
-- 🚀 **Interactive TUI launcher** (`bsp-launcher`) — visual alternative to the CLI
+- 🚀 **Interactive TUI launcher** (`bsp-explorer`) — visual alternative to the CLI
 
 ## Installation
 
@@ -59,7 +59,7 @@ pip install ".[server]"
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
-- *(optional)* [textual](https://textual.textualize.io/) >= 0.80.0 — required for `bsp-launcher` GUI
+- *(optional)* [textual](https://textual.textualize.io/) >= 0.80.0 — required for `bsp-explorer` GUI
 
 **Optional — server mode** (`pip install bsp-registry-tools[server]`):
 
@@ -226,20 +226,20 @@ bsp shell poky-qemuarm64-scarthgap
 pip install 'bsp-registry-tools[gui]'
 
 # Then launch the TUI launcher
-bsp-launcher
+bsp-explorer
 
 # Or via the main CLI
 bsp gui
 bsp --gui
 ```
 
-## GUI Launcher (`bsp-launcher`)
+## GUI Launcher (`bsp-explorer`)
 
-`bsp-launcher` is a Terminal User Interface (TUI) that provides a visual, interactive
+`bsp-explorer` is a Terminal User Interface (TUI) that provides a visual, interactive
 alternative to the CLI — similar in spirit to the
 [Advantech BSP Launcher](https://docs.aim-linux.advantech.com/docs/utility/bsplauncher/).
 
-![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+![BSP Registry Explorer TUI](docs/screenshots/bsp-explorer-tui.svg)
 
 ### Features
 
@@ -261,21 +261,21 @@ alternative to the CLI — similar in spirit to the
 
 ```bash
 # Use the default (remote) registry
-bsp-launcher
+bsp-explorer
 
 # Use a local registry file
-bsp-launcher --registry ./bsp-registry.yaml
+bsp-explorer --registry ./bsp-registry.yaml
 
 # Use a custom remote registry
-bsp-launcher --remote https://github.com/my-org/bsp-registry.git --branch dev
+bsp-explorer --remote https://github.com/my-org/bsp-registry.git --branch dev
 
 # Skip the remote update (faster, offline)
-bsp-launcher --no-update
+bsp-explorer --no-update
 ```
 
 ### CLI vs GUI comparison
 
-| Capability | CLI (`bsp`) | GUI (`bsp-launcher`) |
+| Capability | CLI (`bsp`) | GUI (`bsp-explorer`) |
 |-----------|-------------|----------------------|
 | List BSPs | `bsp list` | Visual table, keyboard-navigable |
 | Build BSP | `bsp build <name>` | Select row → press `b` |
@@ -1196,7 +1196,7 @@ bsp-registry-tools/
 │   ├── __init__.py           # Public API exports
 │   ├── cli.py                # CLI entry point (bsp command)
 │   ├── cli_runner.py         # Module runner shim for GUI subprocesses
-│   ├── gui.py                # Interactive TUI launcher (bsp-launcher command)
+│   ├── gui.py                # Interactive TUI launcher (bsp-explorer command)
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
 │   ├── kas_manager.py        # KAS build system integration
