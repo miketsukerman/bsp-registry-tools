@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -633,6 +634,8 @@ if TEXTUAL_AVAILABLE:
 
         TITLE = "BSP Registry Explorer"
         SUB_TITLE = "Advantech Board Support Package Manager"
+        # Maximum seconds between two clicks to be considered a double-click
+        _DOUBLE_CLICK_THRESHOLD: float = 0.5
 
         CSS = """
         /* ── Layout ─────────────────────────────────────────── */
@@ -676,9 +679,14 @@ if TEXTUAL_AVAILABLE:
             text-style: bold;
         }
 
+        #artifacts-path {
+            color: $text-muted;
+            padding: 0 1;
+            height: auto;
+        }
+
         #artifacts-view {
             height: 1fr;
-            padding: 0 1;
         }
 
         /* ── Registry bar ────────────────────────────────────── */
@@ -764,8 +772,8 @@ if TEXTUAL_AVAILABLE:
             Binding("e", "export_config", "Export"),
             Binding("f", "flash", "Flash"),
             Binding("l", "toggle_log", "Log"),
+            Binding("c", "cancel", "Cancel", show=False),
             Binding("x", "cancel", "Cancel", show=False),
-            Binding("ctrl+c", "cancel", "Cancel", show=False),
         ]
 
         def __init__(
@@ -787,6 +795,9 @@ if TEXTUAL_AVAILABLE:
             self._load_lock = threading.Lock()
             # Cached data for re-filtering without reloading the registry
             self._tree_data: Optional[dict] = None
+            # Double-click tracking for build artifacts panel
+            self._artifact_last_click_time: float = 0.0
+            self._artifact_last_click_item: Optional[str] = None
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -823,10 +834,8 @@ if TEXTUAL_AVAILABLE:
                         )
                     with Vertical(id="artifacts-pane"):
                         yield Label("Build Artifacts", id="artifacts-label")
-                        yield ScrollableContainer(
-                            Static("[dim]No build artifacts found[/dim]", id="artifacts-view"),
-                            id="artifacts-scroll",
-                        )
+                        yield Static("", id="artifacts-path")
+                        yield ListView(id="artifacts-view")
 
             # Action buttons
             with Horizontal(id="action-bar"):
@@ -1135,6 +1144,43 @@ if TEXTUAL_AVAILABLE:
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
                 self.query_one(btn_id, Button).disabled = False
 
+        @on(ListView.Selected, "#artifacts-view")
+        def on_artifact_selected(self, event: ListView.Selected) -> None:
+            """Open the flash dialog when a flash image in the artifacts panel is double-clicked."""
+            item_name = event.item.name
+            if not item_name:
+                return  # placeholder item ("No artifacts found")
+
+            now = time.monotonic()
+            if (
+                now - self._artifact_last_click_time < self._DOUBLE_CLICK_THRESHOLD
+                and item_name == self._artifact_last_click_item
+            ):
+                # Double-click detected — open flash dialog for this image
+                image_path = Path(item_name)
+                is_flash_image = any(
+                    image_path.name.endswith(s)
+                    for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")
+                )
+                if is_flash_image and self._selected_bsp_name:
+                    bsp_name = self._selected_bsp_name
+
+                    def _on_result(result: Optional[tuple]) -> None:
+                        if result:
+                            img_path, target = result
+                            self._run_bsp_command(
+                                "flash", bsp_name,
+                                "--target", target,
+                                "--image", img_path,
+                            )
+
+                    self.push_screen(
+                        FlashScreen(bsp_name, [image_path]), _on_result
+                    )
+
+            self._artifact_last_click_time = now
+            self._artifact_last_click_item = item_name
+
         def _show_bsp_details(self, bsp_name: str) -> None:
             """Render BSP details (top) and build environment (bottom) in the right panel."""
             if not self._bsp_manager:
@@ -1349,22 +1395,24 @@ if TEXTUAL_AVAILABLE:
         def _update_artifacts_pane(self, bsp_name: str) -> None:
             """Populate the Build Artifacts pane for the given BSP."""
             artifacts = self._scan_build_artifacts(bsp_name)
-            artifacts_widget = self.query_one("#artifacts-view", Static)
+            artifacts_list = self.query_one("#artifacts-view", ListView)
+            path_widget = self.query_one("#artifacts-path", Static)
+
+            # Always show the build path
+            build_path = self._resolve_build_path(bsp_name)
+            if build_path:
+                path_widget.update(f"[dim]Path: {build_path}[/dim]")
+            else:
+                path_widget.update("")
+
+            artifacts_list.clear()
 
             if not artifacts:
-                # Show where we looked so the user knows the build path
-                build_path = self._resolve_build_path(bsp_name)
-                if build_path:
-                    msg = (
-                        f"[dim]No artifacts found in:\n"
-                        f"  {build_path}/build/tmp/deploy/images/[/dim]"
-                    )
-                else:
-                    msg = "[dim]No build artifacts found[/dim]"
-                artifacts_widget.update(msg)
+                artifacts_list.append(
+                    ListItem(Label("[dim]No build artifacts found[/dim]"), name="")
+                )
                 return
 
-            lines: List[str] = []
             for f in artifacts:
                 try:
                     st = f.stat()
@@ -1378,20 +1426,14 @@ if TEXTUAL_AVAILABLE:
                     else:
                         size_str = f"{size_bytes} B"
                     mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
-                    # Distinguish image types with a small icon prefix
-                    name = f.name
                     if any(f.name.endswith(s) for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")):
                         icon = "💾"
                     else:
                         icon = "🐧"
-                    lines.append(
-                        f"{icon} [bold]{name}[/bold]  "
-                        f"[dim]{size_str}  {mtime}[/dim]"
-                    )
+                    label_text = f"{icon} {f.name}  {size_str}  {mtime}"
+                    artifacts_list.append(ListItem(Label(label_text), name=str(f)))
                 except OSError:
-                    lines.append(f"  [dim]{f.name}[/dim]")
-
-            artifacts_widget.update("\n".join(lines))
+                    artifacts_list.append(ListItem(Label(f"[dim]{f.name}[/dim]"), name=str(f)))
 
         @on(Button.Pressed, "#btn-refresh")
         def on_refresh(self) -> None:
@@ -1435,7 +1477,8 @@ if TEXTUAL_AVAILABLE:
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
             self.query_one("#env-view", Static).update("")
-            self.query_one("#artifacts-view", Static).update("[dim]No build artifacts found[/dim]")
+            self.query_one("#artifacts-path", Static).update("")
+            self.query_one("#artifacts-view", ListView).clear()
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
             self._load_registry_async()
@@ -1709,6 +1752,7 @@ if TEXTUAL_AVAILABLE:
             # Strip Rich markup tags so plain text is appended
             plain = re.sub(r"\[/?[^\[\]]*\]", "", message)
             log_widget.insert(plain + "\n", location=log_widget.document.end)
+            log_widget.scroll_end(animate=False)
 
         def _set_status(self, message: str) -> None:
             """Update the status bar with *message*."""
