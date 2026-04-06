@@ -36,6 +36,7 @@ try:
         Label,
         ListItem,
         ListView,
+        ProgressBar,
         Static,
         TextArea,
         Tree,
@@ -48,6 +49,15 @@ except ImportError:
 # =============================================================================
 # BitBake / KAS output parsing helpers
 # =============================================================================
+
+# Matches BitBake non-TTY progress lines:
+#   "NOTE: Running task 42 of 1234"
+#   "NOTE: Running [noexec] task 42 of 1234"
+_RE_BUILD_TASK = re.compile(r"NOTE: Running (?:\[noexec\] )?task (\d+) of (\d+)")
+
+# Matches bmaptool percentage progress lines:
+#   "bmaptool: info: 50% done, …"
+_RE_BMAP_PERCENT = re.compile(r"(\d+)% done")
 
 
 # =============================================================================
@@ -768,6 +778,25 @@ if TEXTUAL_AVAILABLE:
             height: 1fr;
         }
 
+        #progress-row {
+            height: 1;
+            display: none;
+        }
+
+        #progress-row.visible {
+            display: block;
+        }
+
+        #progress-status {
+            width: auto;
+            padding-right: 1;
+            content-align: left middle;
+        }
+
+        #build-progress {
+            width: 1fr;
+        }
+
         #output-log {
             height: 1fr;
         }
@@ -864,6 +893,9 @@ if TEXTUAL_AVAILABLE:
 
             # Output log panel
             with Vertical(id="log-panel"):
+                with Horizontal(id="progress-row"):
+                    yield Static("", id="progress-status")
+                    yield ProgressBar(id="build-progress", total=100, show_eta=False)
                 yield CopyableTextArea(
                     id="output-log",
                     read_only=True,
@@ -1189,6 +1221,7 @@ if TEXTUAL_AVAILABLE:
                                 "flash", bsp_name,
                                 "--target", target,
                                 "--image", img_path,
+                                show_progress=True,
                             )
 
                     self.push_screen(
@@ -1525,7 +1558,7 @@ if TEXTUAL_AVAILABLE:
                 log_file = (
                     str(Path(build_path) / "bsp-build.log") if build_path else None
                 )
-                self._run_bsp_command(*cmd_args, log_file=log_file)
+                self._run_bsp_command(*cmd_args, log_file=log_file, show_progress=True)
 
             self.push_screen(
                 BuildTargetScreen(self._selected_bsp_name, build_path),
@@ -1569,6 +1602,7 @@ if TEXTUAL_AVAILABLE:
                         "flash", self._selected_bsp_name,
                         "--target", target,
                         "--image", image_path,
+                        show_progress=True,
                     )
 
             self.push_screen(FlashScreen(self._selected_bsp_name, images), _on_result)
@@ -1622,7 +1656,7 @@ if TEXTUAL_AVAILABLE:
                 pass
             return ""
 
-        def _run_bsp_command(self, *args: str, log_file: Optional[str] = None) -> None:
+        def _run_bsp_command(self, *args: str, log_file: Optional[str] = None, show_progress: bool = False) -> None:
             """
             Run a `bsp` CLI sub-command in a background thread and stream
             its stdout/stderr to the output log panel.
@@ -1631,6 +1665,8 @@ if TEXTUAL_AVAILABLE:
                 *args: Sub-command and arguments forwarded to the bsp CLI.
                 log_file: Optional path to a file where the output is also
                     written (created / appended to in the build folder).
+                show_progress: When True, parse output for progress markers and
+                    display a ProgressBar in the log panel.
             """
             if self._running_process is not None:
                 self._log("[yellow]A command is already running — please wait[/yellow]")
@@ -1657,11 +1693,11 @@ if TEXTUAL_AVAILABLE:
             self._set_cancel_button(disabled=False)
 
             thread = threading.Thread(
-                target=self._stream_command, args=(cmd, log_file), daemon=True
+                target=self._stream_command, args=(cmd, log_file, show_progress), daemon=True
             )
             thread.start()
 
-        def _stream_command(self, cmd: list, log_file: Optional[str] = None) -> None:
+        def _stream_command(self, cmd: list, log_file: Optional[str] = None, show_progress: bool = False) -> None:
             """Execute *cmd*, streaming its combined output to the log (background thread).
 
             If *log_file* is set, all output lines are also written there.
@@ -1708,9 +1744,28 @@ if TEXTUAL_AVAILABLE:
                     )
                     self._running_process = proc
 
+                    if show_progress:
+                        self.call_from_thread(self._show_progress_row)
+
                     for line in proc.stdout:
                         stripped = line.rstrip()
                         self.call_from_thread(self._log, stripped)
+                        if show_progress:
+                            m = _RE_BUILD_TASK.search(stripped)
+                            if m:
+                                current, total = int(m.group(1)), int(m.group(2))
+                                self.call_from_thread(
+                                    self._update_build_progress,
+                                    current, total, f"Task {current}/{total}",
+                                )
+                            else:
+                                m = _RE_BMAP_PERCENT.search(stripped)
+                                if m:
+                                    pct = int(m.group(1))
+                                    self.call_from_thread(
+                                        self._update_build_progress,
+                                        pct, 100, f"Flashing {pct}%",
+                                    )
                         if log_fp is not None:
                             log_fp.write(line)
                             log_fp.flush()
@@ -1758,10 +1813,28 @@ if TEXTUAL_AVAILABLE:
                     self.call_from_thread(
                         self._set_cancel_button, disabled=True
                     )
+                    if show_progress:
+                        self.call_from_thread(self._hide_progress_row)
 
         def _set_cancel_button(self, *, disabled: bool) -> None:
             """Enable or disable the Cancel button (must run on UI thread)."""
             self.query_one("#btn-cancel", Button).disabled = disabled
+
+        def _show_progress_row(self) -> None:
+            """Show the progress row and reset the ProgressBar (UI thread)."""
+            row = self.query_one("#progress-row")
+            row.add_class("visible")
+            self.query_one("#build-progress", ProgressBar).update(progress=0, total=100)
+            self.query_one("#progress-status", Static).update("")
+
+        def _hide_progress_row(self) -> None:
+            """Hide the progress row (UI thread)."""
+            self.query_one("#progress-row").remove_class("visible")
+
+        def _update_build_progress(self, current: int, total: int, label: str) -> None:
+            """Update the ProgressBar and its status label (UI thread)."""
+            self.query_one("#build-progress", ProgressBar).update(progress=current, total=total)
+            self.query_one("#progress-status", Static).update(label)
 
         # ── Helpers ──────────────────────────────────────────────
 
