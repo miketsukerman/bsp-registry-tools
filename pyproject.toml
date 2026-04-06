@@ -45,7 +45,7 @@ dev = [
 
 [project.scripts]
 bsp = "bsp.cli:main"
-bsp-launcher = "bsp.gui:main"
+bsp-explorer = "bsp.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/Advantech-EECC/bsp-registry-tools"

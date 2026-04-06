@@ -201,7 +201,7 @@ def launch_gui(
 
 def main() -> int:
     """
-    Entry point for the ``bsp-launcher`` console script.
+    Entry point for the ``bsp-explorer`` console script.
 
     Parses command-line arguments and launches the BSP Registry GUI.
 
@@ -211,7 +211,7 @@ def main() -> int:
     from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
 
     parser = argparse.ArgumentParser(
-        prog="bsp-launcher",
+        prog="bsp-explorer",
         description="BSP Registry Explorer — interactive TUI for Advantech BSP management",
     )
     parser.add_argument(
