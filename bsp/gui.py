@@ -35,8 +35,8 @@ try:
         Label,
         ListItem,
         ListView,
-        RichLog,
         Static,
+        TextArea,
         Tree,
     )
     TEXTUAL_AVAILABLE = True
@@ -838,11 +838,11 @@ if TEXTUAL_AVAILABLE:
 
             # Output log panel
             with Vertical(id="log-panel"):
-                yield RichLog(
+                yield TextArea(
                     id="output-log",
-                    highlight=True,
-                    markup=True,
-                    wrap=True,
+                    read_only=True,
+                    soft_wrap=True,
+                    show_line_numbers=False,
                 )
 
             yield Static("", id="status-bar")
@@ -1705,8 +1705,10 @@ if TEXTUAL_AVAILABLE:
 
         def _log(self, message: str) -> None:
             """Append *message* to the output log widget."""
-            log_widget = self.query_one("#output-log", RichLog)
-            log_widget.write(message)
+            log_widget = self.query_one("#output-log", TextArea)
+            # Strip Rich markup tags so plain text is appended
+            plain = re.sub(r"\[/?[^\[\]]*\]", "", message)
+            log_widget.insert(plain + "\n", location=log_widget.document.end)
 
         def _set_status(self, message: str) -> None:
             """Update the status bar with *message*."""
