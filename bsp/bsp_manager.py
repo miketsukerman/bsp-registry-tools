@@ -1331,7 +1331,8 @@ class BspManager:
         if is_wic and bmaptool:
             # bmaptool handles both plain and compressed wic images natively.
             # bmaptool expects image paths as file:// URIs, not bare filesystem paths.
-            image_uri = selected_image.as_uri()
+            # Resolve to an absolute path first so as_uri() doesn't raise on relative paths.
+            image_uri = selected_image.resolve().as_uri()
             bmap_path = selected_image.parent / (selected_image.name + ".bmap")
             if bmap_path.exists():
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
