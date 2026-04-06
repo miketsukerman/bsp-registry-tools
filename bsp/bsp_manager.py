@@ -1395,13 +1395,25 @@ class BspManager:
             if bmap_path.exists():
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
-                result = _sp.run(
-                    [*priv, "bmaptool", "copy", "--bmap", str(bmap_path), image_uri, target]
+                proc = _sp.Popen(
+                    [*priv, "bmaptool", "copy", "--bmap", str(bmap_path), image_uri, target],
+                    stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True,
                 )
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                proc.wait()
+                result = proc
             else:
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
-                result = _sp.run([*priv, "bmaptool", "copy", "--nobmap", image_uri, target])
+                proc = _sp.Popen(
+                    [*priv, "bmaptool", "copy", "--nobmap", image_uri, target],
+                    stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True,
+                )
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                proc.wait()
+                result = proc
         elif is_wic and selected_image.suffix != ".wic":
             # Compressed wic but no bmaptool — decompress then pipe into dd.
             compression_ext = selected_image.suffix  # e.g. ".gz", ".bz2"
@@ -1458,15 +1470,14 @@ class BspManager:
             logging.info(f"Flashing {selected_image} → {target} using dd")
             print(f"Flashing {selected_image.name} → {target} (dd)…")
             print("⚠  This will overwrite all data on the target device!")
-            result = _sp.run([
-                *priv,
-                "dd",
-                f"if={selected_image}",
-                f"of={target}",
-                "bs=4M",
-                "conv=fsync",
-                "status=progress",
-            ])
+            proc = _sp.Popen(
+                [*priv, "dd", f"if={selected_image}", f"of={target}", "bs=4M", "conv=fsync", "status=progress"],
+                stderr=_sp.PIPE, text=True,
+            )
+            for line in proc.stderr:
+                print(line, end="", flush=True)
+            proc.wait()
+            result = proc
 
         if result.returncode != 0:
             print(
