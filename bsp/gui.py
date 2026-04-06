@@ -765,6 +765,7 @@ if TEXTUAL_AVAILABLE:
             Binding("f", "flash", "Flash"),
             Binding("l", "toggle_log", "Log"),
             Binding("x", "cancel", "Cancel", show=False),
+            Binding("ctrl+c", "cancel", "Cancel", show=False),
         ]
 
         def __init__(
