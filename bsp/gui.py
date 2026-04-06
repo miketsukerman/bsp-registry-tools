@@ -249,6 +249,92 @@ def main() -> int:
     )
 
 
+def main_web() -> int:
+    """
+    Entry point for the ``bsp-explorer-web`` console script.
+
+    Delegates to ``textual serve bsp-explorer [args]`` so the BSP Explorer
+    TUI can be accessed from a browser via Textual's built-in web server.
+
+    Accepts the same registry flags as ``bsp-explorer`` plus optional
+    ``--host`` / ``--port`` to control where the HTTP server listens.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors).  The function normally
+        replaces the current process via :func:`os.execvp` and never returns.
+    """
+    import shlex
+    from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
+
+    parser = argparse.ArgumentParser(
+        prog="bsp-explorer-web",
+        description=(
+            "BSP Registry Explorer — serve in the browser via 'textual serve'.\n"
+            "Requires the 'textual-serve' extra: pip install 'textual[serve]'"
+        ),
+    )
+    parser.add_argument(
+        "--registry", "-r",
+        default=None,
+        metavar="REGISTRY",
+        help="BSP registry file (local path; skips remote fetch)",
+    )
+    parser.add_argument(
+        "--remote",
+        default=DEFAULT_REMOTE_URL,
+        metavar="URL",
+        help="Remote registry git URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--branch",
+        default=DEFAULT_BRANCH,
+        metavar="BRANCH",
+        help="Remote registry branch (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-update",
+        dest="no_update",
+        action="store_true",
+        help="Skip updating the cached registry clone",
+    )
+    parser.add_argument(
+        "--host",
+        default="localhost",
+        metavar="HOST",
+        help="Host for the web server (default: localhost)",
+    )
+    parser.add_argument(
+        "--port",
+        default=8000,
+        type=int,
+        metavar="PORT",
+        help="Port for the web server (default: 8000)",
+    )
+
+    args = parser.parse_args()
+
+    # Build the bsp-explorer command that textual serve will run.
+    bsp_cmd: list[str] = ["bsp-explorer"]
+    if args.registry:
+        bsp_cmd += ["--registry", args.registry]
+    if args.remote != DEFAULT_REMOTE_URL:
+        bsp_cmd += ["--remote", args.remote]
+    if args.branch != DEFAULT_BRANCH:
+        bsp_cmd += ["--branch", args.branch]
+    if args.no_update:
+        bsp_cmd.append("--no-update")
+
+    textual_argv = [
+        "textual", "serve",
+        shlex.join(bsp_cmd),
+        "--host", args.host,
+        "--port", str(args.port),
+    ]
+
+    os.execvp("textual", textual_argv)
+    return 0  # unreachable
+
+
 # =============================================================================
 # Textual TUI Application (only defined when textual is available)
 # =============================================================================
