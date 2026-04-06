@@ -1377,15 +1377,17 @@ class BspManager:
 
         if is_wic and bmaptool:
             # bmaptool handles both plain and compressed wic images natively.
+            # bmaptool expects image paths as file:// URIs, not bare filesystem paths.
+            image_uri = selected_image.as_uri()
             bmap_path = selected_image.parent / (selected_image.name + ".bmap")
             if bmap_path.exists():
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
-                result = _sp.run([*priv, "bmaptool", "copy", str(selected_image), target])
+                result = _sp.run([*priv, "bmaptool", "copy", image_uri, target])
             else:
                 logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
                 print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
-                result = _sp.run([*priv, "bmaptool", "copy", "--nobmap", str(selected_image), target])
+                result = _sp.run([*priv, "bmaptool", "copy", "--nobmap", image_uri, target])
         elif is_wic and selected_image.suffix != ".wic":
             # Compressed wic but no bmaptool — decompress then pipe into dd.
             compression_ext = selected_image.suffix  # e.g. ".gz", ".bz2"
