@@ -4,6 +4,7 @@ YAML parsing utilities and Docker build helper for BSP registry tools.
 
 import logging
 import os
+import re
 import subprocess
 import sys
 
@@ -266,6 +267,142 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     except dacite.MissingValueError as e:
         logging.error(f"Missing value in configuration {filename}: Required field missing - {e}")
         sys.exit(1)
+
+
+# =============================================================================
+# Advantech Manifest Filename Parser
+# =============================================================================
+
+# Regex for the 5-field manifest filename:
+#   [product]_[os_distro]_[version]_[kernel version]_[chip name][.xml]
+_RE_MANIFEST_5 = re.compile(
+    r'^(?P<product>[^_]+)'
+    r'_(?P<os_distro>[^_]+)'
+    r'_(?P<version>v\d+\.\d+\.\d+)'
+    r'_kernel-(?P<kernel_version>[\d.]+)'
+    r'_(?P<chip>[^_.]+)'
+    r'(?:\.xml)?$'
+)
+
+# Regex for the 8-field release-package filename:
+#   [product]_[os_distro]_[version]_[kernel version]_[chip]_[ram]_[storage]_[date][.tgz|.tar.gz|…]
+_RE_MANIFEST_8 = re.compile(
+    r'^(?P<product>[^_]+)'
+    r'_(?P<os_distro>[^_]+)'
+    r'_(?P<version>v\d+\.\d+\.\d+)'
+    r'_kernel-(?P<kernel_version>[\d.]+)'
+    r'_(?P<chip>[^_]+)'
+    r'_(?P<ram>[^_]+)'
+    r'_(?P<storage>[^_]+)'
+    r'_(?P<release_date>\d{4}-\d{2}-\d{2})'
+    r'(?:\.[a-zA-Z0-9.]+)?$'
+)
+
+
+def parse_advantech_manifest_name(filename: str) -> Dict[str, Optional[str]]:
+    """
+    Parse an Advantech manifest or release-package filename into its components.
+
+    Two filename formats are supported:
+
+    **5-field manifest format** (e.g. ``aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490.xml``)::
+
+        [product]_[os_distro]_[version]_[kernel-version]_[chip][.xml]
+
+    **8-field release-package format** (e.g. ``aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490_8g_ufs_2025-02-08.tgz``)::
+
+        [product]_[os_distro]_[version]_[kernel-version]_[chip]_[ram]_[storage]_[date][.ext]
+
+    The returned dictionary always contains the following keys; fields not
+    present in the filename are set to ``None``:
+
+    * ``product`` — Device name with PCB version (e.g. ``'aom2721a1'``).
+    * ``os_distro`` — OS distro / BSP string (e.g. ``'yocto4.0.18-le1.1'``).
+    * ``yocto_version`` — Yocto/BSP version extracted from ``os_distro`` when
+      the distro starts with ``'yocto'`` (e.g. ``'4.0.18'``), otherwise ``None``.
+    * ``bsp_version`` — Vendor BSP sub-version extracted from ``os_distro``
+      (e.g. ``'le1.1'``), otherwise ``None``.
+    * ``version`` — Software release version (e.g. ``'v1.0.0'``).
+    * ``kernel_version`` — Bare kernel version (e.g. ``'6.6.28'``; the
+      ``kernel-`` prefix is stripped).
+    * ``chip`` — Chip model (e.g. ``'qcs6490'``).
+    * ``ram`` — RAM capacity (e.g. ``'8g'``); ``None`` for 5-field format.
+    * ``storage`` — Storage type (e.g. ``'ufs'``); ``None`` for 5-field format.
+    * ``release_date`` — ISO 8601 release date (e.g. ``'2025-02-08'``);
+      ``None`` for 5-field format.
+
+    Args:
+        filename: Manifest or release-package filename (basename or full path).
+                  The file extension and leading directory components are
+                  ignored during parsing.
+
+    Returns:
+        Dictionary with all fields described above.
+
+    Raises:
+        ValueError: If the filename does not match either supported format.
+
+    Examples::
+
+        >>> parse_advantech_manifest_name(
+        ...     "aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490.xml"
+        ... )
+        {
+            'product': 'aom2721a1',
+            'os_distro': 'yocto4.0.18-le1.1',
+            'yocto_version': '4.0.18',
+            'bsp_version': 'le1.1',
+            'version': 'v1.0.0',
+            'kernel_version': '6.6.28',
+            'chip': 'qcs6490',
+            'ram': None,
+            'storage': None,
+            'release_date': None,
+        }
+    """
+    # Strip any leading directory path and work only with the basename
+    basename = Path(filename).name
+
+    # Try the longer 8-field format first (more specific)
+    match = _RE_MANIFEST_8.match(basename)
+    if match is None:
+        match = _RE_MANIFEST_5.match(basename)
+    if match is None:
+        raise ValueError(
+            f"Filename '{filename}' does not match the Advantech manifest naming "
+            "convention.  Expected format: "
+            "[product]_[os_distro]_[version]_kernel-[kernel_version]_[chip]"
+            "[_[ram]_[storage]_[YYYY-MM-DD]][.ext]"
+        )
+
+    groups = match.groupdict()
+    os_distro: str = groups['os_distro']
+
+    # Decompose os_distro into yocto_version and bsp_version.
+    # Pattern: 'yocto<major>.<minor>.<patch>-<bsp_sub>'
+    # Examples: 'yocto4.0.18-le1.1' → yocto_version='4.0.18', bsp_version='le1.1'
+    #           'yocto5.0'           → yocto_version='5.0',    bsp_version=None
+    yocto_version: Optional[str] = None
+    bsp_version: Optional[str] = None
+    distro_match = re.match(r'^yocto([\d.]+)(?:-(.+))?$', os_distro)
+    if distro_match:
+        yocto_version = distro_match.group(1)
+        bsp_version = distro_match.group(2)  # None when there is no '-' suffix
+
+    return {
+        'product': groups['product'],
+        'os_distro': os_distro,
+        'yocto_version': yocto_version,
+        'bsp_version': bsp_version,
+        'version': groups['version'],
+        'kernel_version': groups['kernel_version'],
+        'chip': groups['chip'],
+        'ram': groups.get('ram'),
+        'storage': groups.get('storage'),
+        'release_date': groups.get('release_date'),
+    }
+
+
 
 
 # =============================================================================

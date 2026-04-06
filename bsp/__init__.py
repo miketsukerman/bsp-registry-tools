@@ -76,6 +76,7 @@ from .utils import (
     convert_containers_list_to_dict,
     get_registry_from_yaml_file,
     build_docker,
+    parse_advantech_manifest_name,
 )
 from .resolver import ResolvedConfig, V2Resolver
 from .path_resolver import PathResolver, resolver
@@ -128,6 +129,7 @@ __all__ = [
     "convert_containers_list_to_dict",
     "get_registry_from_yaml_file",
     "build_docker",
+    "parse_advantech_manifest_name",
     # Resolver
     "ResolvedConfig",
     "V2Resolver",

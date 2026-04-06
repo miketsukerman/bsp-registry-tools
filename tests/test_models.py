@@ -475,3 +475,166 @@ class TestV2DataClasses:
         )
         assert "yocto" in feat.compatible_with
         assert "isar" in feat.compatible_with
+
+
+# =============================================================================
+# Tests for Advantech naming convention extensions
+# =============================================================================
+
+class TestAdvantechExtensions:
+    """Tests for fields added to support the Advantech manifest naming convention."""
+
+    # ------------------------------------------------------------------
+    # VendorRelease new fields: version, kernel_version, release_date
+    # ------------------------------------------------------------------
+
+    def test_vendor_release_defaults_for_new_fields(self):
+        vr = VendorRelease(slug="qcs6490-v1.0.0-kernel-6.6.28", description="QCS6490 BSP")
+        assert vr.version is None
+        assert vr.kernel_version is None
+        assert vr.release_date is None
+
+    def test_vendor_release_with_version(self):
+        vr = VendorRelease(
+            slug="qcs6490-v1.0.0-kernel-6.6.28",
+            description="QCS6490 BSP",
+            version="v1.0.0",
+        )
+        assert vr.version == "v1.0.0"
+
+    def test_vendor_release_with_kernel_version(self):
+        vr = VendorRelease(
+            slug="qcs6490-v1.0.0-kernel-6.6.28",
+            description="QCS6490 BSP",
+            kernel_version="6.6.28",
+        )
+        assert vr.kernel_version == "6.6.28"
+
+    def test_vendor_release_with_release_date(self):
+        vr = VendorRelease(
+            slug="qcs6490-v1.0.0-kernel-6.6.28",
+            description="QCS6490 BSP",
+            release_date="2025-02-08",
+        )
+        assert vr.release_date == "2025-02-08"
+
+    def test_vendor_release_with_all_new_fields(self):
+        vr = VendorRelease(
+            slug="qcs6490-v1.0.0-kernel-6.6.28",
+            description="QCS6490 BSP v1.0.0, Kernel 6.6.28",
+            version="v1.0.0",
+            kernel_version="6.6.28",
+            release_date="2025-02-08",
+            includes=["kas/advantech/qcs6490.yaml"],
+        )
+        assert vr.slug == "qcs6490-v1.0.0-kernel-6.6.28"
+        assert vr.version == "v1.0.0"
+        assert vr.kernel_version == "6.6.28"
+        assert vr.release_date == "2025-02-08"
+        assert vr.includes == ["kas/advantech/qcs6490.yaml"]
+
+    # ------------------------------------------------------------------
+    # Device new fields: ram, storage
+    # ------------------------------------------------------------------
+
+    def test_device_defaults_for_new_fields(self):
+        dev = Device(
+            slug="aom2721a1",
+            description="Advantech AOM-2721A1",
+            vendor="advantech",
+            soc_vendor="qualcomm",
+        )
+        assert dev.ram is None
+        assert dev.storage is None
+
+    def test_device_with_ram(self):
+        dev = Device(
+            slug="aom2721a1",
+            description="Advantech AOM-2721A1",
+            vendor="advantech",
+            soc_vendor="qualcomm",
+            ram="8g",
+        )
+        assert dev.ram == "8g"
+
+    def test_device_with_storage(self):
+        dev = Device(
+            slug="aom2721a1",
+            description="Advantech AOM-2721A1",
+            vendor="advantech",
+            soc_vendor="qualcomm",
+            storage="ufs",
+        )
+        assert dev.storage == "ufs"
+
+    def test_device_with_all_new_fields(self):
+        dev = Device(
+            slug="aom2721a1",
+            description="Advantech AOM-2721A1",
+            vendor="advantech",
+            soc_vendor="qualcomm",
+            soc_family="qcs6490",
+            ram="8g",
+            storage="ufs",
+        )
+        assert dev.soc_family == "qcs6490"
+        assert dev.ram == "8g"
+        assert dev.storage == "ufs"
+
+    # ------------------------------------------------------------------
+    # VendorOverride new field: bsp_version
+    # ------------------------------------------------------------------
+
+    def test_vendor_override_bsp_version_defaults_to_none(self):
+        vo = VendorOverride(vendor="advantech")
+        assert vo.bsp_version is None
+
+    def test_vendor_override_with_bsp_version(self):
+        vo = VendorOverride(vendor="advantech", bsp_version="le1.1")
+        assert vo.bsp_version == "le1.1"
+
+    def test_vendor_override_bsp_version_lts(self):
+        vo = VendorOverride(vendor="advantech", bsp_version="lts-2.0")
+        assert vo.bsp_version == "lts-2.0"
+
+    # ------------------------------------------------------------------
+    # SocVendorOverride new field: bsp_version
+    # ------------------------------------------------------------------
+
+    def test_soc_vendor_override_bsp_version_defaults_to_none(self):
+        svo = SocVendorOverride(vendor="qualcomm")
+        assert svo.bsp_version is None
+
+    def test_soc_vendor_override_with_bsp_version(self):
+        svo = SocVendorOverride(vendor="qualcomm", bsp_version="le1.1")
+        assert svo.bsp_version == "le1.1"
+
+    # ------------------------------------------------------------------
+    # Full model wiring: VendorOverride → SocVendorOverride → VendorRelease
+    # ------------------------------------------------------------------
+
+    def test_full_advantech_hierarchy(self):
+        vr = VendorRelease(
+            slug="qcs6490-v1.0.0-kernel-6.6.28",
+            description="QCS6490 BSP v1.0.0",
+            version="v1.0.0",
+            kernel_version="6.6.28",
+            release_date="2025-02-08",
+        )
+        svo = SocVendorOverride(
+            vendor="qualcomm",
+            bsp_version="le1.1",
+            includes=["kas/adv/qcs6490.yaml"],
+            releases=[vr],
+        )
+        vo = VendorOverride(
+            vendor="advantech",
+            bsp_version="le1.1",
+            soc_vendors=[svo],
+        )
+        assert vo.bsp_version == "le1.1"
+        assert vo.soc_vendors[0].vendor == "qualcomm"
+        assert vo.soc_vendors[0].bsp_version == "le1.1"
+        assert vo.soc_vendors[0].releases[0].version == "v1.0.0"
+        assert vo.soc_vendors[0].releases[0].kernel_version == "6.6.28"
+        assert vo.soc_vendors[0].releases[0].release_date == "2025-02-08"

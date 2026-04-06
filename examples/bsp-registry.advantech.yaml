@@ -1,0 +1,138 @@
+# =============================================================================
+# Example BSP registry for Advantech boards using the Advantech manifest
+# naming convention.
+#
+# Manifest / release-package filename convention:
+#
+#   [product]_[os_distro]_[version]_kernel-[kernel_version]_[chip].xml
+#   [product]_[os_distro]_[version]_kernel-[kernel_version]_[chip]_[ram]_[storage]_[date].tgz
+#
+# Complete example:
+#   aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490_8g_ufs_2025-02-08.tgz
+#
+# Field mapping to registry model:
+#   product         → Device.slug          (e.g. 'aom2721a1')
+#   os_distro       → Release.yocto_version + VendorOverride.bsp_version
+#                     (e.g. 'yocto4.0.18-le1.1' → yocto_version='4.0.18', bsp_version='le1.1')
+#   version         → VendorRelease.version         (e.g. 'v1.0.0')
+#   kernel_version  → VendorRelease.kernel_version  (e.g. '6.6.28')
+#   chip            → Device.soc_family             (e.g. 'qcs6490')
+#   ram             → Device.ram                    (e.g. '8g')
+#   storage         → Device.storage                (e.g. 'ufs')
+#   date            → VendorRelease.release_date    (e.g. '2025-02-08')
+# =============================================================================
+
+specification:
+  version: "2.0"
+
+registry:
+
+  # ===========================================================================
+  # Devices
+  # Advantech product name with PCB version → Device.slug
+  # chip name                               → Device.soc_family
+  # ram size                                → Device.ram   (NEW)
+  # storage type                            → Device.storage (NEW)
+  # ===========================================================================
+
+  devices:
+
+    - slug: aom2721a1
+      description: "Advantech AOM-2721A1 (Qualcomm QCS6490)"
+      vendor: advantech
+      soc_vendor: qualcomm
+      soc_family: qcs6490      # chip model from manifest filename
+      ram: "8g"                # RAM capacity (Advantech naming: '8g' = 8 GB)
+      storage: "ufs"           # storage type  (Advantech naming: 'ufs')
+      includes:
+        - kas/advantech/aom2721a1.yaml
+
+    - slug: rom3420a1
+      description: "Advantech ROM-3420A1 (NXP i.MX 8M Plus)"
+      vendor: advantech
+      soc_vendor: nxp
+      soc_family: imx8mp       # chip model / SoC family
+      ram: "4g"
+      storage: "emmc"
+      includes:
+        - kas/advantech/rom3420a1.yaml
+
+  # ===========================================================================
+  # Releases
+  # os_distro (Yocto version)  → Release.yocto_version  (e.g. '4.0.18')
+  # ===========================================================================
+
+  releases:
+
+    - slug: kirkstone
+      distro: poky
+      description: "Yocto 4.0 LTS (Kirkstone)"
+      yocto_version: "4.0.18"
+      includes:
+        - kas/yocto/releases/kirkstone.yaml
+      vendor_overrides:
+
+        # -----------------------------------------------------------------------
+        # Advantech + Qualcomm (QCS6490) BSP overrides
+        # bsp_version → VendorOverride.bsp_version (e.g. Qualcomm LE 'le1.1')
+        # -----------------------------------------------------------------------
+        - vendor: advantech
+          bsp_version: "le1.1"   # Qualcomm Linux Embedded sub-version (NEW)
+          includes:
+            - kas/advantech/qualcomm/common.yaml
+          soc_vendors:
+            - vendor: qualcomm
+              includes:
+                - kas/advantech/qualcomm/qcs6490.yaml
+              releases:
+
+                # -------------------------------------------------------------
+                # VendorRelease — one entry per BSP release package
+                # version        → VendorRelease.version        (e.g. 'v1.0.0')
+                # kernel_version → VendorRelease.kernel_version (e.g. '6.6.28')
+                # release_date   → VendorRelease.release_date   (e.g. '2025-02-08')
+                # -------------------------------------------------------------
+                - slug: qcs6490-v1.0.0-kernel-6.6.28
+                  description: "Qualcomm QCS6490 BSP v1.0.0, Kernel 6.6.28"
+                  version: "v1.0.0"          # software release version (NEW)
+                  kernel_version: "6.6.28"   # bare kernel version (NEW)
+                  release_date: "2025-02-08" # ISO 8601 release date (NEW)
+                  includes:
+                    - kas/advantech/qualcomm/qcs6490-kernel-6.6.28.yaml
+
+        # -----------------------------------------------------------------------
+        # Advantech + NXP (i.MX) BSP overrides
+        # -----------------------------------------------------------------------
+        - vendor: advantech
+          includes:
+            - kas/advantech/nxp/common.yaml
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - kas/advantech/nxp/imx8mp.yaml
+              releases:
+                - slug: imx8mp-v1.2.0-kernel-6.6.53
+                  description: "NXP i.MX 8M Plus BSP v1.2.0, Kernel 6.6.53"
+                  version: "v1.2.0"
+                  kernel_version: "6.6.53"
+                  release_date: "2025-03-15"
+                  includes:
+                    - kas/advantech/nxp/imx8mp-kernel-6.6.53.yaml
+
+  # ===========================================================================
+  # BSP Presets
+  # ===========================================================================
+
+  bsp:
+
+    - name: aom2721a1-kirkstone-qcs6490-v1.0.0
+      description: "AOM-2721A1 Kirkstone (LE 1.1) QCS6490 BSP v1.0.0"
+      device: aom2721a1
+      release: kirkstone
+      vendor_release: qcs6490-v1.0.0-kernel-6.6.28
+
+    - name: rom3420a1-kirkstone-imx8mp-v1.2.0
+      description: "ROM-3420A1 Kirkstone NXP i.MX 8M Plus BSP v1.2.0"
+      device: rom3420a1
+      release: kirkstone
+      vendor_release: imx8mp-v1.2.0-kernel-6.6.53

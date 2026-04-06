@@ -731,3 +731,140 @@ registry:
 
         result = get_registry_from_yaml_file(main_file)
         assert isinstance(result, RegistryRoot)
+
+
+# =============================================================================
+# Tests for parse_advantech_manifest_name
+# =============================================================================
+
+from bsp import parse_advantech_manifest_name
+
+
+class TestParseAdvantechManifestName:
+    """Tests for the Advantech manifest / release-package filename parser."""
+
+    # ------------------------------------------------------------------
+    # 5-field manifest format (.xml)
+    # ------------------------------------------------------------------
+
+    def test_5field_basic(self):
+        result = parse_advantech_manifest_name(
+            "aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490.xml"
+        )
+        assert result["product"] == "aom2721a1"
+        assert result["os_distro"] == "yocto4.0.18-le1.1"
+        assert result["yocto_version"] == "4.0.18"
+        assert result["bsp_version"] == "le1.1"
+        assert result["version"] == "v1.0.0"
+        assert result["kernel_version"] == "6.6.28"
+        assert result["chip"] == "qcs6490"
+        assert result["ram"] is None
+        assert result["storage"] is None
+        assert result["release_date"] is None
+
+    def test_5field_without_extension(self):
+        result = parse_advantech_manifest_name(
+            "aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490"
+        )
+        assert result["product"] == "aom2721a1"
+        assert result["chip"] == "qcs6490"
+        assert result["ram"] is None
+
+    def test_5field_no_bsp_subversion(self):
+        """os_distro without a sub-version suffix → bsp_version=None."""
+        result = parse_advantech_manifest_name(
+            "rom3420a1_yocto5.0_v2.1.0_kernel-6.6.52_imx8mp.xml"
+        )
+        assert result["yocto_version"] == "5.0"
+        assert result["bsp_version"] is None
+
+    def test_5field_full_path_strips_directory(self):
+        result = parse_advantech_manifest_name(
+            "/some/path/to/aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490.xml"
+        )
+        assert result["product"] == "aom2721a1"
+
+    # ------------------------------------------------------------------
+    # 8-field release-package format (.tgz)
+    # ------------------------------------------------------------------
+
+    def test_8field_basic(self):
+        result = parse_advantech_manifest_name(
+            "aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490_8g_ufs_2025-02-08.tgz"
+        )
+        assert result["product"] == "aom2721a1"
+        assert result["os_distro"] == "yocto4.0.18-le1.1"
+        assert result["yocto_version"] == "4.0.18"
+        assert result["bsp_version"] == "le1.1"
+        assert result["version"] == "v1.0.0"
+        assert result["kernel_version"] == "6.6.28"
+        assert result["chip"] == "qcs6490"
+        assert result["ram"] == "8g"
+        assert result["storage"] == "ufs"
+        assert result["release_date"] == "2025-02-08"
+
+    def test_8field_tar_gz_extension(self):
+        result = parse_advantech_manifest_name(
+            "aom2721a1_yocto4.0.18-le1.1_v1.0.0_kernel-6.6.28_qcs6490_8g_ufs_2025-02-08.tar.gz"
+        )
+        assert result["ram"] == "8g"
+        assert result["storage"] == "ufs"
+        assert result["release_date"] == "2025-02-08"
+
+    def test_8field_different_ram_and_storage(self):
+        result = parse_advantech_manifest_name(
+            "rom3420a1_yocto4.0.18-le1.1_v1.2.0_kernel-6.6.53_imx8mp_4g_emmc_2025-03-15.tgz"
+        )
+        assert result["product"] == "rom3420a1"
+        assert result["chip"] == "imx8mp"
+        assert result["ram"] == "4g"
+        assert result["storage"] == "emmc"
+        assert result["release_date"] == "2025-03-15"
+
+    # ------------------------------------------------------------------
+    # Version patterns: GA, Beta, Alpha
+    # ------------------------------------------------------------------
+
+    def test_version_ga(self):
+        result = parse_advantech_manifest_name(
+            "dev_yocto5.0_v1.0.0_kernel-6.6.0_chip.xml"
+        )
+        assert result["version"] == "v1.0.0"
+
+    def test_version_beta(self):
+        result = parse_advantech_manifest_name(
+            "dev_yocto5.0_v0.3.0_kernel-6.6.0_chip.xml"
+        )
+        assert result["version"] == "v0.3.0"
+
+    def test_version_alpha(self):
+        result = parse_advantech_manifest_name(
+            "dev_yocto5.0_v0.0.1_kernel-6.6.0_chip.xml"
+        )
+        assert result["version"] == "v0.0.1"
+
+    # ------------------------------------------------------------------
+    # Invalid filenames → ValueError
+    # ------------------------------------------------------------------
+
+    def test_invalid_filename_raises(self):
+        with pytest.raises(ValueError, match="does not match"):
+            parse_advantech_manifest_name("not-a-valid-name.xml")
+
+    def test_missing_kernel_prefix_raises(self):
+        """The 'kernel-' prefix is required before the kernel version."""
+        with pytest.raises(ValueError):
+            parse_advantech_manifest_name(
+                "aom2721a1_yocto4.0.18-le1.1_v1.0.0_6.6.28_qcs6490.xml"
+            )
+
+    def test_invalid_version_format_raises(self):
+        """Version must start with 'v' and follow semver."""
+        with pytest.raises(ValueError):
+            parse_advantech_manifest_name(
+                "aom2721a1_yocto4.0.18-le1.1_1.0.0_kernel-6.6.28_qcs6490.xml"
+            )
+
+    def test_empty_string_raises(self):
+        with pytest.raises(ValueError):
+            parse_advantech_manifest_name("")

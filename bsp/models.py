@@ -204,6 +204,13 @@ class Device:
     """
     Hardware device/board definition.
 
+    The optional hardware-specification fields (``ram``, ``storage``) correspond
+    to the Advantech release-package naming convention::
+
+        [product]_..._[ram size]_[storage]_[date].tgz
+
+    Example: ``aom2721a1_..._8g_ufs_2025-02-08.tgz``
+
     Attributes:
         slug: Unique identifier for the device
         description: Human-readable description
@@ -214,7 +221,12 @@ class Device:
         copy: List of ``{source: destination}`` file-copy entries executed
               before the build.  Both paths resolve relative to the
               registry file's parent directory.
-        soc_family: Optional SoC family identifier (e.g., 'imx8', 'cortex-a57')
+        soc_family: Optional SoC family / chip model identifier (e.g.,
+                    'imx8', 'qcs6490').  For Advantech boards this is the
+                    chip model from the manifest filename (e.g. 'qcs6490'
+                    for Qualcomm QCS6490).
+        ram: Optional RAM capacity string (e.g. '8g', '4g', '16g').
+        storage: Optional storage type string (e.g. 'ufs', 'emmc', 'nand').
         build: Deprecated – legacy nested build block.  Use ``includes`` /
                ``local_conf`` / ``copy`` directly and ``BspPreset.build``
                for container and path.
@@ -227,6 +239,8 @@ class Device:
     local_conf: List[str] = field(default_factory=empty_list)
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     soc_family: Optional[str] = None
+    ram: Optional[str] = None
+    storage: Optional[str] = None
     build: Optional[DeviceBuild] = None
 
 
@@ -241,14 +255,32 @@ class VendorRelease:
     adds the matching ``VendorRelease.includes`` after the parent
     ``VendorOverride.includes`` when the caller specifies a ``vendor_release``.
 
+    The optional structured metadata fields (``version``, ``kernel_version``,
+    ``release_date``) correspond to the Advantech manifest-file naming
+    convention::
+
+        [product]_[os_distro]_[version]_[kernel version]_[chip]
+
+    Example: ``qcs6490-v1.0.0-kernel-6.6.28``
+
     Attributes:
         slug: Unique identifier for this vendor sub-release (e.g. 'imx-6.6.53')
         description: Human-readable description
         includes: KAS configuration files specific to this vendor sub-release
+        version: Optional software release version following semver convention
+                 (e.g. 'v1.0.0').  GA = vK.0.0, Beta = vK.M.0,
+                 Alpha = vK.M.P (P > 0).
+        kernel_version: Optional bare kernel version string (e.g. '6.6.28').
+                        The ``kernel-`` prefix used in manifest filenames is
+                        stripped when populating this field.
+        release_date: Optional ISO 8601 release date (e.g. '2025-02-08').
     """
     slug: str
     description: str
     includes: List[str] = field(default_factory=empty_list)
+    version: Optional[str] = None
+    kernel_version: Optional[str] = None
+    release_date: Optional[str] = None
 
 
 @dataclass
@@ -278,11 +310,16 @@ class SocVendorOverride:
         distro: Optional distro slug that overrides both the parent
                 ``VendorOverride.distro`` and the release's own ``distro``
                 field when this SoC vendor override is active.
+        bsp_version: Optional vendor BSP sub-version string (e.g. 'le1.1',
+                     'lts-2.0').  Corresponds to the sub-version component of
+                     the Advantech ``os_distro`` naming field
+                     (e.g. 'yocto4.0.18-le1.1' → bsp_version='le1.1').
     """
     vendor: str
     includes: List[str] = field(default_factory=empty_list)
     releases: List[VendorRelease] = field(default_factory=empty_list)
     distro: Optional[str] = None
+    bsp_version: Optional[str] = None
 
 
 @dataclass
@@ -315,6 +352,10 @@ class VendorOverride:
       parent release normally uses.  A ``SocVendorOverride.distro`` takes
       precedence over this field when both are set.
 
+    * ``bsp_version`` — Optional vendor BSP sub-version string (e.g. 'le1.1',
+      'lts-2.0').  Corresponds to the sub-version component of the Advantech
+      ``os_distro`` naming field (e.g. 'yocto4.0.18-le1.1' → 'le1.1').
+
     Attributes:
         vendor: Board vendor name this override applies to
         includes: KAS files common to all sub-releases for this vendor
@@ -326,6 +367,10 @@ class VendorOverride:
         slug: Optional unique identifier for this override entry
         distro: Optional distro slug that overrides the release distro for
                 this vendor override
+        bsp_version: Optional vendor BSP sub-version string (e.g. 'le1.1',
+                     'lts-2.0').  Corresponds to the sub-version component of
+                     the Advantech ``os_distro`` naming field
+                     (e.g. 'yocto4.0.18-le1.1' → bsp_version='le1.1').
     """
     vendor: str
     includes: List[str] = field(default_factory=empty_list)
@@ -333,6 +378,7 @@ class VendorOverride:
     soc_vendors: List[SocVendorOverride] = field(default_factory=empty_list)
     slug: Optional[str] = None
     distro: Optional[str] = None
+    bsp_version: Optional[str] = None
 
 
 @dataclass
