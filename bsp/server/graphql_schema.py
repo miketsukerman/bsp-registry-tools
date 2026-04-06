@@ -325,7 +325,7 @@ class Query:
     ) -> List[ReleaseGql]:
         mgr = _mgr(info)
         releases = mgr.model.registry.releases if mgr.model else []
-        if device and device is not strawberry.UNSET:
+        if device is not strawberry.UNSET and device:
             try:
                 dev = mgr.resolver.get_device(device)
             except SystemExit:
@@ -359,6 +359,23 @@ class Query:
 
 
 # ---------------------------------------------------------------------------
+# Mutation helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_features(features) -> List[str]:
+    """Return a plain list of feature slugs, handling UNSET / None gracefully."""
+    if features is strawberry.UNSET or not features:
+        return []
+    return list(features)
+
+
+def _is_set(value) -> bool:
+    """Return True when *value* was explicitly provided (not UNSET and not None)."""
+    return value is not strawberry.UNSET and value is not None
+
+
+# ---------------------------------------------------------------------------
 # Mutation
 # ---------------------------------------------------------------------------
 
@@ -376,17 +393,14 @@ class Mutation:
         features: Optional[List[str]] = strawberry.UNSET,
     ) -> ExportResult:
         mgr = _mgr(info)
-        _feats = features if features and features is not strawberry.UNSET else []
+        _feats = _resolve_features(features)
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
         try:
-            if bsp_name and bsp_name is not strawberry.UNSET:
+            if _is_set(bsp_name):
                 mgr.export_bsp_config(bsp_name=bsp_name, output_file=None)
-            elif (
-                device and device is not strawberry.UNSET
-                and release and release is not strawberry.UNSET
-            ):
+            elif _is_set(device) and _is_set(release):
                 mgr.export_by_components(device, release, _feats, output_file=None)
             else:
                 raise ValueError("Provide bspName or both device and release.")
@@ -407,14 +421,11 @@ class Mutation:
         checkout_only: bool = False,
     ) -> BuildResult:
         mgr = _mgr(info)
-        _feats = features if features and features is not strawberry.UNSET else []
+        _feats = _resolve_features(features)
         try:
-            if bsp_name and bsp_name is not strawberry.UNSET:
+            if _is_set(bsp_name):
                 mgr.build_bsp(bsp_name, checkout_only=checkout_only)
-            elif (
-                device and device is not strawberry.UNSET
-                and release and release is not strawberry.UNSET
-            ):
+            elif _is_set(device) and _is_set(release):
                 mgr.build_by_components(device, release, _feats, checkout_only=checkout_only)
             else:
                 raise ValueError("Provide bspName or both device and release.")
@@ -436,19 +447,16 @@ class Mutation:
         features: Optional[List[str]] = strawberry.UNSET,
     ) -> ShellCommandResult:
         mgr = _mgr(info)
-        _feats = features if features and features is not strawberry.UNSET else []
+        _feats = _resolve_features(features)
         buf = io.StringIO()
         rc = 0
         old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout = buf
         sys.stderr = buf
         try:
-            if bsp_name and bsp_name is not strawberry.UNSET:
+            if _is_set(bsp_name):
                 mgr.shell_into_bsp(bsp_name=bsp_name, command=command)
-            elif (
-                device and device is not strawberry.UNSET
-                and release and release is not strawberry.UNSET
-            ):
+            elif _is_set(device) and _is_set(release):
                 mgr.shell_by_components(device, release, _feats, command=command)
             else:
                 raise ValueError("Provide bspName or both device and release.")
