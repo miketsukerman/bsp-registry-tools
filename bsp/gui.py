@@ -1108,7 +1108,7 @@ if TEXTUAL_AVAILABLE:
             # Resolve the container entry to get the image name
             if container_name:
                 try:
-                    containers = getattr(registry, "containers", None) or {}
+                    containers = getattr(self._bsp_manager.model, "containers", None) or {}
                     container_cfg = containers.get(container_name)
                     if container_cfg and getattr(container_cfg, "image", None):
                         env_lines.append(
@@ -1141,7 +1141,7 @@ if TEXTUAL_AVAILABLE:
             else:
                 # No matched release — try to show "default" environment directly
                 try:
-                    envs = getattr(registry, "environments", None) or {}
+                    envs = getattr(self._bsp_manager.model, "environments", None) or {}
                     if envs:
                         env_name = "default"
                         named_env = envs.get(env_name)
@@ -1168,7 +1168,7 @@ if TEXTUAL_AVAILABLE:
 
             # Global environment variables
             try:
-                global_env = getattr(registry, "environment", None)
+                global_env = getattr(self._bsp_manager.model, "environment", None)
                 if global_env and getattr(global_env, "variables", None):
                     env_lines.append("[bold cyan]Global Vars:[/bold cyan]")
                     from .environment import EnvironmentManager
