@@ -839,7 +839,6 @@ if TEXTUAL_AVAILABLE:
 
         #output-log {
             height: 1fr;
-            font-size: 12;
         }
 
         /* ── Status bar ──────────────────────────────────────── */
