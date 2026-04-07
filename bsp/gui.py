@@ -1728,6 +1728,7 @@ if TEXTUAL_AVAILABLE:
                 cmd.append("--no-update")
             cmd += list(args)
 
+            self._clear_log()
             self._log(f"[bold]$ bsp {' '.join(args)}[/bold]")
             if log_file:
                 self._log(f"[dim]Log file: {log_file}[/dim]")
@@ -1902,6 +1903,11 @@ if TEXTUAL_AVAILABLE:
             self.query_one("#progress-status", Static).update(label)
 
         # ── Helpers ──────────────────────────────────────────────
+
+        def _clear_log(self) -> None:
+            """Clear all content from the output log widget."""
+            log_widget = self.query_one("#output-log", CopyableTextArea)
+            log_widget.load_text("")
 
         def _log(self, message: str) -> None:
             """Append *message* to the output log widget."""
