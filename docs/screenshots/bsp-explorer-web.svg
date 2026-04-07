@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 860" style="background:#f1f3f4;font-family:'Segoe UI',Arial,sans-serif;">
+  <defs>
+    <style>
+      text { font-family: 'Segoe UI', Arial, sans-serif; }
+      .term-text { font-family: 'Fira Code', Consolas, monospace; fill: #cdd6f4; }
+      .title-t { font-size:14px; font-weight:bold; fill:#cba6f7; font-family:'Fira Code',Consolas,monospace; }
+      .header-t { font-size:13px; fill:#89dceb; font-family:'Fira Code',Consolas,monospace; }
+      .key-t { font-size:11px; fill:#89b4fa; font-weight:bold; font-family:'Fira Code',Consolas,monospace; }
+      .val-t { font-size:11px; fill:#cdd6f4; font-family:'Fira Code',Consolas,monospace; }
+      .dim-t { font-size:11px; fill:#6c7086; font-family:'Fira Code',Consolas,monospace; }
+      .green-t { font-size:11px; fill:#a6e3a1; font-family:'Fira Code',Consolas,monospace; }
+      .yellow-t { font-size:11px; fill:#f9e2af; font-family:'Fira Code',Consolas,monospace; }
+      .red-t { font-size:11px; fill:#f38ba8; font-family:'Fira Code',Consolas,monospace; }
+      .section-label-t { font-size:11px; fill:#89b4fa; font-weight:bold; font-family:'Fira Code',Consolas,monospace; }
+    </style>
+  </defs>
+
+  <!-- ===== Browser chrome ===== -->
+  <!-- Window frame -->
+  <rect x="0" y="0" width="1280" height="860" rx="8" fill="#dee1e6" stroke="#bdc1c6" stroke-width="1"/>
+
+  <!-- Title bar -->
+  <rect x="0" y="0" width="1280" height="36" rx="8" fill="#3c4043"/>
+  <rect x="0" y="18" width="1280" height="18" fill="#3c4043"/>
+
+  <!-- Window controls (macOS-style) -->
+  <circle cx="20" cy="18" r="6" fill="#ff5f57"/>
+  <circle cx="40" cy="18" r="6" fill="#febc2e"/>
+  <circle cx="60" cy="18" r="6" fill="#28c840"/>
+
+  <!-- Tab bar -->
+  <rect x="0" y="36" width="1280" height="40" fill="#202124"/>
+  <!-- Active tab -->
+  <rect x="80" y="40" width="280" height="36" rx="4" fill="#3c4043"/>
+  <text x="130" y="63" font-size="13" fill="#e8eaed">🖥  BSP Registry Explorer</text>
+  <!-- Tab close icon -->
+  <text x="346" y="63" font-size="12" fill="#9aa0a6">✕</text>
+  <!-- New tab button -->
+  <text x="370" y="63" font-size="16" fill="#9aa0a6">+</text>
+
+  <!-- Navigation bar -->
+  <rect x="0" y="76" width="1280" height="44" fill="#3c4043"/>
+  <!-- Back/Forward buttons -->
+  <text x="16" y="104" font-size="18" fill="#9aa0a6">←</text>
+  <text x="40" y="104" font-size="18" fill="#5f6368">→</text>
+  <text x="65" y="104" font-size="16" fill="#9aa0a6">↻</text>
+  <!-- Address bar -->
+  <rect x="90" y="84" width="1000" height="28" rx="14" fill="#202124" stroke="#5f6368" stroke-width="1"/>
+  <text x="120" y="103" font-size="13" fill="#9aa0a6">🔒</text>
+  <text x="145" y="103" font-size="13" fill="#e8eaed">localhost:8080</text>
+  <!-- Bookmark, menu buttons -->
+  <text x="1108" y="104" font-size="16" fill="#9aa0a6">★</text>
+  <text x="1140" y="104" font-size="16" fill="#9aa0a6">⊕</text>
+  <text x="1175" y="104" font-size="16" fill="#9aa0a6">⋮</text>
+
+  <!-- ===== Terminal / TUI content area ===== -->
+  <rect x="0" y="120" width="1280" height="740" fill="#1e1e2e"/>
+
+  <!-- Header bar of TUI -->
+  <rect x="0" y="120" width="1280" height="32" fill="#313244"/>
+  <text x="640" y="140" text-anchor="middle" class="title-t">BSP Registry Explorer</text>
+  <text x="640" y="152" text-anchor="middle" class="dim-t" font-size="10">Advantech Board Support Package Manager</text>
+
+  <!-- Registry bar -->
+  <rect x="0" y="152" width="1280" height="28" fill="#181825"/>
+  <text x="10" y="170" class="dim-t" font-size="11">Registry: /home/user/.cache/bsp-registry  [https://github.com/example/bsp-registry @ main]</text>
+  <rect x="1190" y="155" width="80" height="22" rx="2" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+  <text x="1230" y="171" text-anchor="middle" class="header-t" font-size="11">⟳ Refresh</text>
+
+  <!-- ===== Left Panel ===== -->
+  <rect x="5" y="185" width="490" height="600" rx="3" fill="none" stroke="#89b4fa" stroke-width="1"/>
+  <text x="15" y="202" class="section-label-t">BSP Presets</text>
+  <!-- Filter input -->
+  <rect x="10" y="206" width="480" height="22" rx="2" fill="#313244" stroke="#585b70" stroke-width="1"/>
+  <text x="15" y="222" class="dim-t">Filter by vendor, device or release…</text>
+  <!-- Tree contents -->
+  <text x="18" y="246" class="key-t">▼ Vendors</text>
+  <text x="28" y="262" class="key-t">  ▼ QEMU</text>
+  <text x="38" y="278" class="dim-t">    ▼ QEMU ARM64 (emulated)</text>
+  <text x="48" y="294" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <!-- Selected item -->
+  <rect x="52" y="298" width="430" height="16" rx="1" fill="#313244"/>
+  <text x="58" y="310" class="green-t" font-weight="bold">          poky-qemuarm64-scarthgap</text>
+  <text x="48" y="326" class="dim-t">      ▼ Yocto 5.1 (Styhead)</text>
+  <text x="58" y="342" class="dim-t">          poky-qemuarm64-styhead</text>
+  <text x="38" y="358" class="dim-t">    ▼ QEMU x86-64 (emulated)</text>
+  <text x="48" y="374" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="58" y="390" class="dim-t">          poky-harden-qemux86-64-scarthgap</text>
+  <text x="58" y="406" class="dim-t">          poky-qemux86-64-scarthgap</text>
+  <text x="48" y="422" class="dim-t">      ▼ Yocto 5.1 (Styhead)</text>
+  <text x="58" y="438" class="dim-t">          poky-qemux86-64-styhead</text>
+  <text x="38" y="454" class="dim-t">    ▼ QEMU ARM (32-bit, emulated)</text>
+  <text x="48" y="470" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="58" y="486" class="dim-t">          poky-qemuarm-scarthgap</text>
+  <text x="28" y="502" class="key-t">  ▼ Advantech</text>
+  <text x="38" y="518" class="dim-t">    ▼ RSB-3720 (ARM64)</text>
+  <text x="48" y="534" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="58" y="550" class="dim-t">          rsb-3720-scarthgap</text>
+  <text x="38" y="566" class="dim-t">    ▼ ROM-5720 (ARM64)</text>
+  <text x="48" y="582" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="58" y="598" class="dim-t">          rom-5720-scarthgap</text>
+  <text x="28" y="614" class="key-t">  ▼ NXP</text>
+  <text x="38" y="630" class="dim-t">    ▼ i.MX8M Plus EVK</text>
+  <text x="48" y="646" class="dim-t">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="58" y="662" class="dim-t">          imx8mp-evk-scarthgap</text>
+  <text x="28" y="678" class="dim-t">  ▶ Other</text>
+
+  <!-- ===== Right Panel ===== -->
+  <rect x="500" y="185" width="775" height="600" rx="3" fill="none" stroke="#313244" stroke-width="1"/>
+  <!-- BSP details header -->
+  <rect x="500" y="185" width="775" height="28" rx="3" fill="#313244"/>
+  <text x="514" y="204" class="section-label-t">BSP Details — poky-qemuarm64-scarthgap</text>
+
+  <!-- Details content -->
+  <text x="514" y="232" class="key-t">Name:</text>
+  <text x="620" y="232" class="val-t">poky-qemuarm64-scarthgap</text>
+  <text x="514" y="250" class="key-t">Device:</text>
+  <text x="620" y="250" class="val-t">qemuarm64</text>
+  <text x="514" y="268" class="key-t">Release:</text>
+  <text x="620" y="268" class="val-t">scarthgap  (Yocto 5.0 LTS)</text>
+  <text x="514" y="286" class="key-t">Container:</text>
+  <text x="620" y="286" class="val-t">crops/poky:ubuntu-22.04</text>
+  <text x="514" y="304" class="key-t">Build path:</text>
+  <text x="620" y="304" class="val-t">~/builds/poky-qemuarm64-scarthgap</text>
+  <text x="514" y="322" class="key-t">Features:</text>
+  <text x="620" y="322" class="val-t">qemu  virtualization  arm64</text>
+
+  <!-- Divider -->
+  <line x1="514" y1="336" x2="1265" y2="336" stroke="#313244" stroke-width="1"/>
+
+  <!-- Action buttons -->
+  <rect x="514" y="344" width="80" height="26" rx="3" fill="#1e3a5f" stroke="#89b4fa" stroke-width="1"/>
+  <text x="554" y="362" text-anchor="middle" class="key-t">▶ Build</text>
+  <rect x="604" y="344" width="80" height="26" rx="3" fill="#1a3a1a" stroke="#a6e3a1" stroke-width="1"/>
+  <text x="644" y="362" text-anchor="middle" class="green-t">$ Shell</text>
+  <rect x="694" y="344" width="80" height="26" rx="3" fill="#2a2a1a" stroke="#f9e2af" stroke-width="1"/>
+  <text x="734" y="362" text-anchor="middle" class="yellow-t">↑ Export</text>
+  <rect x="784" y="344" width="80" height="26" rx="3" fill="#2a2a1a" stroke="#f9e2af" stroke-width="1"/>
+  <text x="824" y="362" text-anchor="middle" class="yellow-t">⚡ Flash</text>
+  <rect x="874" y="344" width="110" height="26" rx="3" fill="#1a1a2a" stroke="#585b70" stroke-width="1"/>
+  <text x="929" y="362" text-anchor="middle" class="dim-t">☰ Containers</text>
+  <rect x="994" y="344" width="80" height="26" rx="3" fill="#3a1a1a" stroke="#f38ba8" stroke-width="1"/>
+  <text x="1034" y="362" text-anchor="middle" class="red-t">✕ Cancel</text>
+
+  <!-- Divider -->
+  <line x1="514" y1="379" x2="1265" y2="379" stroke="#313244" stroke-width="1"/>
+
+  <!-- Output log header -->
+  <text x="514" y="397" class="section-label-t">Output Log</text>
+
+  <!-- Log contents -->
+  <text x="514" y="416" class="dim-t">[10:32:14] Starting bsp build poky-qemuarm64-scarthgap…</text>
+  <text x="514" y="432" class="val-t">INFO: kas 4.3 starting up</text>
+  <text x="514" y="448" class="val-t">INFO: Setting up build environment…</text>
+  <text x="514" y="464" class="green-t">INFO: Fetching layers… done</text>
+  <text x="514" y="480" class="val-t">NOTE: Preparing RunQueue</text>
+  <text x="514" y="496" class="val-t">NOTE: Executing Tasks</text>
+  <text x="514" y="512" class="dim-t">Currently  4 running tasks (1623 of 5432)</text>
+  <text x="514" y="528" class="dim-t">  0: linux-yocto-6.6-r0 do_fetch</text>
+  <text x="514" y="544" class="dim-t">  1: glibc-2.38-r0 do_compile</text>
+  <text x="514" y="560" class="dim-t">  2: busybox-1.36.1-r0 do_compile</text>
+  <text x="514" y="576" class="dim-t">  3: openssl-3.1.4-r0 do_compile</text>
+  <text x="514" y="592" class="green-t">NOTE: recipe do_package: linux-yocto 6.6</text>
+  <text x="514" y="608" class="dim-t">…</text>
+  <text x="514" y="624" class="dim-t">[Build log saved → ~/builds/poky-qemuarm64-scarthgap/bsp-build-20260406-103214.log]</text>
+
+  <!-- ===== Bottom bar ===== -->
+  <rect x="0" y="800" width="1280" height="60" fill="#181825"/>
+  <text x="10" y="820" class="dim-t">q quit  r refresh  b build  s shell  x cancel  ?  help</text>
+  <text x="10" y="840" class="dim-t" font-size="10">Textual Web  •  Press F5 to reload  •  Served at localhost:8080</text>
+  <text x="1200" y="840" class="dim-t" font-size="10">v0.1.1</text>
+</svg>
