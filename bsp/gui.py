@@ -1546,6 +1546,10 @@ if TEXTUAL_AVAILABLE:
             def _on_options(options: Optional[dict]) -> None:
                 if options is None:
                     return
+                # --verbose is a top-level bsp flag (bsp --verbose build …)
+                pre_args: list[str] = []
+                if options.get("verbose"):
+                    pre_args.append("--verbose")
                 cmd_args = ["build", self._selected_bsp_name]
                 if options.get("target"):
                     cmd_args.extend(["--target", options["target"]])
@@ -1553,12 +1557,10 @@ if TEXTUAL_AVAILABLE:
                     cmd_args.append("--clean")
                 if options.get("checkout_only"):
                     cmd_args.append("--checkout")
-                if options.get("verbose"):
-                    cmd_args.append("--verbose")
                 log_file = (
                     str(Path(build_path) / f"bsp-build-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.log") if build_path else None
                 )
-                self._run_bsp_command(*cmd_args, log_file=log_file, show_progress=True)
+                self._run_bsp_command(*pre_args, *cmd_args, log_file=log_file, show_progress=True)
 
             self.push_screen(
                 BuildTargetScreen(self._selected_bsp_name, build_path),
