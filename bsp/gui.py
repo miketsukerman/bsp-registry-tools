@@ -310,9 +310,9 @@ def main_web() -> int:
     )
     parser.add_argument(
         "--host",
-        default="localhost",
+        default="0.0.0.0",
         metavar="HOST",
-        help="Host for the web server (default: localhost)",
+        help="Host for the web server (default: 0.0.0.0 — all interfaces)",
     )
     parser.add_argument(
         "--port",
