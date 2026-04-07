@@ -82,6 +82,7 @@ from .path_resolver import PathResolver, resolver
 from .environment import EnvironmentManager
 from .kas_manager import KasManager
 from .bsp_manager import BspManager
+from .registry_writer import RegistryWriter, ValidationIssue
 from .cli import main
 from .gui import launch_gui, TEXTUAL_AVAILABLE
 
@@ -143,4 +144,7 @@ __all__ = [
     # GUI
     "launch_gui",
     "TEXTUAL_AVAILABLE",
+    # Registry writer
+    "RegistryWriter",
+    "ValidationIssue",
 ]

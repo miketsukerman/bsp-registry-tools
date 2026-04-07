@@ -687,6 +687,362 @@ if TEXTUAL_AVAILABLE:
                 return True
             return super().check_consume_key(key, character)
 
+    # =========================================================================
+    # Registry editing modal screens
+    # =========================================================================
+
+    class EditPanel(ModalScreen):
+        """Modal screen for editing a registry entity in-place.
+
+        The panel renders editable ``Input`` / ``TextArea`` fields for the
+        entity that was selected in the BSP tree when the user pressed
+        ``Ctrl+E``.  All changes are applied to the in-memory
+        ``RegistryWriter`` instance held by ``BspLauncherApp``.  The user
+        must explicitly press **Save** to persist them to disk.
+
+        Attributes:
+            _entity_type: One of "device", "release", "feature", "preset".
+            _slug_or_name: The slug / preset name of the entity being edited.
+            _writer: The shared ``RegistryWriter`` instance.
+        """
+
+        def __init__(self, entity_type: str, slug_or_name: str, writer) -> None:
+            super().__init__()
+            self._entity_type = entity_type
+            self._slug_or_name = slug_or_name
+            self._writer = writer
+            self._fields: Dict[str, str] = {}
+            self._load_fields()
+
+        def _load_fields(self) -> None:
+            """Populate _fields from the writer's in-memory registry."""
+            root = self._writer.root
+            if root is None:
+                return
+            reg = root.registry
+            et = self._entity_type
+            sn = self._slug_or_name
+
+            if et == "device":
+                obj = next((d for d in (reg.devices or []) if d.slug == sn), None)
+                if obj:
+                    self._fields = {
+                        "slug": obj.slug,
+                        "description": obj.description or "",
+                        "vendor": obj.vendor or "",
+                        "soc_vendor": obj.soc_vendor or "",
+                        "soc_family": obj.soc_family or "",
+                        "includes": "\n".join(obj.includes or []),
+                    }
+            elif et == "release":
+                obj = next((r for r in (reg.releases or []) if r.slug == sn), None)
+                if obj:
+                    self._fields = {
+                        "slug": obj.slug,
+                        "description": obj.description or "",
+                        "yocto_version": obj.yocto_version or "",
+                        "includes": "\n".join(obj.includes or []),
+                    }
+            elif et == "feature":
+                obj = next((f for f in (reg.features or []) if f.slug == sn), None)
+                if obj:
+                    self._fields = {
+                        "slug": obj.slug,
+                        "description": obj.description or "",
+                        "includes": "\n".join(obj.includes or []),
+                    }
+            elif et == "preset":
+                obj = next((p for p in (reg.bsp or []) if p.name == sn), None)
+                if obj:
+                    self._fields = {
+                        "name": obj.name,
+                        "description": obj.description or "",
+                        "device": obj.device or "",
+                        "release": obj.release or "",
+                        "features": ", ".join(obj.features or []),
+                    }
+
+        def compose(self) -> ComposeResult:
+            title = f"Edit {self._entity_type}: {self._slug_or_name}"
+            with Vertical():
+                yield Label(title, classes="edit-title")
+                yield Static("", id="edit-banner", classes="edit-banner")
+                for field_name, field_value in self._fields.items():
+                    yield Label(field_name.replace("_", " ").title() + ":",
+                                classes="edit-label")
+                    if field_name == "includes":
+                        yield TextArea(
+                            field_value,
+                            id=f"edit-field-{field_name}",
+                        )
+                    else:
+                        yield Input(
+                            value=field_value,
+                            id=f"edit-field-{field_name}",
+                            placeholder=field_name,
+                        )
+                with Horizontal(classes="edit-actions"):
+                    yield Button("💾 Save", variant="success", id="edit-save")
+                    yield Button("↩ Undo", variant="default", id="edit-undo")
+                    yield Button("✕ Discard", variant="error", id="edit-discard")
+
+        def _collect_values(self) -> Dict[str, str]:
+            values: Dict[str, str] = {}
+            for field_name in self._fields:
+                widget_id = f"edit-field-{field_name}"
+                try:
+                    if field_name == "includes":
+                        widget = self.query_one(f"#{widget_id}", TextArea)
+                        values[field_name] = widget.text
+                    else:
+                        widget = self.query_one(f"#{widget_id}", Input)
+                        values[field_name] = widget.value
+                except Exception:
+                    pass
+            return values
+
+        def _show_banner(self, message: str) -> None:
+            banner = self.query_one("#edit-banner", Static)
+            banner.update(message)
+            banner.add_class("visible")
+
+        def _hide_banner(self) -> None:
+            banner = self.query_one("#edit-banner", Static)
+            banner.remove_class("visible")
+
+        @on(Button.Pressed, "#edit-save")
+        def on_save(self) -> None:
+            values = self._collect_values()
+            et = self._entity_type
+            sn = self._slug_or_name
+
+            try:
+                if et == "device":
+                    self._writer.update_device(sn,
+                        description=values.get("description", ""),
+                        vendor=values.get("vendor", ""),
+                        soc_vendor=values.get("soc_vendor", ""),
+                        soc_family=values.get("soc_family") or None,
+                        includes=[
+                            ln for ln in values.get("includes", "").splitlines()
+                            if ln.strip()
+                        ],
+                    )
+                elif et == "release":
+                    self._writer.update_release(sn,
+                        description=values.get("description", ""),
+                        yocto_version=values.get("yocto_version") or None,
+                        includes=[
+                            ln for ln in values.get("includes", "").splitlines()
+                            if ln.strip()
+                        ],
+                    )
+                elif et == "feature":
+                    self._writer.update_feature(sn,
+                        description=values.get("description", ""),
+                        includes=[
+                            ln for ln in values.get("includes", "").splitlines()
+                            if ln.strip()
+                        ],
+                    )
+                elif et == "preset":
+                    feats_raw = values.get("features", "")
+                    feats = [f.strip() for f in feats_raw.replace(",", " ").split()
+                             if f.strip()]
+                    self._writer.update_preset(sn,
+                        description=values.get("description", ""),
+                        device=values.get("device", ""),
+                        release=values.get("release") or None,
+                        features=feats,
+                    )
+            except (KeyError, ValueError) as exc:
+                self._show_banner(str(exc))
+                return
+
+            issues = self._writer.validate()
+            errors = [i for i in issues if i.level == "error"]
+            if errors:
+                self._show_banner(
+                    "Validation errors: " + "; ".join(i.message for i in errors)
+                )
+                return
+
+            self._hide_banner()
+            try:
+                self._writer.save()
+            except Exception as exc:
+                self._show_banner(f"Save failed: {exc}")
+                return
+
+            self.dismiss(True)
+
+        @on(Button.Pressed, "#edit-undo")
+        def on_undo(self) -> None:
+            if self._writer.undo():
+                self.dismiss(False)  # False → reload without full tree refresh
+            else:
+                self._show_banner("Nothing to undo")
+
+        @on(Button.Pressed, "#edit-discard")
+        def on_discard(self) -> None:
+            self.dismiss(None)
+
+    class AddEntityModal(ModalScreen):
+        """Modal screen for adding a new entity to the registry.
+
+        Shows a minimal form with the slug/name and description fields.
+        The entity type is determined by the parent tree node that was
+        active when the user pressed ``a``.
+        """
+
+        def __init__(self, entity_type: str, writer) -> None:
+            super().__init__()
+            self._entity_type = entity_type
+            self._writer = writer
+
+        def compose(self) -> ComposeResult:
+            et = self._entity_type
+            with Vertical():
+                yield Label(f"Add new {et}", classes="modal-title")
+                if et == "preset":
+                    yield Label("Name:", classes="edit-label")
+                    yield Input(placeholder="unique preset name", id="add-slug")
+                else:
+                    yield Label("Slug:", classes="edit-label")
+                    yield Input(placeholder=f"unique {et} slug", id="add-slug")
+                yield Label("Description:", classes="edit-label")
+                yield Input(placeholder="human-readable description", id="add-desc")
+                if et == "preset":
+                    yield Label("Device slug:", classes="edit-label")
+                    yield Input(placeholder="device slug", id="add-device")
+                    yield Label("Release slug:", classes="edit-label")
+                    yield Input(placeholder="release slug", id="add-release")
+                elif et == "device":
+                    yield Label("Vendor slug:", classes="edit-label")
+                    yield Input(placeholder="vendor slug", id="add-vendor")
+                    yield Label("SoC vendor slug:", classes="edit-label")
+                    yield Input(placeholder="soc vendor slug", id="add-soc-vendor")
+                with Horizontal(classes="modal-actions"):
+                    yield Button("✚ Add", variant="success", id="add-confirm")
+                    yield Button("Cancel", variant="default", id="add-cancel")
+
+        @on(Button.Pressed, "#add-confirm")
+        def on_confirm(self) -> None:
+            slug = self.query_one("#add-slug", Input).value.strip()
+            if not slug:
+                self.app.bell()
+                return
+            desc_widget = self.query_one("#add-desc", Input)
+            desc = desc_widget.value.strip() if desc_widget else ""
+            et = self._entity_type
+
+            from .models import BspPreset, Device, Feature, Release
+
+            try:
+                if et == "device":
+                    vendor = ""
+                    soc_vendor = ""
+                    try:
+                        vendor = self.query_one("#add-vendor", Input).value.strip()
+                        soc_vendor = self.query_one("#add-soc-vendor", Input).value.strip()
+                    except Exception:
+                        pass
+                    self._writer.add_device(Device(
+                        slug=slug, description=desc,
+                        vendor=vendor, soc_vendor=soc_vendor,
+                    ))
+                elif et == "release":
+                    self._writer.add_release(Release(slug=slug, description=desc))
+                elif et == "feature":
+                    self._writer.add_feature(Feature(slug=slug, description=desc))
+                elif et == "preset":
+                    device = ""
+                    release = None
+                    try:
+                        device = self.query_one("#add-device", Input).value.strip()
+                        release = self.query_one("#add-release", Input).value.strip() or None
+                    except Exception:
+                        pass
+                    self._writer.add_preset(BspPreset(
+                        name=slug, description=desc,
+                        device=device, release=release,
+                    ))
+                else:
+                    self.dismiss(None)
+                    return
+            except ValueError as exc:
+                self.app.notify(str(exc), severity="error")
+                return
+
+            try:
+                self._writer.save()
+            except Exception as exc:
+                self.app.notify(f"Save failed: {exc}", severity="error")
+                return
+
+            self.dismiss(True)
+
+        @on(Button.Pressed, "#add-cancel")
+        def on_cancel(self) -> None:
+            self.dismiss(None)
+
+    class RemoveConfirmModal(ModalScreen):
+        """Confirmation dialog shown before removing a registry entity.
+
+        Displays any dangling cross-references so the user can decide
+        whether to proceed.
+        """
+
+        def __init__(self, entity_type: str, slug_or_name: str, refs: List[str],
+                     writer) -> None:
+            super().__init__()
+            self._entity_type = entity_type
+            self._slug_or_name = slug_or_name
+            self._refs = refs
+            self._writer = writer
+
+        def compose(self) -> ComposeResult:
+            et = self._entity_type
+            sn = self._slug_or_name
+            with Vertical():
+                yield Label(f"Remove {et} '{sn}'?")
+                if self._refs:
+                    yield Label("[bold red]Warning – dangling references:[/bold red]")
+                    for ref in self._refs:
+                        yield Label(f"  • {ref}")
+                with Horizontal(classes="modal-actions"):
+                    yield Button("✗ Remove", variant="error", id="remove-confirm")
+                    yield Button("Cancel", variant="default", id="remove-cancel")
+
+        @on(Button.Pressed, "#remove-confirm")
+        def on_confirm(self) -> None:
+            et = self._entity_type
+            sn = self._slug_or_name
+            remover = {
+                "device": self._writer.remove_device,
+                "release": self._writer.remove_release,
+                "feature": self._writer.remove_feature,
+                "preset": self._writer.remove_preset,
+                "vendor": self._writer.remove_vendor,
+                "distro": self._writer.remove_distro,
+                "container": self._writer.remove_container,
+            }.get(et)
+            if remover is None:
+                self.dismiss(None)
+                return
+            try:
+                remover(sn)
+                self._writer.save()
+            except (KeyError, Exception) as exc:
+                self.app.notify(str(exc), severity="error")
+                self.dismiss(None)
+                return
+            self.dismiss(True)
+
+        @on(Button.Pressed, "#remove-cancel")
+        def on_cancel(self) -> None:
+            self.dismiss(None)
+
     class BspLauncherApp(App):
         """
         BSP Registry Explorer — interactive TUI for Advantech BSP management.
@@ -848,6 +1204,127 @@ if TEXTUAL_AVAILABLE:
             padding: 0 1;
             color: $text-muted;
         }
+
+        /* ── Edit panel (modal overlay) ──────────────────────── */
+        EditPanel {
+            align: center middle;
+        }
+
+        EditPanel > Vertical {
+            background: $surface;
+            border: thick $warning;
+            padding: 1 2;
+            width: 80;
+            max-height: 40;
+        }
+
+        EditPanel .edit-title {
+            color: $warning;
+            text-style: bold;
+            width: 100%;
+            text-align: center;
+            padding: 0 0 1 0;
+        }
+
+        EditPanel .edit-label {
+            color: $accent;
+            text-style: bold;
+            padding: 0 0 0 0;
+        }
+
+        EditPanel .edit-banner {
+            color: $error;
+            background: $error 20%;
+            padding: 0 1;
+            width: 100%;
+            height: auto;
+            display: none;
+        }
+
+        EditPanel .edit-banner.visible {
+            display: block;
+        }
+
+        EditPanel Input {
+            width: 100%;
+            margin: 0 0 1 0;
+        }
+
+        EditPanel TextArea {
+            width: 100%;
+            height: 6;
+            margin: 0 0 1 0;
+        }
+
+        EditPanel .edit-actions {
+            height: 3;
+            align: center middle;
+        }
+
+        EditPanel .edit-actions Button {
+            margin: 0 1;
+        }
+
+        /* ── Add/Remove modals ───────────────────────────────── */
+        AddEntityModal {
+            align: center middle;
+        }
+
+        AddEntityModal > Vertical {
+            background: $surface;
+            border: thick $success;
+            padding: 1 2;
+            width: 70;
+            height: auto;
+        }
+
+        AddEntityModal .modal-title {
+            color: $success;
+            text-style: bold;
+            width: 100%;
+            text-align: center;
+            padding: 0 0 1 0;
+        }
+
+        AddEntityModal Input {
+            width: 100%;
+            margin: 0 0 1 0;
+        }
+
+        AddEntityModal .modal-actions {
+            height: 3;
+            align: center middle;
+        }
+
+        AddEntityModal .modal-actions Button {
+            margin: 0 1;
+        }
+
+        RemoveConfirmModal {
+            align: center middle;
+        }
+
+        RemoveConfirmModal > Vertical {
+            background: $surface;
+            border: thick $error;
+            padding: 1 2;
+            width: 64;
+            height: auto;
+        }
+
+        RemoveConfirmModal Label {
+            width: 100%;
+            padding: 0 0 1 0;
+        }
+
+        RemoveConfirmModal .modal-actions {
+            height: 3;
+            align: center middle;
+        }
+
+        RemoveConfirmModal .modal-actions Button {
+            margin: 0 1;
+        }
         """
 
         BINDINGS = [
@@ -858,6 +1335,10 @@ if TEXTUAL_AVAILABLE:
             Binding("e", "export_config", "Export"),
             Binding("f", "flash", "Flash"),
             Binding("l", "toggle_log", "Log"),
+            Binding("ctrl+e", "toggle_edit", "Edit Registry", show=True),
+            Binding("a", "add_entity", "Add Entity", show=False),
+            Binding("d", "remove_entity", "Remove Entity", show=False),
+            Binding("ctrl+d", "show_diff", "Show Diff", show=False),
             Binding("c", "cancel", "Cancel", show=False),
             Binding("x", "cancel", "Cancel", show=False),
         ]
@@ -884,6 +1365,10 @@ if TEXTUAL_AVAILABLE:
             # Double-click tracking for build artifacts panel
             self._artifact_last_click_time: float = 0.0
             self._artifact_last_click_item: Optional[str] = None
+            # Registry writer for editing operations (lazily initialised)
+            self._registry_writer = None
+            # Resolved registry file path (set after successful load)
+            self._resolved_registry_path: Optional[str] = None
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -1001,6 +1486,7 @@ if TEXTUAL_AVAILABLE:
                 bsp_manager.initialize()
 
                 self._bsp_manager = bsp_manager
+                self._resolved_registry_path = registry_path
                 self.call_from_thread(self._populate_bsp_tree, registry_path)
 
             except SystemExit:
@@ -1558,6 +2044,139 @@ if TEXTUAL_AVAILABLE:
             for widget_id in ("#registry-bar", "#main-layout", "#action-bar"):
                 self.query_one(widget_id).display = expanded
             log_panel.toggle_class("log-fullscreen")
+
+        def action_toggle_edit(self) -> None:
+            """Open the edit panel for the currently selected BSP/entity (Ctrl+E)."""
+            if not self._resolved_registry_path:
+                self.notify("Registry not loaded yet", severity="warning")
+                return
+
+            # Lazily initialise the writer and load the registry file
+            if self._registry_writer is None:
+                from .registry_writer import RegistryWriter
+                writer = RegistryWriter()
+                try:
+                    writer.load(Path(self._resolved_registry_path))
+                except Exception as exc:
+                    self.notify(f"Cannot load registry for editing: {exc}", severity="error")
+                    return
+                self._registry_writer = writer
+
+            # Infer entity type from the selected tree node
+            entity_type, slug_or_name = self._infer_selected_entity()
+            if entity_type is None or slug_or_name is None:
+                self.notify(
+                    "Select a device, release, feature, or preset node in the tree first",
+                    severity="information",
+                )
+                return
+
+            def _on_edit_done(result) -> None:
+                if result is True:
+                    # Entity saved — reload registry and refresh tree
+                    self.action_refresh()
+                    self.notify("Changes saved successfully", severity="information")
+                elif result is False:
+                    # Undo applied — refresh display
+                    self.notify("Undo applied", severity="information")
+
+            self.push_screen(
+                EditPanel(entity_type, slug_or_name, self._registry_writer),
+                _on_edit_done,
+            )
+
+        def action_add_entity(self) -> None:
+            """Open the Add Entity dialog for the current tree context (key: a)."""
+            if not self._resolved_registry_path:
+                self.notify("Registry not loaded yet", severity="warning")
+                return
+
+            if self._registry_writer is None:
+                from .registry_writer import RegistryWriter
+                writer = RegistryWriter()
+                try:
+                    writer.load(Path(self._resolved_registry_path))
+                except Exception as exc:
+                    self.notify(f"Cannot load registry for editing: {exc}", severity="error")
+                    return
+                self._registry_writer = writer
+
+            entity_type, _ = self._infer_selected_entity()
+            if entity_type is None:
+                entity_type = "preset"  # default
+
+            def _on_add_done(result) -> None:
+                if result is True:
+                    self.action_refresh()
+                    self.notify(f"New {entity_type} added", severity="information")
+
+            self.push_screen(
+                AddEntityModal(entity_type, self._registry_writer),
+                _on_add_done,
+            )
+
+        def action_remove_entity(self) -> None:
+            """Open the Remove Confirm dialog for the selected entity (key: d)."""
+            if not self._resolved_registry_path:
+                self.notify("Registry not loaded yet", severity="warning")
+                return
+
+            entity_type, slug_or_name = self._infer_selected_entity()
+            if entity_type is None or slug_or_name is None:
+                self.notify("Select a leaf entity node to remove", severity="warning")
+                return
+
+            if self._registry_writer is None:
+                from .registry_writer import RegistryWriter
+                writer = RegistryWriter()
+                try:
+                    writer.load(Path(self._resolved_registry_path))
+                except Exception as exc:
+                    self.notify(f"Cannot load registry for editing: {exc}", severity="error")
+                    return
+                self._registry_writer = writer
+
+            refs = self._registry_writer.find_references(entity_type, slug_or_name)
+
+            def _on_remove_done(result) -> None:
+                if result is True:
+                    self.action_refresh()
+                    self.notify(f"Removed {entity_type} '{slug_or_name}'",
+                                severity="information")
+
+            self.push_screen(
+                RemoveConfirmModal(entity_type, slug_or_name, refs, self._registry_writer),
+                _on_remove_done,
+            )
+
+        def action_show_diff(self) -> None:
+            """Show the YAML diff between the in-memory registry and the on-disk file."""
+            if self._registry_writer is None:
+                self.notify("Open the editor first (Ctrl+E)", severity="information")
+                return
+            diff_text = self._registry_writer.diff()
+            if not diff_text:
+                self.notify("No unsaved changes", severity="information")
+                return
+            # Write diff to the log panel so the user can read it
+            self._log("─── Registry diff (in memory vs on disk) ───")
+            for line in diff_text.splitlines():
+                self._log(line)
+            self._log("─── End of diff ───")
+
+        def _infer_selected_entity(self) -> Tuple[Optional[str], Optional[str]]:
+            """Return ``(entity_type, slug_or_name)`` from the selected tree node.
+
+            Returns ``(None, None)`` when nothing useful is selected.
+            """
+            if not self._bsp_manager:
+                return None, None
+
+            # Use the selected BSP name if a preset leaf is selected
+            if self._selected_bsp_name:
+                return "preset", self._selected_bsp_name
+
+            return None, None
 
         def action_refresh(self) -> None:
             """Reload the BSP registry."""
