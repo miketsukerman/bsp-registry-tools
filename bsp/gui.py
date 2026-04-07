@@ -1791,9 +1791,19 @@ if TEXTUAL_AVAILABLE:
                     if show_progress:
                         self.call_from_thread(self._show_progress_row)
 
+                    _LOG_BATCH_SIZE = 20
+                    _LOG_BATCH_SECS = 0.05
+                    _log_batch: list[str] = []
+                    _batch_deadline = time.monotonic() + _LOG_BATCH_SECS
+
                     for line in proc.stdout:
                         stripped = line.rstrip()
-                        self.call_from_thread(self._log, stripped)
+                        _log_batch.append(stripped)
+                        _now = time.monotonic()
+                        if len(_log_batch) >= _LOG_BATCH_SIZE or _now >= _batch_deadline:
+                            self.call_from_thread(self._log_batch, _log_batch)
+                            _log_batch = []
+                            _batch_deadline = _now + _LOG_BATCH_SECS
                         if show_progress:
                             m = _RE_BUILD_TASK.search(stripped)
                             if m:
@@ -1813,6 +1823,10 @@ if TEXTUAL_AVAILABLE:
                         if log_fp is not None:
                             log_fp.write(line)
                             log_fp.flush()
+
+                    # Flush any remaining buffered lines
+                    if _log_batch:
+                        self.call_from_thread(self._log_batch, _log_batch)
 
                     proc.wait()
                     rc = proc.returncode
@@ -1896,6 +1910,15 @@ if TEXTUAL_AVAILABLE:
             # Strip Rich markup tags so plain text is appended
             plain = re.sub(r"\[/?[^\[\]]*\]", "", message)
             log_widget.insert(plain + "\n", location=log_widget.document.end)
+            log_widget.scroll_end(animate=False)
+
+        def _log_batch(self, lines: list) -> None:
+            """Append a batch of lines to the output log widget in one operation."""
+            if not lines:
+                return
+            log_widget = self.query_one("#output-log", CopyableTextArea)
+            text = "\n".join(re.sub(r"\[/?[^\[\]]*\]", "", ln) for ln in lines) + "\n"
+            log_widget.insert(text, location=log_widget.document.end)
             log_widget.scroll_end(animate=False)
 
         def _set_status(self, message: str) -> None:
