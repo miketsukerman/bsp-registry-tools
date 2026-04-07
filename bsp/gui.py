@@ -1745,6 +1745,7 @@ if TEXTUAL_AVAILABLE:
                         env=_env,
                     )
                     self._running_process = proc
+                    _build_start = datetime.datetime.now()
 
                     if show_progress:
                         self.call_from_thread(self._show_progress_row)
@@ -1776,8 +1777,16 @@ if TEXTUAL_AVAILABLE:
                     rc = proc.returncode
 
                     if rc == 0:
+                        _elapsed = datetime.datetime.now() - _build_start
+                        _h, _rem = divmod(int(_elapsed.total_seconds()), 3600)
+                        _m, _s = divmod(_rem, 60)
+                        _elapsed_str = (
+                            f"{_h}h {_m:02d}m {_s:02d}s" if _h
+                            else f"{_m}m {_s:02d}s" if _m
+                            else f"{_s}s"
+                        )
                         self.call_from_thread(
-                            self._log, "[green]Command finished successfully[/green]"
+                            self._log, f"[green]Command finished successfully[/green] [dim](elapsed: {_elapsed_str})[/dim]"
                         )
                         self.call_from_thread(self._set_status, "Done")
                         # Refresh artifacts pane in case the build produced new images
