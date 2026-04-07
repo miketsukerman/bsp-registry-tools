@@ -268,13 +268,22 @@ def main_web() -> int:
     TUI can be accessed from a browser via Textual's built-in web server.
 
     Accepts the same registry flags as ``bsp-explorer`` plus optional
-    ``--host`` / ``--port`` to control where the HTTP server listens.
+    ``--host`` / ``--port`` / ``--public-url`` to control where the HTTP
+    server listens and what URL the browser uses for WebSocket connections.
+
+    When ``--host`` is ``0.0.0.0`` (the default), ``textual serve`` would
+    embed ``ws://0.0.0.0:<port>/ws`` in the served page, which browsers
+    cannot connect to from a remote machine.  To prevent this, the public
+    URL is automatically derived from the system hostname when binding to
+    all interfaces.  Pass ``--public-url`` explicitly to override this
+    (e.g. when running behind a reverse proxy).
 
     Returns:
         Exit code (0 for success, non-zero for errors).  The function normally
         replaces the current process via :func:`os.execvp` and never returns.
     """
     import shlex
+    import socket
     from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
 
     parser = argparse.ArgumentParser(
@@ -321,6 +330,20 @@ def main_web() -> int:
         metavar="PORT",
         help="Port for the web server (default: 8000)",
     )
+    parser.add_argument(
+        "--public-url",
+        default=None,
+        dest="public_url",
+        metavar="URL",
+        help=(
+            "Public URL used by the browser for WebSocket connections "
+            "(e.g. http://myserver.example.com:8000). "
+            "Set this when running behind a reverse proxy or when the "
+            "auto-detected hostname is not reachable by clients. "
+            "Inferred from the system hostname when --host is not a "
+            "loopback address."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -335,12 +358,29 @@ def main_web() -> int:
     if args.no_update:
         bsp_cmd.append("--no-update")
 
+    # textual serve embeds --public-url as the WebSocket target in the served
+    # HTML page.  When the server binds to 0.0.0.0 (all interfaces), textual
+    # would otherwise generate ws://0.0.0.0:<port>/ws, which browsers cannot
+    # reach from a remote machine.  Detect the real hostname automatically in
+    # that case so remote browsers can connect.
+    _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+    public_url = args.public_url
+    if public_url is None and args.host not in _LOOPBACK_HOSTS:
+        hostname = socket.getfqdn()
+        public_url = (
+            f"http://{hostname}"
+            if args.port == 80
+            else f"http://{hostname}:{args.port}"
+        )
+
     textual_argv = [
         "textual", "serve",
         shlex.join(bsp_cmd),
         "--host", args.host,
         "--port", str(args.port),
     ]
+    if public_url is not None:
+        textual_argv += ["--public-url", public_url]
 
     os.execvp("textual", textual_argv)
     return 0  # unreachable
