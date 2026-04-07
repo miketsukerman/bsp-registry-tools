@@ -48,7 +48,7 @@ pip install .
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
-- *(optional)* [textual](https://textual.textualize.io/) >= 0.80.0 — required for `bsp-explorer` GUI
+- *(optional)* [textual](https://textual.textualize.io/) >= 8.0.0 — required for `bsp-explorer` GUI
 
 ## Quick Start
 
@@ -199,6 +199,9 @@ bsp-explorer
 # Or via the main CLI
 bsp gui
 bsp --gui
+
+# Serve the TUI in a browser (Textual web server)
+bsp-explorer-web
 ```
 
 ## GUI Launcher (`bsp-explorer`)
@@ -213,17 +216,19 @@ alternative to the CLI — similar in spirit to the
 
 | Feature | Description |
 |---------|-------------|
-| **BSP tree** | Vendor → Device → Release → BSP preset hierarchy with filter support |
+| **BSP tree** | Vendor → Device → Release → BSP preset hierarchy with filter/search support |
 | **BSP details** | Select a BSP to view its description, device, release, features, and build path |
 | **Build environment** | Shows the Docker container, named environment, and resolved variables |
 | **Build artifacts** | Automatically scans the Yocto deploy directory for `.wic` images and kernel images (`uImage`, `zImage`, `Image`, `fitImage`) — updated after each successful build |
-| **Build** | Opens a dialog to choose build options (clean, checkout-only), then streams output to the log (`b`) |
+| **Build** | Opens a dialog to choose build options (clean, checkout-only), then streams output to the log (`b`). Output is saved to a timestamped log file (`bsp-build-YYYYMMDD-HHMMSS.log`) in the build folder |
 | **Shell** | Exits the TUI and launches an interactive `bsp shell` session in the restored terminal (`s`) |
-| **Flash** | Selects a flash image and target block device, then writes the image to SD card or eMMC (`f`) |
+| **Flash** | Auto-discovers removable drives (USB, SD card, eMMC), selects a flash image, then writes it to the target device using `bmaptool` or `dd` (`f`) |
 | **Export** | Export KAS configuration and stream output to the log panel (`e`) |
+| **Cancel** | Terminates a running build (kills the entire process group) (`x`) |
 | **Refresh** | Reload the registry (pull latest from remote if applicable) (`r`) |
 | **Output log** | Real-time streaming of command output in a scrollable panel |
 | **Keyboard-first** | Full keyboard navigation; footer shows all available shortcuts |
+| **Registry info** | Top bar displays the active registry URL and branch |
 
 ### Launching options
 
@@ -239,6 +244,9 @@ bsp-explorer --remote https://github.com/my-org/bsp-registry.git --branch dev
 
 # Skip the remote update (faster, offline)
 bsp-explorer --no-update
+
+# Serve the TUI in a web browser (requires Textual's web extra)
+bsp-explorer-web
 ```
 
 ### CLI vs GUI comparison
@@ -259,12 +267,12 @@ bsp-explorer --no-update
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local] [--gui]
-           {gui,build,list,containers,tree,export,shell} ...
+           {gui,build,list,containers,tree,export,shell,flash} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {gui,build,list,containers,tree,export,shell}
+  {gui,build,list,containers,tree,export,shell,flash}
                         Command to execute
     gui                 Launch the interactive GUI launcher
     build               Build an image for BSP
@@ -273,6 +281,7 @@ positional arguments:
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
+    flash               Flash a build image to a block device (SD card / eMMC)
 
 options:
   -h, --help            show this help message and exit
@@ -422,6 +431,8 @@ bsp build poky-qemuarm64-scarthgap
 bsp build poky-qemuarm64-scarthgap --checkout
 ```
 
+When a build is triggered via the `bsp-explorer` GUI, the full output is saved to a timestamped log file inside the BSP's build directory (e.g. `build/poky-qemuarm64-scarthgap/bsp-build-20260406-205840.log`). Each build creates a new log file, so previous build logs are preserved.
+
 #### `shell` — Interactive shell in build environment
 
 ```bash
@@ -460,6 +471,29 @@ bsp export poky-qemuarm64-scarthgap
 
 # Save to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
+```
+
+#### `flash` — Flash a build image to a block device
+
+Writes the most recently built `.wic` (or `.img`) image from the BSP's deploy directory to an SD card or eMMC target. Uses `bmaptool` for efficient sparse writes when a `.bmap` sidecar is present, or falls back to `dd`.
+
+```bash
+bsp flash <bsp_name> --target <device> [--image <path>]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--target TARGET`, `-t TARGET` | Target block device (e.g. `/dev/sda`, `/dev/mmcblk0`) |
+| `--image IMAGE`, `-i IMAGE` | Path to the image file to flash (auto-selected from deploy dir if omitted) |
+
+**Examples:**
+
+```bash
+# Flash to USB drive (auto-selects the latest .wic image)
+bsp flash poky-qemuarm64-scarthgap --target /dev/sda
+
+# Flash a specific image file
+bsp flash poky-qemuarm64-scarthgap --target /dev/mmcblk0 --image path/to/image.wic
 ```
 
 ## Registry Configuration Reference
@@ -751,8 +785,8 @@ bsp-registry-tools/
 │   ├── __init__.py           # Public API exports
 │   ├── cli.py                # CLI entry point (bsp command)
 │   ├── cli_runner.py         # Module runner shim for GUI subprocesses
-│   ├── gui.py                # Interactive TUI launcher (bsp-explorer command)
-│   ├── bsp_manager.py        # Main BSP coordinator
+│   ├── gui.py                # Interactive TUI launcher (bsp-explorer / bsp-explorer-web commands)
+│   ├── bsp_manager.py        # Main BSP coordinator (build, shell, flash, export)
 │   ├── registry_fetcher.py   # Remote registry clone/update
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
@@ -767,7 +801,8 @@ bsp-registry-tools/
 ├── docs/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
-│   └── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   └── screenshots/          # TUI screenshots
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
@@ -821,7 +856,7 @@ python -m build
 
 | Class | Description |
 |-------|-------------|
-| `BspManager` | Main coordinator for BSP operations |
+| `BspManager` | Main coordinator for BSP operations (build, shell, export, flash) |
 | `KasManager` | Handles KAS build system operations |
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
