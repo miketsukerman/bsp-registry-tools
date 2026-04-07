@@ -236,13 +236,15 @@ bsp --gui
 bsp-explorer-web
 ```
 
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
 ## GUI Launcher (`bsp-explorer`)
 
 `bsp-explorer` is a Terminal User Interface (TUI) that provides a visual, interactive
 alternative to the CLI — similar in spirit to the
 [Advantech BSP Launcher](https://docs.aim-linux.advantech.com/docs/utility/bsplauncher/).
 
-![BSP Registry Explorer TUI](docs/screenshots/bsp-explorer-tui.svg)
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
 
 ### Features
 
