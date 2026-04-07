@@ -18,6 +18,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🚀 **Interactive TUI launcher** (`bsp-explorer`) — visual alternative to the CLI
+- ✏️ **Registry editing** — add, update, and remove devices/releases/features/presets via CLI (`bsp registry`) or the TUI Edit Panel
 
 ## Installation
 
@@ -46,6 +47,7 @@ pip install .
 - Python 3.8+
 - [PyYAML](https://pyyaml.org/) >= 6.0
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
+- [ruamel.yaml](https://pypi.org/project/ruamel.yaml/) >= 0.18.0 — used by the registry write layer
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
 - *(optional)* [textual](https://textual.textualize.io/) >= 8.0.0 — required for `bsp-explorer` GUI
@@ -232,6 +234,7 @@ alternative to the CLI — similar in spirit to the
 | **Shell** | Exits the TUI and launches an interactive `bsp shell` session in the restored terminal (`s`) |
 | **Flash** | Auto-discovers removable drives (USB, SD card, eMMC), selects a flash image, then writes it to the target device using `bmaptool` or `dd` (`f`) |
 | **Export** | Export KAS configuration and stream output to the log panel (`e`) |
+| **Edit registry** | Press **Ctrl+E** to open the Edit Panel modal for the selected preset; **`a`** adds a new entity; **`d`** removes with reference-check; **Ctrl+D** shows the diff |
 | **Cancel** | Terminates a running build (kills the entire process group) (`x`) |
 | **Refresh** | Reload the registry (pull latest from remote if applicable) (`r`) |
 | **Output log** | Real-time streaming of command output in a scrollable panel |
@@ -261,6 +264,10 @@ bsp-explorer-web
 
 ![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
 
+**Registry Edit Panel** (Ctrl+E):
+
+![Registry Edit Panel](docs/screenshots/registry-edit-tui.svg)
+
 **TUI in browser** (`bsp-explorer-web`):
 
 ![BSP Registry Explorer Web](docs/screenshots/bsp-explorer-web.svg)
@@ -274,6 +281,9 @@ bsp-explorer-web
 | Shell access | `bsp shell <name>` | Shows equivalent CLI command |
 | Export config | `bsp export <name>` | Select row → press `e` |
 | List containers | `bsp containers` | Press `c` |
+| **Edit registry** | `bsp registry add/edit/remove/show` | Ctrl+E, `a`, `d` |
+| **Validate registry** | `bsp registry validate` | Inline error banner in Edit Panel |
+| **Show diff** | `bsp registry diff` | Ctrl+D → log panel |
 | Real-time output | stdout/stderr | Integrated scrollable log panel |
 | Scriptable / CI | ✅ Yes | ❌ Requires a terminal |
 
@@ -283,12 +293,12 @@ bsp-explorer-web
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local] [--gui]
-           {gui,build,list,containers,tree,export,shell,flash} ...
+           {gui,build,list,containers,tree,export,shell,flash,registry} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {gui,build,list,containers,tree,export,shell,flash}
+  {gui,build,list,containers,tree,export,shell,flash,registry}
                         Command to execute
     gui                 Launch the interactive GUI launcher
     build               Build an image for BSP
@@ -298,6 +308,7 @@ positional arguments:
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
     flash               Flash a build image to a block device (SD card / eMMC)
+    registry            Edit the BSP registry (add/remove/update entities)
 
 options:
   -h, --help            show this help message and exit
@@ -510,6 +521,50 @@ bsp flash poky-qemuarm64-scarthgap --target /dev/sda
 
 # Flash a specific image file
 bsp flash poky-qemuarm64-scarthgap --target /dev/mmcblk0 --image path/to/image.wic
+```
+
+#### `registry` — Edit the BSP registry
+
+Create, validate, and update registry entries without manually editing YAML.
+See [docs/registry-editing.md](docs/registry-editing.md) for the full
+reference.
+
+```
+bsp registry <action> [<entity>] [options]
+```
+
+| Action | Description |
+|--------|-------------|
+| `init` | Create a minimal `bsp-registry.yaml` skeleton |
+| `validate` | Check for errors and warnings; exit non-zero on errors |
+| `diff` | Show what changed vs the on-disk (or last-committed) file |
+| `add <entity>` | Add a new device / release / feature / preset / vendor / distro / container |
+| `edit <entity> <slug>` | Update specific fields; `--editor` opens `$EDITOR` |
+| `remove <entity> <slug>` | Remove an entry (checks for dangling references; `--force` skips confirm) |
+| `show <entity> <slug>` | Pretty-print a single entity's YAML block |
+
+**Quick examples:**
+
+```bash
+# Initialise a new registry
+bsp registry init
+
+# Validate the current registry
+bsp registry validate
+
+# Add a hardware device
+bsp registry add device --slug myboard --vendor acme --soc-vendor nxp \
+  --description "My Custom Board"
+
+# Update a preset description
+bsp registry edit preset myboard-scarthgap \
+  --description "Updated description"
+
+# Remove a device (with reference check)
+bsp registry remove device myboard
+
+# Show a preset as YAML
+bsp registry show preset myboard-scarthgap
 ```
 
 ## Registry Configuration Reference
@@ -729,7 +784,7 @@ local_conf_header:
 You can also use `bsp-registry-tools` as a Python library:
 
 ```python
-from bsp import BspManager, EnvironmentManager, KasManager, RegistryFetcher
+from bsp import BspManager, EnvironmentManager, KasManager, RegistryFetcher, RegistryWriter
 
 # Fetch registry from remote (clone on first call, pull on subsequent)
 fetcher = RegistryFetcher()
@@ -804,6 +859,7 @@ bsp-registry-tools/
 │   ├── gui.py                # Interactive TUI launcher (bsp-explorer / bsp-explorer-web commands)
 │   ├── bsp_manager.py        # Main BSP coordinator (build, shell, flash, export)
 │   ├── registry_fetcher.py   # Remote registry clone/update
+│   ├── registry_writer.py    # Registry write layer (CRUD, validation, undo, diff, atomic save)
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
@@ -818,12 +874,14 @@ bsp-registry-tools/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
-│   └── screenshots/          # TUI and web screenshots (bsp-launcher-tui.svg, bsp-explorer-web.svg)
+│   ├── registry-editing.md   # Registry editing CLI + TUI reference
+│   └── screenshots/          # TUI and web screenshots (SVGs)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
 │   ├── test_cli.py
 │   ├── test_registry_fetcher.py
+│   ├── test_registry_writer.py
 │   └── ...
 ├── examples/
 │   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
@@ -877,6 +935,7 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `RegistryWriter` | Read-write layer for the registry YAML (CRUD, validation, undo, diff, atomic save) |
 
 ### Data Classes
 
@@ -903,6 +962,12 @@ python -m build
 | `BuildError` | Build process failures |
 | `DockerError` | Docker operation failures |
 | `KasError` | KAS operation failures |
+
+### Validation
+
+| Class | Description |
+|-------|-------------|
+| `ValidationIssue` | Structured validation result returned by `RegistryWriter.validate()` — has `level` (`"error"` / `"warning"`) and `message` fields |
 
 ## License
 
