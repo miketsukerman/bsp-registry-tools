@@ -719,7 +719,11 @@ class RegistryWriter:
             data["containers"] = convert_containers_list_to_dict(data["containers"])
 
         cfg = dacite.Config(strict=False)
-        self._root = dacite.from_dict(data_class=RegistryRoot, data=data, config=cfg)
+        try:
+            self._root = dacite.from_dict(data_class=RegistryRoot, data=data, config=cfg)
+        except Exception as exc:
+            logger.warning("RegistryWriter.undo: failed to restore snapshot: %s", exc)
+            return False
         return True
 
     # ------------------------------------------------------------------

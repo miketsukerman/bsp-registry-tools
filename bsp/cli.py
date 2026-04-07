@@ -829,7 +829,7 @@ def _dispatch_registry(args: argparse.Namespace, registry_path: str) -> int:
                 obj = Docker(
                     image=args.image,
                     file=args.dockerfile,
-                    privileged=bool(args.privileged),
+                    privileged=args.privileged or False,
                 )
                 writer.add_container(args.container_name, obj)
 
@@ -1173,7 +1173,14 @@ def _open_in_editor(writer, entity: str, slug_or_name: str, registry_path: str) 
         return 1
 
     # new_data is {slug_or_name: {field: value, ...}}
-    fields_dict = new_data.get(slug_or_name, new_data)
+    # Require the key to be present; do not silently use the whole document.
+    if slug_or_name not in new_data:
+        print(
+            f"Unexpected YAML structure: expected top-level key '{slug_or_name}'. "
+            "Discarding changes."
+        )
+        return 1
+    fields_dict = new_data[slug_or_name]
     if not isinstance(fields_dict, dict):
         print("Unexpected YAML structure; discarding changes.")
         return 1
