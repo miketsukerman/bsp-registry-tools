@@ -380,7 +380,7 @@ def main_web() -> int:
         "--port", str(args.port),
     ]
     if public_url is not None:
-        textual_argv += ["--public-url", public_url]
+        textual_argv += ["--url", public_url]
 
     os.execvp("textual", textual_argv)
     return 0  # unreachable
