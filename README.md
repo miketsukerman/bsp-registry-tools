@@ -204,7 +204,13 @@ bsp --gui
 bsp-explorer-web
 ```
 
+**Terminal** (`bsp-explorer`):
+
 ![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
+**Browser** (`bsp-explorer-web`):
+
+![BSP Registry Explorer Web](docs/screenshots/bsp-explorer-web.svg)
 
 ## GUI Launcher (`bsp-explorer`)
 
@@ -250,6 +256,14 @@ bsp-explorer --no-update
 # Serve the TUI in a web browser (requires Textual's web extra)
 bsp-explorer-web
 ```
+
+**TUI in terminal** (`bsp-explorer`):
+
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
+**TUI in browser** (`bsp-explorer-web`):
+
+![BSP Registry Explorer Web](docs/screenshots/bsp-explorer-web.svg)
 
 ### CLI vs GUI comparison
 
@@ -804,7 +818,7 @@ bsp-registry-tools/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
-│   └── screenshots/          # TUI screenshots
+│   └── screenshots/          # TUI and web screenshots (bsp-launcher-tui.svg, bsp-explorer-web.svg)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
