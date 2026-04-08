@@ -886,8 +886,8 @@ lava:
 ### `deploy` (optional)
 
 Global cloud deployment configuration applied to all builds.  An individual
-`BspPreset` can also include a `deploy:` block that overrides the global one for
-that preset specifically.
+`BspPreset` can also include a `deploy:` block that overrides specific settings
+for that preset (see [Per-preset override](#per-preset-deploy-override) below).
 
 ```yaml
 deploy:
@@ -918,6 +918,48 @@ deploy:
 | `{vendor}` | Device vendor slug |
 | `{date}` | Build date in `YYYY-MM-DD` format |
 | `{datetime}` | Build datetime in `YYYYMMDD-HHMMSS` format |
+
+#### Per-preset deploy override
+
+Add a `deploy:` block directly on a `BspPreset` to override specific global
+deploy settings for that preset.  Only fields that differ from their default
+values override the global config; other fields keep the global value.
+CLI flags (`--provider`, `--container`, …) are applied last.
+
+```yaml
+deploy:                               # global: Azure, shared container
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: qemuarm64-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+
+    # Overrides only container and prefix; provider/account_url come from global.
+    - name: imx8mp-adv-scarthgap-release
+      device: imx8mp-adv
+      release: scarthgap
+      features: []
+      deploy:
+        container: imx8mp-release-artifacts         # ← override
+        prefix: "release/{device}/{release}/{date}" # ← override
+        patterns:
+          - "**/*.wic.gz"                           # ← override
+
+    # Switches to AWS entirely for this preset.
+    - name: aws-build-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      deploy:
+        provider: aws                 # ← override: switch provider
+        container: my-s3-bucket       # ← override: bucket name
+```
 
 See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
 

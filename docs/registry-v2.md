@@ -1467,23 +1467,63 @@ deploy:
 
 ### Preset-level `deploy` override
 
-A `BspPreset` can include its own `deploy:` block.  It merges on top of the
-global `deploy:` block (CLI overrides are applied last):
+A `BspPreset` can include its own `deploy:` block to override specific global
+deploy settings for that preset.
+
+**Merge order** (later entries win over earlier ones):
+
+1. **Global `deploy:`** from the root of the registry (baseline defaults)
+2. **Preset `deploy:`** — only fields that differ from their `DeployConfig`
+   defaults are applied.  Omitting a field keeps the global value.
+3. **CLI flags** (`--provider`, `--container`, `--prefix`, etc.) — highest
+   priority, applied last.
+
+This means a minimal preset `deploy:` block only needs to list the fields it
+wants to change:
 
 ```yaml
+deploy:                               # global defaults (applied to every build)
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+  prefix: "{vendor}/{device}/{release}/{date}"
+
 registry:
   bsp:
+    # This preset uses the default Azure container / prefix from global config.
+    - name: qemuarm64-scarthgap
+      description: "QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      features: []
+
+    # This preset overrides only the container and prefix for a release build.
+    # All other global settings (provider, account_url, patterns, …) are kept.
     - name: imx8mp-adv-scarthgap-release
       description: "Advantech i.MX8MP Scarthgap – release artefacts"
       device: imx8mp-adv
       release: scarthgap
       features: []
-      deploy:                       # overrides global deploy config for this preset
-        container: imx8mp-release-artifacts
-        prefix: "release/{device}/{release}/{date}"
-        patterns:
+      deploy:
+        container: imx8mp-release-artifacts           # override: different container
+        prefix: "release/{device}/{release}/{date}"   # override: different prefix
+        patterns:                                     # override: only compressed images
           - "**/*.wic.gz"
+
+    # This preset switches to AWS entirely, overriding provider and bucket.
+    - name: aws-build-scarthgap
+      description: "Build targeting AWS S3"
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      deploy:
+        provider: aws                 # override: switch to AWS (ignores account_url)
+        container: my-s3-bucket       # override: AWS bucket name
 ```
+
+> **`BspPreset.deploy` fields**: accepts the same fields as the global `deploy:`
+> block (see [field reference](#deploy-fields) above).  Any field not mentioned
+> in the preset's `deploy:` block keeps the value from the global `deploy:` config.
 
 ### Authentication
 

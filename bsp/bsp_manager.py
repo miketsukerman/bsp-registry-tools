@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
-from dataclasses import replace
+from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -977,6 +977,7 @@ class BspManager:
         checkout_only: bool = False,
         label: str = "",
         deploy_after_build: bool = False,
+        preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
     ) -> None:
         """
@@ -987,6 +988,8 @@ class BspManager:
             checkout_only: If True, only checkout and validate without building
             label: Descriptive label for log messages
             deploy_after_build: If True, deploy artifacts after a successful build
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
             deploy_overrides: CLI-level overrides for the deploy configuration
         """
         action = "Checking out" if checkout_only else "Building"
@@ -1027,7 +1030,11 @@ class BspManager:
                 kas_mgr.build_project()
                 logging.info(f"Build completed successfully!")
                 if deploy_after_build:
-                    self._deploy_resolved(resolved, deploy_overrides=deploy_overrides or {})
+                    self._deploy_resolved(
+                        resolved,
+                        preset=preset,
+                        deploy_overrides=deploy_overrides or {},
+                    )
         finally:
             self._cleanup_temp_kas_file()
 
@@ -1057,6 +1064,7 @@ class BspManager:
             checkout_only=checkout_only,
             label=f"{preset.name} - {preset.description}",
             deploy_after_build=deploy_after_build,
+            preset=preset,
             deploy_overrides=deploy_overrides,
         )
 
@@ -1552,6 +1560,7 @@ class BspManager:
     def _resolve_deploy_config(
         self,
         resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
     ) -> DeployConfig:
         """
@@ -1559,7 +1568,10 @@ class BspManager:
 
         Merge order (later entries override earlier ones):
         1. Root-level ``deploy`` from the registry (global defaults)
-        2. Preset-level ``deploy`` (if the preset defines one)
+        2. Preset-level ``deploy`` (if the preset defines one) — only fields
+           that differ from the ``DeployConfig`` defaults are applied, so a
+           minimal preset block only needs to specify the fields it wants to
+           override.
         3. CLI-supplied *deploy_overrides* dict
 
         If no deploy config is defined anywhere a default ``DeployConfig``
@@ -1567,6 +1579,8 @@ class BspManager:
 
         Args:
             resolved: Resolved build configuration.
+            preset: Optional BSP preset whose ``deploy`` block (if any) is
+                    merged on top of the root-level config.
             deploy_overrides: Dict of field overrides from the CLI.
 
         Returns:
@@ -1579,6 +1593,18 @@ class BspManager:
         if base.account_url:
             base = replace(base, account_url=_expand_env(base.account_url))
 
+        # Apply preset-level deploy overrides (only fields that differ from defaults)
+        if preset is not None and preset.deploy is not None:
+            preset_deploy = preset.deploy
+            defaults = DeployConfig()
+            preset_overrides = {
+                f.name: getattr(preset_deploy, f.name)
+                for f in dataclass_fields(preset_deploy)
+                if getattr(preset_deploy, f.name) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
         # Apply CLI overrides
         if deploy_overrides:
             base = replace(base, **{k: v for k, v in deploy_overrides.items() if v is not None})
@@ -1588,6 +1614,7 @@ class BspManager:
     def _deploy_resolved(
         self,
         resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
     ) -> DeployResult:
@@ -1597,13 +1624,15 @@ class BspManager:
         Args:
             resolved: Resolved build configuration containing build path and
                       device/release/distro metadata.
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
             deploy_overrides: CLI-level overrides for the deploy configuration.
             dry_run: When True log what would be uploaded without uploading.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact.
         """
-        deploy_cfg = self._resolve_deploy_config(resolved, deploy_overrides)
+        deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
 
         if dry_run:
             deploy_cfg = DeployConfig(**{**deploy_cfg.__dict__, "provider": deploy_cfg.provider})
@@ -1685,8 +1714,8 @@ class BspManager:
             SystemExit: If preset not found or deployment fails.
         """
         logging.info("Deploying artifacts for BSP preset: %s", bsp_name)
-        resolved, _preset = self.resolver.resolve_preset(bsp_name)
-        return self._deploy_resolved(resolved, deploy_overrides=deploy_overrides, dry_run=dry_run)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        return self._deploy_resolved(resolved, preset=preset, deploy_overrides=deploy_overrides, dry_run=dry_run)
 
     def deploy_by_components(
         self,

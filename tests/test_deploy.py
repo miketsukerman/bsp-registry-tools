@@ -797,6 +797,114 @@ registry:
         assert cfg.container == "cli-c"
         assert cfg.provider == "azure"  # not overridden
 
+    def _make_manager_with_preset_deploy(self, tmp_path, global_cfg=None, preset_cfg=None):
+        """Create a BspManager with optional global and per-preset deploy configs."""
+        from bsp.bsp_manager import BspManager
+
+        global_deploy_block = ""
+        if global_cfg:
+            lines = [f"  {k}: {v}" for k, v in global_cfg.items()]
+            global_deploy_block = "deploy:\n" + "\n".join(lines) + "\n"
+
+        preset_deploy_block = ""
+        if preset_cfg:
+            lines = [f"        {k}: {v}" for k, v in preset_cfg.items()]
+            preset_deploy_block = "      deploy:\n" + "\n".join(lines) + "\n"
+
+        yaml_content = f"""
+specification:
+  version: "2.0"
+
+{global_deploy_block}
+registry:
+  devices:
+    - slug: my-device
+      description: "Test Device"
+      vendor: acme
+      soc_vendor: arm
+      includes: []
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap"
+      includes: []
+  features: []
+  bsp:
+    - name: my-preset
+      description: "My Preset"
+      device: my-device
+      release: scarthgap
+{preset_deploy_block}
+"""
+        registry_file = tmp_path / "bsp-registry.yaml"
+        registry_file.write_text(yaml_content)
+
+        mgr = BspManager(str(registry_file))
+        mgr.load_configuration()
+        from bsp.resolver import V2Resolver
+        mgr.resolver = V2Resolver(mgr.model, mgr.containers)
+        return mgr
+
+    def test_resolve_deploy_config_preset_overrides_global(self, tmp_path):
+        """Preset-level deploy config should override the global deploy config."""
+        mgr = self._make_manager_with_preset_deploy(
+            tmp_path,
+            global_cfg={"provider": "azure", "container": "global-c"},
+            preset_cfg={"container": "preset-c"},
+        )
+        resolved, preset = mgr.resolver.resolve_preset("my-preset")
+        cfg = mgr._resolve_deploy_config(resolved, preset=preset)
+        assert cfg.container == "preset-c"   # overridden by preset
+        assert cfg.provider == "azure"        # kept from global
+
+    def test_resolve_deploy_config_preset_overrides_provider(self, tmp_path):
+        """Preset-level deploy config can switch provider from azure to aws."""
+        mgr = self._make_manager_with_preset_deploy(
+            tmp_path,
+            global_cfg={"provider": "azure", "container": "global-c"},
+            preset_cfg={"provider": "aws", "container": "preset-bucket"},
+        )
+        resolved, preset = mgr.resolver.resolve_preset("my-preset")
+        cfg = mgr._resolve_deploy_config(resolved, preset=preset)
+        assert cfg.provider == "aws"
+        assert cfg.container == "preset-bucket"
+
+    def test_resolve_deploy_config_cli_overrides_preset_and_global(self, tmp_path):
+        """CLI overrides should take precedence over both preset and global config."""
+        mgr = self._make_manager_with_preset_deploy(
+            tmp_path,
+            global_cfg={"provider": "azure", "container": "global-c"},
+            preset_cfg={"container": "preset-c"},
+        )
+        resolved, preset = mgr.resolver.resolve_preset("my-preset")
+        cfg = mgr._resolve_deploy_config(
+            resolved, preset=preset, deploy_overrides={"container": "cli-c"}
+        )
+        assert cfg.container == "cli-c"
+
+    def test_resolve_deploy_config_no_preset_deploy(self, tmp_path):
+        """When the preset has no deploy block, the global config is used unchanged."""
+        mgr = self._make_manager_with_preset_deploy(
+            tmp_path,
+            global_cfg={"provider": "azure", "container": "global-c"},
+            preset_cfg=None,
+        )
+        resolved, preset = mgr.resolver.resolve_preset("my-preset")
+        cfg = mgr._resolve_deploy_config(resolved, preset=preset)
+        assert cfg.container == "global-c"
+        assert cfg.provider == "azure"
+
+    def test_resolve_deploy_config_preset_only_no_global(self, tmp_path):
+        """When there's no global deploy config, preset-level deploy config is used."""
+        mgr = self._make_manager_with_preset_deploy(
+            tmp_path,
+            global_cfg=None,
+            preset_cfg={"provider": "aws", "container": "preset-bucket"},
+        )
+        resolved, preset = mgr.resolver.resolve_preset("my-preset")
+        cfg = mgr._resolve_deploy_config(resolved, preset=preset)
+        assert cfg.provider == "aws"
+        assert cfg.container == "preset-bucket"
+
 
 # =============================================================================
 # CloudStorageBackend.upload_directory tests
