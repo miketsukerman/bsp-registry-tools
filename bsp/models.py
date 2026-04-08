@@ -651,6 +651,7 @@ class BspPreset:
     targets: List[str] = field(default_factory=empty_list)
     build: Optional[BspBuild] = None
     testing: Optional[TestingConfig] = None
+    deploy: Optional["DeployConfig"] = None
 
 
 @dataclass
@@ -680,6 +681,67 @@ class Registry:
 
 
 @dataclass
+class DeployConfig:
+    """
+    Cloud storage deployment configuration for build artifacts.
+
+    A ``DeployConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        provider: Storage provider.  Supported values: ``"azure"`` (default),
+                  ``"aws"``.
+        container: Azure Blob Storage container name *or* AWS S3 bucket name.
+                   For AWS you may alternatively use ``bucket``.
+        bucket: Alias for ``container`` used with the ``"aws"`` provider.
+                If both are supplied ``container`` takes precedence.
+        account_url: Azure storage account URL (e.g.
+                     ``https://<account>.blob.core.windows.net``).  Supports
+                     ``$ENV{VAR}`` expansion.  Ignored for the ``"aws"``
+                     provider.
+        prefix: Path prefix template inside the storage container / bucket.
+                Supports ``{device}``, ``{release}``, ``{distro}``,
+                ``{vendor}``, ``{date}`` and ``{datetime}`` placeholders.
+                Default: ``"{vendor}/{device}/{release}/{date}"``.
+        patterns: Glob patterns (relative to each artifact directory) that
+                  select files to upload.  Default covers the most common
+                  Yocto image formats.
+        artifact_dirs: Subdirectories under the build output path to search
+                       for artifacts.  Default: images and sdk deploy dirs.
+        include_manifest: When ``True`` (default), a JSON manifest listing
+                          all uploaded artifacts (names, sizes, SHA-256
+                          checksums, build metadata) is uploaded alongside
+                          the artifacts.
+        region: AWS region override (``"aws"`` provider only).
+        profile: AWS credential profile name (``"aws"`` provider only).
+    """
+    provider: str = "azure"
+    container: Optional[str] = None
+    bucket: Optional[str] = None
+    account_url: Optional[str] = None
+    prefix: Optional[str] = None
+    patterns: List[str] = field(default_factory=lambda: [
+        "**/*.wic",
+        "**/*.wic.gz",
+        "**/*.wic.bz2",
+        "**/*.wic.xz",
+        "**/*.tar.gz",
+        "**/*.tar.bz2",
+        "**/*.ext4",
+        "**/*.sdimg",
+        "**/*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+        "tmp/deploy/sdk",
+    ])
+    include_manifest: bool = True
+    region: Optional[str] = None
+    profile: Optional[str] = None
+
+
+@dataclass
 class RegistryRoot:
     """
     Root container for the v2.0 registry configuration.
@@ -699,6 +761,8 @@ class RegistryRoot:
         lava: Optional top-level LAVA server connection settings shared across
               all presets in this registry.  Individual preset ``testing.lava``
               blocks inherit these settings and can override them on the CLI.
+        deploy: Optional global deployment configuration.  Applied to all
+                builds unless overridden by a preset-level ``deploy`` block.
     """
     specification: Specification
     registry: Registry
@@ -706,3 +770,4 @@ class RegistryRoot:
     environment: Optional[GlobalEnvironment] = None
     environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
     lava: Optional[LavaServerConfig] = None
+    deploy: Optional[DeployConfig] = None
