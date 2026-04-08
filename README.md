@@ -349,7 +349,7 @@ bsp build poky-qemuarm64-scarthgap
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
 
-# Build and free disk space afterwards: removes tmp/work/ etc., keeps tmp/deploy/ and tmp/log/
+# Clean before building to free disk space; removes tmp/work/ etc., keeps tmp/deploy/ and tmp/log/
 bsp build poky-qemuarm64-scarthgap --clean
 
 # Build by device + release (with optional features)

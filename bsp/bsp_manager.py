@@ -786,10 +786,10 @@ class BspManager:
         if not build_path:
             return
 
-        tmp_dir = Path(build_path)
-        if not tmp_dir.is_absolute():
-            tmp_dir = (self.config_path.parent / tmp_dir).resolve()
-        tmp_dir = tmp_dir / "tmp"
+        build_dir = Path(build_path)
+        if not build_dir.is_absolute():
+            build_dir = (self.config_path.parent / build_dir).resolve()
+        tmp_dir = build_dir / "tmp"
 
         if not tmp_dir.exists():
             logging.info(f"Clean: tmp directory does not exist, nothing to remove: {tmp_dir}")
