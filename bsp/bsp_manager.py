@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -1339,16 +1340,11 @@ class BspManager:
 
         # Expand $ENV{VAR} in account_url if present
         if base.account_url:
-            base = DeployConfig(**{
-                **base.__dict__,
-                "account_url": _expand_env(base.account_url),
-            })
+            base = replace(base, account_url=_expand_env(base.account_url))
 
         # Apply CLI overrides
         if deploy_overrides:
-            merged = {k: v for k, v in base.__dict__.items()}
-            merged.update({k: v for k, v in deploy_overrides.items() if v is not None})
-            base = DeployConfig(**merged)
+            base = replace(base, **{k: v for k, v in deploy_overrides.items() if v is not None})
 
         return base
 
