@@ -1071,7 +1071,8 @@ class BspManager:
             print(f"  {passed}/{total} preset(s) succeeded.")
             sys.exit(min(len(failed), 125))
         else:
-            print(f"\n✓ All {total} preset(s) {action.lower()}d successfully.")
+            past_tense = "checked out" if checkout_only else "built"
+            print(f"\n✓ All {total} preset(s) {past_tense} successfully.")
 
     def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
         """
