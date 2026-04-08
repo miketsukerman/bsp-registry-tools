@@ -18,6 +18,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
+- ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 
 ## Installation
 
@@ -44,6 +45,21 @@ pip install .
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
 - [requests](https://requests.readthedocs.io/) >= 2.28.0 *(for LAVA HIL test integration)*
 - [Jinja2](https://jinja.palletsprojects.com/) >= 3.1.0 *(for LAVA job template rendering)*
+
+#### Optional extras for cloud deployment
+
+Cloud SDK dependencies are optional and only needed if you use `bsp deploy`:
+
+```bash
+# Azure Blob Storage support
+pip install "bsp-registry-tools[azure]"
+
+# AWS S3 support
+pip install "bsp-registry-tools[aws]"
+
+# Both providers
+pip install "bsp-registry-tools[deploy]"
+```
 
 ## Quick Start
 
@@ -199,11 +215,13 @@ usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
            {build,list,containers,tree,export,shell,test} ...
+           {build,list,containers,tree,export,shell,deploy} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
   {build,list,containers,tree,export,shell,test}
+  {build,list,containers,tree,export,shell,deploy}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs
@@ -212,6 +230,7 @@ positional arguments:
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
     test                Submit a LAVA HIL test job for a BSP
+    deploy              Deploy build artifacts to cloud storage
 
 options:
   -h, --help            show this help message and exit
@@ -344,6 +363,7 @@ BSP Registry
 ```bash
 bsp build <bsp_name> [--clean] [--checkout] [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
 bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--test ...]
+bsp build <bsp_name> [--clean] [--checkout] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 ```
 
 | Option | Description |
@@ -355,6 +375,10 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--lava-server URL` | LAVA server base URL override (overrides registry `lava.server`) |
 | `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
+| `--deploy` | Deploy artifacts to cloud storage after a successful build |
+| `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
+| `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
+| `--deploy-prefix PREFIX` | Remote path prefix template (overrides registry config) |
 
 **Examples:**
 
@@ -373,6 +397,11 @@ bsp build poky-qemuarm64-scarthgap --test --wait \
   --lava-server https://lava.ci.example.com \
   --lava-token $LAVA_TOKEN \
   --artifact-url http://files.example.com/builds
+# Build and deploy artifacts to Azure automatically
+bsp build poky-qemuarm64-scarthgap --deploy
+
+# Build and deploy to a specific AWS bucket
+bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-container my-s3-bucket
 ```
 
 #### `shell` — Interactive shell in build environment
@@ -423,6 +452,14 @@ Submits a LAVA job for hardware-in-the-loop testing.  By default the job is subm
 ```bash
 bsp test <bsp_name> [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]
 bsp test --device <device> --release <release> [--feature FEATURE...] [--wait] ...
+#### `deploy` — Upload build artifacts to cloud storage
+
+Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
+to Azure Blob Storage or AWS S3.
+
+```bash
+bsp deploy <bsp_name> [OPTIONS]
+bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 ```
 
 | Option | Description |
@@ -431,6 +468,11 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--wait] .
 | `--lava-server URL` | LAVA server base URL (overrides registry `lava.server`) |
 | `--lava-token TOKEN` | LAVA API authentication token (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where built image artifacts are accessible to the LAVA lab |
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
+| `--dry-run` | List what would be uploaded without uploading (no credentials required) |
 
 **Examples:**
 
@@ -611,6 +653,33 @@ job_id = client.submit_job(job_yaml_string)
 health = client.wait_for_job(job_id, timeout=3600, poll_interval=30)
 suites: list[LavaTestSuite] = client.get_job_results(job_id)
 ```
+# Deploy using registry-configured settings (Azure by default)
+bsp deploy poky-qemuarm64-scarthgap
+
+# Preview what would be uploaded without uploading
+bsp deploy poky-qemuarm64-scarthgap --dry-run
+
+# Deploy to an explicit Azure container
+bsp deploy poky-qemuarm64-scarthgap --container bsp-artifacts
+
+# Deploy to AWS S3
+bsp deploy poky-qemuarm64-scarthgap --provider aws --bucket my-s3-bucket
+
+# Deploy by components with a custom prefix
+bsp deploy --device qemuarm64 --release scarthgap --prefix "builds/{vendor}/{device}/{date}"
+
+# Upload only compressed image files
+bsp deploy poky-qemuarm64-scarthgap --pattern "**/*.wic.gz"
+```
+
+**Authentication:**
+
+| Provider | Authentication |
+|----------|---------------|
+| Azure | `AZURE_STORAGE_CONNECTION_STRING` env var, or `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (supports `az login`, service principal env vars, Managed Identity) |
+| AWS | Standard boto3 credential chain: `~/.aws/credentials`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars, IAM role, instance profile |
+
+See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details, YAML configuration, and CI/CD integration examples.
 
 ## Registry Configuration Reference
 
@@ -814,6 +883,43 @@ lava:
 | `username` | string | `""` | LAVA username |
 | `wait_timeout` | integer | `3600` | Maximum wait time in seconds when `--wait` is used |
 | `poll_interval` | integer | `30` | Job status polling interval in seconds |
+### `deploy` (optional)
+
+Global cloud deployment configuration applied to all builds.  An individual
+`BspPreset` can also include a `deploy:` block that overrides the global one for
+that preset specifically.
+
+```yaml
+deploy:
+  provider: azure                                   # "azure" (default) or "aws"
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}      # Azure only; supports $ENV{} expansion
+  container: bsp-artifacts                          # Azure container name
+  # bucket: my-s3-bucket                           # AWS alternative to container
+  prefix: "{vendor}/{device}/{release}/{date}"      # remote path prefix template
+  patterns:                                         # glob patterns for files to upload
+    - "**/*.wic.gz"
+    - "**/*.wic.bz2"
+    - "**/*.tar.bz2"
+    - "**/*.ext4"
+    - "**/*.sdimg"
+  artifact_dirs:                                    # subdirs under build_path to search
+    - tmp/deploy/images
+    - tmp/deploy/sdk
+  include_manifest: true                            # upload a JSON manifest of all artifacts
+```
+
+**Prefix template variables:**
+
+| Variable | Value |
+|----------|-------|
+| `{device}` | Device slug |
+| `{release}` | Release slug |
+| `{distro}` | Effective distro slug |
+| `{vendor}` | Device vendor slug |
+| `{date}` | Build date in `YYYY-MM-DD` format |
+| `{datetime}` | Build datetime in `YYYYMMDD-HHMMSS` format |
+
+See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
 
 ## KAS Configuration Files
 
@@ -902,6 +1008,52 @@ kas = KasManager(
 kas.validate_kas_files()
 ```
 
+### Cloud Deployment API
+
+```python
+from bsp import BspManager
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+# Deploy artifacts from a preset build (dry-run)
+result = manager.deploy_bsp("poky-qemuarm64-scarthgap", dry_run=True)
+print(f"Would upload {result.success_count} artifact(s)")
+
+# Deploy with overrides
+result = manager.deploy_bsp(
+    "poky-qemuarm64-scarthgap",
+    deploy_overrides={
+        "provider": "aws",
+        "container": "my-s3-bucket",
+        "prefix": "builds/{device}/{release}/{date}",
+    },
+)
+for artifact in result.artifacts:
+    print(f"  {artifact.local_path.name} → {artifact.remote_url}")
+
+# Deploy by components
+result = manager.deploy_by_components(
+    device_slug="qemuarm64",
+    release_slug="scarthgap",
+)
+
+# Use the storage backend and deployer directly
+from bsp.storage import create_backend
+from bsp.deployer import ArtifactDeployer
+from bsp.models import DeployConfig
+
+config = DeployConfig(
+    provider="azure",
+    container="bsp-artifacts",
+    prefix="{device}/{release}/{date}",
+    patterns=["**/*.wic.gz"],
+)
+backend = create_backend("azure", container_name="bsp-artifacts", dry_run=True)
+deployer = ArtifactDeployer(config, backend)
+result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", release="scarthgap")
+```
+
 ## Development
 
 ### Setup Development Environment
@@ -945,20 +1097,29 @@ bsp-registry-tools/
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
 │   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
 │   ├── utils.py              # YAML / Docker utilities
-│   └── exceptions.py         # Custom exceptions
+│   ├── exceptions.py         # Custom exceptions
+│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
+│   └── storage/              # Cloud storage backends
+│       ├── __init__.py       # Exports CloudStorageBackend and create_backend()
+│       ├── base.py           # Abstract CloudStorageBackend base class
+│       ├── azure.py          # AzureStorageBackend (azure-storage-blob)
+│       ├── aws.py            # AwsStorageBackend (boto3)
+│       └── factory.py        # create_backend() factory function
 ├── pyproject.toml            # Package configuration
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
 ├── docs/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
-│   └── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
 │   ├── test_cli.py
 │   ├── test_lava_client.py   # LAVA client unit tests (HTTP mocked)
 │   ├── test_lava_job_builder.py # LAVA job template renderer tests
+│   ├── test_deploy.py        # Deployment tests
 │   ├── test_registry_fetcher.py
 │   └── ...
 ├── examples/
@@ -1016,17 +1177,22 @@ python -m build
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
 | `LavaClient` | LAVA REST API wrapper — submit, poll, and fetch results for HIL test jobs |
+| `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
+| `AzureStorageBackend` | Azure Blob Storage backend (requires `azure-storage-blob`) |
+| `AwsStorageBackend` | AWS S3 backend (requires `boto3`) |
 
 ### Data Classes
 
 | Class | Description |
 |-------|-------------|
 | `RegistryRoot` | Root registry container (specification, registry, containers, environments, lava) |
+| `RegistryRoot` | Root registry container (specification, registry, containers, environments, deploy) |
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
 | `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
 | `BspPreset` | Named preset combining device + release + features + optional `testing` config |
+| `BspPreset` | Named preset combining device + release + features + optional deploy config |
 | `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
 | `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
 | `Docker` | Docker image, build arg, privileged mode, and runtime_args configuration |
@@ -1036,6 +1202,8 @@ python -m build
 | `LavaTestConfig` | Per-preset LAVA test settings (device_type, artifact_url, tags, job_template, robot) |
 | `RobotTestConfig` | Robot Framework suite list and variable dict embedded in a LAVA job |
 | `TestingConfig` | Top-level testing block on a `BspPreset` (currently wraps `LavaTestConfig`) |
+| `DeployConfig` | Cloud deployment configuration (provider, container/bucket, prefix, patterns, artifact dirs) |
+| `DeployResult` | Result of a deployment run: list of uploaded artifacts with URLs and checksums |
 
 ### Exceptions
 
