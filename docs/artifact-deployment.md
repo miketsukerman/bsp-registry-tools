@@ -144,22 +144,50 @@ deploy:
 
 ### Per-preset override
 
-An individual `BspPreset` entry can include its own `deploy:` block, which
-merges on top of (and overrides) the global `deploy:` block for that preset:
+An individual `BspPreset` entry can include its own `deploy:` block.  Only the
+fields that differ from the `DeployConfig` defaults override the global config;
+all other fields keep their global values.
+
+**Merge order** (later entries win):
+1. **Global `deploy:`** — baseline for every build
+2. **Preset `deploy:`** — overrides only fields that differ from their defaults
+3. **CLI flags** (`--provider`, `--container`, …) — highest priority
 
 ```yaml
+deploy:                               # global: Azure, shared container
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+  prefix: "{vendor}/{device}/{release}/{date}"
+
 registry:
   bsp:
+    # Uses global settings unchanged.
+    - name: qemuarm64-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+
+    # Overrides only container and prefix; provider and account_url come from global.
     - name: imx8mp-adv-scarthgap-release
       description: "Advantech i.MX8MP Scarthgap – release artefacts"
       device: imx8mp-adv
       release: scarthgap
       features: []
-      deploy:                              # overrides global deploy for this preset only
-        container: imx8mp-release-artifacts
-        prefix: "release/{device}/{release}/{date}"
-        patterns:
+      deploy:
+        container: imx8mp-release-artifacts           # ← override
+        prefix: "release/{device}/{release}/{date}"   # ← override
+        patterns:                                     # ← override
           - "**/*.wic.gz"
+
+    # Switches to AWS entirely for this preset only.
+    - name: aws-build-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      deploy:
+        provider: aws                 # ← override: switch provider
+        container: my-s3-bucket       # ← override: bucket name
 ```
 
 ### Field reference
