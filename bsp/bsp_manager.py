@@ -1009,6 +1009,70 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
+    def build_all_presets(
+        self,
+        checkout_only: bool = False,
+        keep_going: bool = False,
+    ) -> None:
+        """
+        Build all BSP presets defined in the registry sequentially.
+
+        Iterates over every preset returned by the resolver and builds each one
+        in order.  By default the run stops on the first failure.  Pass
+        ``keep_going=True`` to continue after failures and report a summary at
+        the end.
+
+        Args:
+            checkout_only: If True, only checkout and validate without building.
+            keep_going: If True, continue building remaining presets after a
+                failure instead of stopping immediately.
+
+        Raises:
+            SystemExit: If one or more presets fail (exit code equals the number
+                of failures, capped at 125 to stay within valid exit-code range).
+        """
+        presets = self.resolver.list_presets()
+        if not presets:
+            logging.warning("No BSP presets defined in registry – nothing to build.")
+            return
+
+        action = "Checking out" if checkout_only else "Building"
+        total = len(presets)
+        logging.info(f"{action} all {total} BSP preset(s)...")
+
+        failed: List[str] = []
+
+        for index, preset in enumerate(presets, start=1):
+            label = f"{preset.name} - {preset.description}"
+            print(f"[{index}/{total}] {action}: {label}")
+            try:
+                self.build_bsp(preset.name, checkout_only=checkout_only)
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+                msg = f"Preset '{preset.name}' failed (exit {code})"
+                logging.error(msg)
+                failed.append(preset.name)
+                if not keep_going:
+                    print(f"\n✗ {msg}. Stopping (use --keep-going to continue).")
+                    sys.exit(code)
+            except Exception as exc:  # noqa: BLE001
+                msg = f"Preset '{preset.name}' failed: {exc}"
+                logging.error(msg)
+                failed.append(preset.name)
+                if not keep_going:
+                    print(f"\n✗ {msg}. Stopping (use --keep-going to continue).")
+                    sys.exit(1)
+
+        passed = total - len(failed)
+        if failed:
+            print(
+                f"\n✗ {len(failed)}/{total} preset(s) failed: {', '.join(failed)}"
+            )
+            print(f"  {passed}/{total} preset(s) succeeded.")
+            sys.exit(min(len(failed), 125))
+        else:
+            print(f"\n✓ All {total} preset(s) {action.lower()}d successfully.")
+
     def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
         """
         Build a BSP by preset name.
