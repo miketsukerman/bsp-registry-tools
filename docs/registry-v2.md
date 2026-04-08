@@ -18,6 +18,7 @@ Schema v2.0 separates the registry into independent sections:
 | `distro`       | Optional distribution definitions (Poky, Isar distro, …)     |
 | `vendors`      | Optional top-level vendor definitions (cross-release vendor KAS includes) |
 | `include`      | Optional list of additional registry files to merge in        |
+| `deploy`       | Optional cloud deployment configuration (Azure / AWS)         |
 
 Builds can be driven either by a **named preset** (`bsp build my-preset`) or by
 composing components directly (`bsp build --device <d> --release <r>`).
@@ -70,6 +71,11 @@ registry:
   releases: [...]         # list of release definitions
   features: [...]         # list of feature definitions (may be empty)
   bsp: [...]              # optional list of named presets
+
+deploy:                   # optional – global cloud deployment configuration
+  provider: azure         # "azure" (default) or "aws"
+  container: bsp-artifacts
+  prefix: "{vendor}/{device}/{release}/{date}"
 ```
 
 ---
@@ -1384,6 +1390,122 @@ registry:
 
 ---
 
+## `deploy` (optional)
+
+Top-level cloud deployment configuration that applies to every build.  A
+`BspPreset` entry can also include a `deploy:` block that **overrides** the
+global one for that specific preset.
+
+Deployment is triggered explicitly via `bsp deploy` or automatically after a
+successful build when `bsp build --deploy` is used.  `--dry-run` mode lists
+artifacts that would be uploaded without requiring any credentials.
+
+```yaml
+deploy:
+  provider: azure                                    # "azure" (default) or "aws"
+
+  # Azure-specific
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}       # supports $ENV{} expansion
+  container: bsp-artifacts                           # Azure Blob container name
+
+  # AWS-specific (use instead of account_url / container)
+  # bucket: my-s3-bucket
+  # region: eu-west-1
+  # profile: my-aws-profile
+
+  # Path prefix template in cloud storage (placeholders below)
+  prefix: "{vendor}/{device}/{release}/{date}"
+
+  # Glob patterns for artifact files to upload
+  patterns:
+    - "**/*.wic.gz"
+    - "**/*.wic.bz2"
+    - "**/*.tar.bz2"
+    - "**/*.ext4"
+    - "**/*.sdimg"
+
+  # Subdirectories under build_path to search for artifacts
+  artifact_dirs:
+    - tmp/deploy/images
+    - tmp/deploy/sdk
+
+  # Upload a JSON manifest listing all uploaded artifacts (names, sizes, SHA-256)
+  include_manifest: true
+```
+
+### `deploy` fields
+
+| Field              | Type          | Default | Description |
+|--------------------|---------------|---------|-------------|
+| `provider`         | string        | `"azure"` | Cloud storage provider: `"azure"` or `"aws"` |
+| `container`        | string (opt.) | —       | Azure Blob Storage container name |
+| `bucket`           | string (opt.) | —       | AWS S3 bucket name (alias for `container` when using AWS) |
+| `account_url`      | string (opt.) | —       | Azure storage account URL. Supports `$ENV{VAR}` expansion. Falls back to `AZURE_STORAGE_ACCOUNT_URL` env var. |
+| `prefix`           | string (opt.) | `"{vendor}/{device}/{release}/{date}"` | Remote path prefix template. See placeholder table below. |
+| `patterns`         | list[str]     | see below | Glob patterns for artifact files to upload |
+| `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to search for artifacts |
+| `include_manifest` | bool          | `true`  | Whether to upload a JSON manifest file listing all uploaded artifacts |
+| `region`           | string (opt.) | —       | AWS region (boto3 default if omitted) |
+| `profile`          | string (opt.) | —       | AWS credentials profile name |
+
+**Default `patterns`:**
+
+```
+**/*.wic*   **/*.tar.gz   **/*.ext4   **/*.sdimg
+```
+
+### Prefix template placeholders
+
+| Placeholder  | Value |
+|--------------|-------|
+| `{device}`   | Device slug |
+| `{release}`  | Release slug |
+| `{distro}`   | Effective distro slug |
+| `{vendor}`   | Device vendor slug |
+| `{date}`     | Build date in `YYYY-MM-DD` format |
+| `{datetime}` | Build date+time in `YYYYMMDD-HHMMSS` format |
+
+### Preset-level `deploy` override
+
+A `BspPreset` can include its own `deploy:` block.  It merges on top of the
+global `deploy:` block (CLI overrides are applied last):
+
+```yaml
+registry:
+  bsp:
+    - name: imx8mp-adv-scarthgap-release
+      description: "Advantech i.MX8MP Scarthgap – release artefacts"
+      device: imx8mp-adv
+      release: scarthgap
+      features: []
+      deploy:                       # overrides global deploy config for this preset
+        container: imx8mp-release-artifacts
+        prefix: "release/{device}/{release}/{date}"
+        patterns:
+          - "**/*.wic.gz"
+```
+
+### Authentication
+
+**Azure:**
+
+| Method | How |
+|--------|-----|
+| Connection string | Set `AZURE_STORAGE_CONNECTION_STRING` env var |
+| Account URL + DefaultAzureCredential | Set `AZURE_STORAGE_ACCOUNT_URL` (or `deploy.account_url`) and run `az login`, or configure a service principal via `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID`, or use Managed Identity |
+
+**AWS:**
+
+| Method | How |
+|--------|-----|
+| Shared credentials file | `~/.aws/credentials` (configured by `aws configure`) |
+| Environment variables | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` |
+| IAM role / instance profile | Automatic when running on EC2 / ECS / Lambda |
+
+> See [docs/artifact-deployment.md](artifact-deployment.md) for a complete walk-through including CI/CD integration examples.
+
+---
+
 ## CLI Examples
 
 ```bash
@@ -1411,6 +1533,12 @@ bsp build --device imx8mp-adv --release scarthgap --feature ota
 # Build with multiple features
 bsp build --device imx8mp-adv --release scarthgap --feature ota --feature secure-boot
 
+# Build and deploy artifacts to Azure automatically
+bsp build imx8mp-adv-scarthgap --deploy
+
+# Build and deploy to AWS S3
+bsp build imx8mp-adv-scarthgap --deploy --deploy-provider aws --deploy-container my-bucket
+
 # Export KAS configuration for a preset
 bsp export imx8mp-adv-scarthgap
 
@@ -1425,6 +1553,21 @@ bsp shell --device qemuarm64 --release scarthgap
 
 # Run a single command in the shell
 bsp shell imx8mp-adv-scarthgap --command "bitbake core-image-minimal"
+
+# Deploy build artifacts for a preset (using registry-configured settings)
+bsp deploy imx8mp-adv-scarthgap
+
+# Preview what would be deployed without uploading
+bsp deploy imx8mp-adv-scarthgap --dry-run
+
+# Deploy to an explicit Azure container
+bsp deploy imx8mp-adv-scarthgap --container bsp-artifacts
+
+# Deploy to AWS S3 with a custom prefix
+bsp deploy imx8mp-adv-scarthgap --provider aws --bucket my-s3-bucket --prefix "releases/{device}/{release}/{date}"
+
+# Deploy by components with a custom pattern
+bsp deploy --device qemuarm64 --release scarthgap --pattern "**/*.wic.gz"
 
 # Display registry hierarchy (default detail level)
 bsp tree
