@@ -765,6 +765,63 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
+    def _clean_build_directory(self, build_path: str) -> None:
+        """
+        Remove previous build artefacts from the build directory to free disk
+        space while preserving the Yocto deploy output and build logs.
+
+        The Yocto ``tmp/`` tree is the dominant consumer of disk space.  This
+        method removes every sub-directory inside ``<build_path>/tmp/`` *except*
+        for the two subdirectories that carry the most useful long-lived data:
+
+        * ``tmp/deploy/``  — final images, packages, and SDK artefacts
+        * ``tmp/log/``     — bitbake build logs
+
+        If ``<build_path>/tmp/`` does not exist the call is a no-op.
+
+        Args:
+            build_path: Path to the BSP build directory (may be relative to the
+                current working directory or absolute).
+        """
+        if not build_path:
+            return
+
+        tmp_dir = Path(build_path)
+        if not tmp_dir.is_absolute():
+            tmp_dir = (self.config_path.parent / tmp_dir).resolve()
+        tmp_dir = tmp_dir / "tmp"
+
+        if not tmp_dir.exists():
+            logging.info(f"Clean: tmp directory does not exist, nothing to remove: {tmp_dir}")
+            return
+
+        # Subdirectories inside tmp/ that must be preserved.
+        preserve = {"deploy", "log"}
+
+        logging.info(f"Cleaning build directory: {tmp_dir} (preserving: {', '.join(sorted(preserve))})")
+        print(f"Cleaning build directory: {tmp_dir}")
+
+        removed_any = False
+        try:
+            for entry in tmp_dir.iterdir():
+                if entry.name in preserve:
+                    logging.debug(f"  Preserving: {entry}")
+                    continue
+                logging.info(f"  Removing: {entry}")
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                removed_any = True
+        except OSError as exc:
+            logging.error(f"Failed to clean build directory '{tmp_dir}': {exc}")
+            sys.exit(1)
+
+        if removed_any:
+            print(f"  Build directory cleaned (deploy/ and log/ preserved).")
+        else:
+            print(f"  Nothing to clean.")
+
     def _copy_files(self, resolved: ResolvedConfig) -> None:
         """
         Copy files into the build environment before the build starts.
@@ -959,6 +1016,7 @@ class BspManager:
         self,
         resolved: ResolvedConfig,
         checkout_only: bool = False,
+        clean: bool = False,
         label: str = "",
     ) -> None:
         """
@@ -967,6 +1025,9 @@ class BspManager:
         Args:
             resolved: Resolved build configuration
             checkout_only: If True, only checkout and validate without building
+            clean: If True, remove previous build artefacts from
+                ``<build_path>/tmp/`` before building while preserving the
+                ``tmp/deploy/`` (images/packages) and ``tmp/log/`` subdirectories.
             label: Descriptive label for log messages
         """
         action = "Checking out" if checkout_only else "Building"
@@ -986,6 +1047,9 @@ class BspManager:
         else:
             if checkout_only:
                 logging.info("Skipping Docker build in checkout mode")
+
+        if clean and not checkout_only:
+            self._clean_build_directory(resolved.build_path)
 
         self.prepare_build_directory(resolved.build_path)
         self._copy_files(resolved)
@@ -1013,6 +1077,7 @@ class BspManager:
         self,
         checkout_only: bool = False,
         keep_going: bool = False,
+        clean: bool = False,
     ) -> None:
         """
         Build all BSP presets defined in the registry sequentially.
@@ -1026,6 +1091,9 @@ class BspManager:
             checkout_only: If True, only checkout and validate without building.
             keep_going: If True, continue building remaining presets after a
                 failure instead of stopping immediately.
+            clean: If True, remove previous build artefacts from each preset's
+                ``<build_path>/tmp/`` before building while preserving the
+                ``tmp/deploy/`` and ``tmp/log/`` subdirectories.
 
         Raises:
             SystemExit: If one or more presets fail (exit code equals the number
@@ -1046,7 +1114,7 @@ class BspManager:
             label = f"{preset.name} - {preset.description}"
             print(f"[{index}/{total}] {action}: {label}")
             try:
-                self.build_bsp(preset.name, checkout_only=checkout_only)
+                self.build_bsp(preset.name, checkout_only=checkout_only, clean=clean)
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 1
                 msg = f"Preset '{preset.name}' failed (exit {code})"
@@ -1074,13 +1142,15 @@ class BspManager:
             past_tense = "checked out" if checkout_only else "built"
             print(f"\n✓ All {total} preset(s) {past_tense} successfully.")
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
+    def build_bsp(self, bsp_name: str, checkout_only: bool = False, clean: bool = False) -> None:
         """
         Build a BSP by preset name.
 
         Args:
             bsp_name: Name of the BSP preset to build
             checkout_only: If True, only checkout and validate without building
+            clean: If True, remove previous build artefacts while preserving
+                ``tmp/deploy/`` and ``tmp/log/`` before starting the build.
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1090,6 +1160,7 @@ class BspManager:
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
+            clean=clean,
             label=f"{preset.name} - {preset.description}",
         )
 
@@ -1099,6 +1170,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         checkout_only: bool = False,
+        clean: bool = False,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1108,6 +1180,8 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
             checkout_only: If True, only checkout and validate without building
+            clean: If True, remove previous build artefacts while preserving
+                ``tmp/deploy/`` and ``tmp/log/`` before starting the build.
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1121,6 +1195,7 @@ class BspManager:
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
+            clean=clean,
             label=f"{device_slug}/{release_slug}",
         )
 

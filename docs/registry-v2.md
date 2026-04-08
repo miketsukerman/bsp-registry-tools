@@ -1411,6 +1411,18 @@ bsp build --device imx8mp-adv --release scarthgap --feature ota
 # Build with multiple features
 bsp build --device imx8mp-adv --release scarthgap --feature ota --feature secure-boot
 
+# Clean build: remove tmp/work/ etc. before building while preserving tmp/deploy/ and tmp/log/
+bsp build imx8mp-adv-scarthgap --clean
+
+# Build all presets sequentially, stop on first failure (default)
+bsp build --all
+
+# Build all presets, continue past failures, clean workspace before each build
+bsp build --all --keep-going --clean
+
+# Checkout/validate all presets without building
+bsp build --all --checkout
+
 # Export KAS configuration for a preset
 bsp export imx8mp-adv-scarthgap
 

@@ -103,7 +103,11 @@ def main() -> int:
         build_parser.add_argument(
             "--clean",
             action="store_true",
-            help="Clean before building"
+            help=(
+                "Before building, remove previous build artefacts from "
+                "<build_path>/tmp/ while preserving tmp/deploy/ (images/packages) "
+                "and tmp/log/ (build logs) to free disk space"
+            )
         )
         build_parser.add_argument(
             "--checkout",
@@ -281,6 +285,7 @@ def main() -> int:
             checkout_only = getattr(args, "checkout", False)
             build_all = getattr(args, "build_all", False)
             keep_going = getattr(args, "keep_going", False)
+            clean = getattr(args, "clean", False)
             device = getattr(args, "device", None)
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
@@ -294,14 +299,16 @@ def main() -> int:
                     )
                     build_parser.print_help()
                     return 1
-                bsp_mgr.build_all_presets(checkout_only=checkout_only, keep_going=keep_going)
+                bsp_mgr.build_all_presets(
+                    checkout_only=checkout_only, keep_going=keep_going, clean=clean
+                )
             elif _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
             elif bsp_name:
-                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only, clean=clean)
             elif device and release:
                 bsp_mgr.build_by_components(
-                    device, release, features, checkout_only=checkout_only
+                    device, release, features, checkout_only=checkout_only, clean=clean
                 )
             else:
                 logging.error(

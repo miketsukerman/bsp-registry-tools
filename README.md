@@ -329,21 +329,37 @@ BSP Registry
 
 ```bash
 bsp build <bsp_name> [--clean] [--checkout]
+bsp build --device <device> --release <release> [--feature <feat>...] [--clean] [--checkout]
+bsp build --all [--clean] [--keep-going] [--checkout]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--clean` | Clean build directory before building |
-| `--checkout` | Validate configuration and checkout repos without building |
+| `--clean` | Before building, remove previous build artefacts from `<build_path>/tmp/` while preserving `tmp/deploy/` (images and packages) and `tmp/log/` (build logs) to free disk space |
+| `--checkout` | Validate configuration and checkout repos without building (fast, implies no Docker build) |
+| `--all`, `-a` | Build every BSP preset defined in the registry one by one (sequential) |
+| `--keep-going`, `-k` | When used with `--all`, continue building remaining presets after a failure and print a summary at the end (default: stop on first failure) |
 
 **Examples:**
 
 ```bash
-# Full build
+# Full build of a named preset
 bsp build poky-qemuarm64-scarthgap
 
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
+
+# Build and free disk space afterwards: removes tmp/work/ etc., keeps tmp/deploy/ and tmp/log/
+bsp build poky-qemuarm64-scarthgap --clean
+
+# Build by device + release (with optional features)
+bsp build --device qemuarm64 --release scarthgap --feature ota
+
+# Build all presets sequentially, stop on first failure (default)
+bsp build --all
+
+# Build all presets, continue past failures, clean before each build
+bsp build --all --keep-going --clean
 ```
 
 #### `shell` — Interactive shell in build environment
