@@ -625,6 +625,20 @@ class DeployConfig:
                           all uploaded artifacts (names, sizes, SHA-256
                           checksums, build metadata) is uploaded alongside
                           the artifacts.
+        archive_name: When set, all collected artifacts are bundled into a
+                      single compressed archive **before** uploading.  Only
+                      the archive is uploaded (plus the manifest when
+                      ``include_manifest`` is ``True``).  Supports the same
+                      placeholders as ``prefix``: ``{device}``, ``{release}``,
+                      ``{distro}``, ``{vendor}``, ``{date}``, ``{datetime}``.
+                      Example: ``"firmware-{device}-{date}"``.  The file
+                      extension is appended automatically based on
+                      ``archive_format``.  When ``None`` (default) each
+                      artifact is uploaded individually.
+        archive_format: Compression format for the archive bundle.  Supported
+                        values: ``"tar.gz"`` (default), ``"tar.bz2"``,
+                        ``"tar.xz"``, ``"zip"``.  Only used when
+                        ``archive_name`` is set.
         region: AWS region override (``"aws"`` provider only).
         profile: AWS credential profile name (``"aws"`` provider only).
     """
@@ -649,6 +663,8 @@ class DeployConfig:
         "tmp/deploy/sdk",
     ])
     include_manifest: bool = True
+    archive_name: Optional[str] = None
+    archive_format: str = "tar.gz"
     region: Optional[str] = None
     profile: Optional[str] = None
 

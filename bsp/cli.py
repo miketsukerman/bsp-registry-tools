@@ -38,6 +38,12 @@ def _collect_deploy_overrides(args) -> dict:
     patterns = getattr(args, "deploy_patterns", None)
     if patterns:
         overrides["patterns"] = patterns
+    archive_name = getattr(args, "deploy_archive_name", None)
+    if archive_name is not None:
+        overrides["archive_name"] = archive_name
+    archive_format = getattr(args, "deploy_archive_format", None)
+    if archive_format is not None:
+        overrides["archive_format"] = archive_format
     return overrides
 
 
@@ -153,6 +159,26 @@ def main() -> int:
             dest="deploy_prefix",
             metavar="PREFIX",
             help="Remote path prefix template for deployment"
+        )
+        build_parser.add_argument(
+            "--deploy-archive-name",
+            type=str,
+            dest="deploy_archive_name",
+            default=None,
+            metavar="NAME",
+            help=(
+                "Bundle all artifacts into a single archive with this name before uploading "
+                "(supports {device}, {release}, {distro}, {vendor}, {date}, {datetime})"
+            )
+        )
+        build_parser.add_argument(
+            "--deploy-archive-format",
+            type=str,
+            dest="deploy_archive_format",
+            default=None,
+            metavar="FORMAT",
+            choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
+            help="Compression format for the archive bundle (default: tar.gz)"
         )
 
         # ----------------------------------------------------------------
@@ -328,6 +354,26 @@ def main() -> int:
             dest="deploy_patterns",
             metavar="PATTERN",
             help="Glob pattern for artifacts to upload (can be specified multiple times)"
+        )
+        deploy_parser.add_argument(
+            "--archive-name",
+            type=str,
+            dest="deploy_archive_name",
+            default=None,
+            metavar="NAME",
+            help=(
+                "Bundle all artifacts into a single archive with this name before uploading "
+                "(supports {device}, {release}, {distro}, {vendor}, {date}, {datetime})"
+            )
+        )
+        deploy_parser.add_argument(
+            "--archive-format",
+            type=str,
+            dest="deploy_archive_format",
+            default=None,
+            metavar="FORMAT",
+            choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
+            help="Compression format for the archive bundle (default: tar.gz)"
         )
         deploy_parser.add_argument(
             "--dry-run",
