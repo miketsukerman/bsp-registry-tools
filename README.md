@@ -356,6 +356,8 @@ bsp build <bsp_name> [--clean] [--checkout] [--deploy] [--deploy-provider PROVID
 | `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
 | `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
 | `--deploy-prefix PREFIX` | Remote path prefix template (overrides registry config) |
+| `--deploy-archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--deploy-archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 
 **Examples:**
 
@@ -429,6 +431,8 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
 | `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
+| `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 | `--dry-run` | List what would be uploaded without uploading (no credentials required) |
 
 **Examples:**
