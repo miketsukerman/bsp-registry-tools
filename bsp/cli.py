@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .bsp_manager import BspManager
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
+from .models import ArchiveConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
 from .utils import SUPPORTED_REGISTRY_VERSION
 
@@ -39,11 +40,13 @@ def _collect_deploy_overrides(args) -> dict:
     if patterns:
         overrides["patterns"] = patterns
     archive_name = getattr(args, "deploy_archive_name", None)
-    if archive_name is not None:
-        overrides["archive_name"] = archive_name
     archive_format = getattr(args, "deploy_archive_format", None)
-    if archive_format is not None:
-        overrides["archive_format"] = archive_format
+    if archive_name is not None or archive_format is not None:
+        defaults = ArchiveConfig()
+        overrides["archive"] = ArchiveConfig(
+            name=archive_name if archive_name is not None else defaults.name,
+            format=archive_format if archive_format is not None else defaults.format,
+        )
     return overrides
 
 
