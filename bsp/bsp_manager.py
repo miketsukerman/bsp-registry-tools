@@ -1649,7 +1649,7 @@ class BspManager:
                 status_icon = "✓" if suite.passed else "✗"
                 print(
                     f"  {status_icon} Suite: {suite.name:<30} "
-                    f"{{'PASS' if suite.passed else 'FAIL'}}  "
+                    f"{'PASS' if suite.passed else 'FAIL'}  "
                     f"({suite.total - suite.failures}/{suite.total} passed)"
                 )
         else:
