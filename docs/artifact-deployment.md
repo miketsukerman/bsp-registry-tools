@@ -16,6 +16,7 @@ completes.
   - [Per-preset override](#per-preset-override)
   - [Field reference](#field-reference)
   - [Prefix template placeholders](#prefix-template-placeholders)
+  - [Archive bundling](#archive-bundling)
 - [Authentication](#authentication)
   - [Azure](#azure)
   - [AWS](#aws)
@@ -123,6 +124,10 @@ deploy:
     - tmp/deploy/images
     - tmp/deploy/sdk
   include_manifest: true
+  # Optional: bundle all artifacts into a single archive before uploading
+  archive:
+    name: "firmware-{device}-{release}-{date}"
+    format: tar.gz
 
 registry:
   # ...
@@ -202,6 +207,7 @@ registry:
 | `patterns`         | list[str]     | `["**/*.wic*", "**/*.tar.gz", "**/*.ext4", "**/*.sdimg"]` | Glob patterns for artifact files |
 | `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to scan |
 | `include_manifest` | bool          | `true`  | Upload a JSON manifest alongside artifacts |
+| `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [Archive bundling](#archive-bundling). |
 | `region`           | string (opt.) | —       | AWS region (optional; boto3 default otherwise) |
 | `profile`          | string (opt.) | —       | AWS credentials profile (optional) |
 
@@ -230,6 +236,48 @@ builds/{device}/{date}
 
 release/{release}/{device}
 →  release/scarthgap/qemuarm64/
+```
+
+---
+
+## Archive bundling
+
+By default every matching artifact file is uploaded individually.  Set the
+`archive:` sub-object inside `deploy:` to collect all artifacts into a single
+compressed archive **before** uploading.  Only the archive (plus the manifest
+when `include_manifest: true`) is uploaded.
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  archive:
+    name: "firmware-{device}-{release}-{date}"
+    format: tar.gz
+```
+
+### `archive` fields
+
+| Field    | Type   | Default                       | Description |
+|----------|--------|-------------------------------|-------------|
+| `name`   | string | `"artifacts-{device}-{date}"` | Archive filename template (without extension).  Supports the same placeholders as `prefix`: `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`. |
+| `format` | string | `"tar.gz"`                    | Compression format: `tar.gz`, `tar.bz2`, `tar.xz`, or `zip`. |
+
+The appropriate file extension is appended automatically (e.g. `.tar.gz` for
+`tar.gz`).
+
+**CLI equivalents:**
+
+```bash
+# bsp deploy
+bsp deploy my-preset \
+    --archive-name "firmware-{device}-{release}-{date}" \
+    --archive-format tar.gz
+
+# bsp build --deploy
+bsp build my-preset --deploy \
+    --deploy-archive-name "firmware-{device}-{release}-{date}" \
+    --deploy-archive-format tar.gz
 ```
 
 ---
@@ -314,6 +362,8 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--container CONTAINER` / `--bucket CONTAINER` | Override Azure container or AWS bucket name |
 | `--prefix PREFIX` | Override remote path prefix template |
 | `--pattern PATTERN` | Override glob patterns (repeatable; replaces registry config) |
+| `--archive-name NAME` | Bundle artifacts into a single archive with this name (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
 **Examples:**
@@ -357,6 +407,8 @@ bsp build <bsp_name> --deploy [--deploy-provider PROVIDER]
 | `--deploy-provider PROVIDER` | Override storage provider |
 | `--deploy-container CONTAINER` | Override container or bucket name |
 | `--deploy-prefix PREFIX` | Override path prefix template |
+| `--deploy-archive-name NAME` | Bundle artifacts into a single archive with this name (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--deploy-archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 
 **Examples:**
 
@@ -478,7 +530,7 @@ result = manager.deploy_by_components(
 # Use the lower-level deployer + storage backend directly
 from bsp.storage import create_backend
 from bsp.deployer import ArtifactDeployer
-from bsp.models import DeployConfig
+from bsp.models import ArchiveConfig, DeployConfig
 
 config = DeployConfig(
     provider="azure",
@@ -486,6 +538,10 @@ config = DeployConfig(
     prefix="{device}/{release}/{date}",
     patterns=["**/*.wic.gz"],
     artifact_dirs=["tmp/deploy/images"],
+    archive=ArchiveConfig(
+        name="firmware-{device}-{release}-{date}",
+        format="tar.gz",
+    ),
 )
 backend = create_backend("azure", container_name="bsp-artifacts")
 deployer = ArtifactDeployer(config, backend)
