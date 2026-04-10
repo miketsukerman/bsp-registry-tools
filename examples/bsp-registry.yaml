@@ -23,3 +23,13 @@ environments:
         value: "$ENV{HOME}/data/cache/downloads"
       - name: "SSTATE_DIR"
         value: "$ENV{HOME}/data/cache/sstate"
+
+# Optional top-level LAVA server settings.
+# Values support $ENV{} expansion so credentials can be kept outside the registry.
+# All fields here serve as defaults and can be overridden per-preset or on the CLI.
+lava:
+  server: "$ENV{LAVA_SERVER}"           # e.g. https://lava.example.com
+  token: "$ENV{LAVA_TOKEN}"             # LAVA API authentication token
+  username: "$ENV{LAVA_USER}"           # LAVA username (informational)
+  wait_timeout: 3600                    # max seconds to wait for a job (default 1h)
+  poll_interval: 30                     # polling interval in seconds
