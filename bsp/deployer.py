@@ -152,7 +152,7 @@ class ArtifactDeployer:
     ) -> str:
         """
         Build the archive filename (without extension) from the
-        ``DeployConfig.archive_name`` template.
+        ``DeployConfig.archive.name`` template.
 
         Supports the same placeholders as :meth:`compose_remote_prefix`.
 
@@ -166,7 +166,8 @@ class ArtifactDeployer:
             Resolved archive base-name string.
         """
         now = datetime.datetime.now(datetime.timezone.utc)
-        template = self.config.archive_name or "artifacts-{device}-{date}"
+        archive = self.config.archive
+        template = archive.name if archive else "artifacts-{device}-{date}"
         name = template.format(
             device=device or "unknown",
             release=release or "unknown",
@@ -218,7 +219,7 @@ class ArtifactDeployer:
 
         failed: List[Tuple[Path, Exception]] = []
 
-        if self.config.archive_name:
+        if self.config.archive:
             # Bundle all artifacts into a single compressed archive before upload.
             archive_basename = self.compose_archive_name(
                 device=device, release=release, distro=distro, vendor=vendor
@@ -226,7 +227,7 @@ class ArtifactDeployer:
             tmp_archive = self._create_archive(
                 artifacts,
                 archive_basename,
-                self.config.archive_format,
+                self.config.archive.format,
             )
             try:
                 archive_remote = f"{prefix}/{tmp_archive.name}"

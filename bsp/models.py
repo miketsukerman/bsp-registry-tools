@@ -593,6 +593,26 @@ class Registry:
 
 
 @dataclass
+class ArchiveConfig:
+    """
+    Configuration for bundling all build artifacts into a single compressed
+    archive before cloud upload.
+
+    Attributes:
+        name: Archive filename template (without extension).  Supports the
+              same placeholders as :attr:`DeployConfig.prefix`: ``{device}``,
+              ``{release}``, ``{distro}``, ``{vendor}``, ``{date}`` and
+              ``{datetime}``.  The appropriate extension is appended
+              automatically based on ``format``.
+              Example: ``"firmware-{device}-{release}-{date}"``.
+        format: Compression format.  Supported values: ``"tar.gz"``
+                (default), ``"tar.bz2"``, ``"tar.xz"``, ``"zip"``.
+    """
+    name: str = "artifacts-{device}-{date}"
+    format: str = "tar.gz"
+
+
+@dataclass
 class DeployConfig:
     """
     Cloud storage deployment configuration for build artifacts.
@@ -625,20 +645,17 @@ class DeployConfig:
                           all uploaded artifacts (names, sizes, SHA-256
                           checksums, build metadata) is uploaded alongside
                           the artifacts.
-        archive_name: When set, all collected artifacts are bundled into a
-                      single compressed archive **before** uploading.  Only
-                      the archive is uploaded (plus the manifest when
-                      ``include_manifest`` is ``True``).  Supports the same
-                      placeholders as ``prefix``: ``{device}``, ``{release}``,
-                      ``{distro}``, ``{vendor}``, ``{date}``, ``{datetime}``.
-                      Example: ``"firmware-{device}-{date}"``.  The file
-                      extension is appended automatically based on
-                      ``archive_format``.  When ``None`` (default) each
-                      artifact is uploaded individually.
-        archive_format: Compression format for the archive bundle.  Supported
-                        values: ``"tar.gz"`` (default), ``"tar.bz2"``,
-                        ``"tar.xz"``, ``"zip"``.  Only used when
-                        ``archive_name`` is set.
+        archive: When set, all collected artifacts are bundled into a single
+                 compressed archive **before** uploading.  Only the archive is
+                 uploaded (plus the manifest when ``include_manifest`` is
+                 ``True``).  Configure via an :class:`ArchiveConfig` block::
+
+                     archive:
+                       name: "firmware-{device}-{release}-{date}"
+                       format: tar.gz
+
+                 When ``None`` (default) each artifact is uploaded
+                 individually.
         region: AWS region override (``"aws"`` provider only).
         profile: AWS credential profile name (``"aws"`` provider only).
     """
@@ -663,8 +680,7 @@ class DeployConfig:
         "tmp/deploy/sdk",
     ])
     include_manifest: bool = True
-    archive_name: Optional[str] = None
-    archive_format: str = "tar.gz"
+    archive: Optional["ArchiveConfig"] = None
     region: Optional[str] = None
     profile: Optional[str] = None
 
