@@ -6,7 +6,10 @@ import datetime
 import hashlib
 import json
 import logging
+import shutil
+import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -140,6 +143,40 @@ class ArtifactDeployer:
         )
         return prefix.strip("/")
 
+    def compose_archive_name(
+        self,
+        device: str = "",
+        release: str = "",
+        distro: str = "",
+        vendor: str = "",
+    ) -> str:
+        """
+        Build the archive filename (without extension) from the
+        ``DeployConfig.archive_name`` template.
+
+        Supports the same placeholders as :meth:`compose_remote_prefix`.
+
+        Args:
+            device: Device slug.
+            release: Release slug.
+            distro: Effective distro slug.
+            vendor: Board vendor slug.
+
+        Returns:
+            Resolved archive base-name string.
+        """
+        now = datetime.datetime.now(datetime.timezone.utc)
+        template = self.config.archive_name or "artifacts-{device}-{date}"
+        name = template.format(
+            device=device or "unknown",
+            release=release or "unknown",
+            distro=distro or "unknown",
+            vendor=vendor or "unknown",
+            date=now.strftime("%Y-%m-%d"),
+            datetime=now.strftime("%Y%m%d-%H%M%S"),
+        )
+        return name.strip("/")
+
     def deploy(
         self,
         build_path: str,
@@ -181,24 +218,54 @@ class ArtifactDeployer:
 
         failed: List[Tuple[Path, Exception]] = []
 
-        for local_path in artifacts:
-            rel = local_path.name
-            remote_path = f"{prefix}/{rel}"
+        if self.config.archive_name:
+            # Bundle all artifacts into a single compressed archive before upload.
+            archive_basename = self.compose_archive_name(
+                device=device, release=release, distro=distro, vendor=vendor
+            )
+            tmp_archive = self._create_archive(
+                artifacts,
+                archive_basename,
+                self.config.archive_format,
+            )
             try:
-                url = self.backend.upload_file(local_path, remote_path)
-                size = local_path.stat().st_size if not self.backend.dry_run else 0
-                sha = self._sha256(local_path) if not self.backend.dry_run else ""
+                archive_remote = f"{prefix}/{tmp_archive.name}"
+                url = self.backend.upload_file(tmp_archive, archive_remote)
+                size = tmp_archive.stat().st_size if not self.backend.dry_run else 0
+                sha = self._sha256(tmp_archive) if not self.backend.dry_run else ""
                 result.artifacts.append(
                     UploadedArtifact(
-                        local_path=local_path,
+                        local_path=tmp_archive,
                         remote_url=url,
                         size_bytes=size,
                         sha256=sha,
                     )
                 )
             except Exception as exc:  # noqa: BLE001
-                self.logger.error("Failed to upload %s: %s", local_path, exc)
-                failed.append((local_path, exc))
+                self.logger.error("Failed to upload archive %s: %s", tmp_archive, exc)
+                failed.append((tmp_archive, exc))
+            finally:
+                tmp_archive.unlink(missing_ok=True)
+                shutil.rmtree(tmp_archive.parent, ignore_errors=True)
+        else:
+            for local_path in artifacts:
+                rel = local_path.name
+                remote_path = f"{prefix}/{rel}"
+                try:
+                    url = self.backend.upload_file(local_path, remote_path)
+                    size = local_path.stat().st_size if not self.backend.dry_run else 0
+                    sha = self._sha256(local_path) if not self.backend.dry_run else ""
+                    result.artifacts.append(
+                        UploadedArtifact(
+                            local_path=local_path,
+                            remote_url=url,
+                            size_bytes=size,
+                            sha256=sha,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.error("Failed to upload %s: %s", local_path, exc)
+                    failed.append((local_path, exc))
 
         if failed:
             self.logger.warning(
@@ -303,3 +370,60 @@ class ArtifactDeployer:
             for chunk in iter(lambda: fh.read(65536), b""):
                 h.update(chunk)
         return h.hexdigest()
+
+    @staticmethod
+    def _create_archive(
+        files: List[Path],
+        basename: str,
+        fmt: str,
+    ) -> Path:
+        """
+        Pack *files* into a temporary compressed archive and return its path.
+
+        The caller is responsible for deleting the returned file **and its
+        parent temporary directory** when done.
+
+        Args:
+            files: Ordered list of files to include.
+            basename: Archive file name without extension
+                      (e.g. ``"firmware-my-device-2024-01-15"``).
+            fmt: Archive format.  Supported: ``"tar.gz"``,
+                 ``"tar.bz2"``, ``"tar.xz"``, ``"zip"``.
+
+        Returns:
+            ``Path`` to the created archive file inside a temporary directory.
+
+        Raises:
+            ValueError: If *fmt* is not a recognised format.
+        """
+        _TAR_MODES = {
+            "tar.gz": ("gz", ".tar.gz"),
+            "tar.bz2": ("bz2", ".tar.bz2"),
+            "tar.xz": ("xz", ".tar.xz"),
+        }
+
+        fmt_lower = fmt.lower()
+        tmp_dir = Path(tempfile.mkdtemp(prefix="bsp_archive_"))
+        try:
+            if fmt_lower in _TAR_MODES:
+                mode, ext = _TAR_MODES[fmt_lower]
+                archive_path = tmp_dir / f"{basename}{ext}"
+                with tarfile.open(archive_path, f"w:{mode}") as tar:
+                    for file_path in files:
+                        tar.add(file_path, arcname=file_path.name)
+            elif fmt_lower == "zip":
+                archive_path = tmp_dir / f"{basename}.zip"
+                with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for file_path in files:
+                        zf.write(file_path, arcname=file_path.name)
+            else:
+                raise ValueError(
+                    f"Unsupported archive format '{fmt}'. "
+                    "Choose one of: tar.gz, tar.bz2, tar.xz, zip."
+                )
+        except Exception:
+            # Clean up the temp dir if archive creation fails.
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+        return archive_path
