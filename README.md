@@ -17,6 +17,8 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
+- 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
+- ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 
 ## Installation
 
@@ -26,12 +28,21 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 pip install bsp-registry-tools
 ```
 
+To also install the optional HTTP server dependencies:
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
 ### From Source
 
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
 pip install .
+
+# With server extras:
+pip install ".[server]"
 ```
 
 ### Dependencies
@@ -41,6 +52,27 @@ pip install .
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
+
+**Optional — server mode** (`pip install bsp-registry-tools[server]`):
+
+- [FastAPI](https://fastapi.tiangolo.com/) >= 0.100.0
+- [uvicorn](https://www.uvicorn.org/) >= 0.23.0
+- [strawberry-graphql](https://strawberry.rocks/) >= 0.200.0
+
+#### Optional extras for cloud deployment
+
+Cloud SDK dependencies are optional and only needed if you use `bsp deploy`:
+
+```bash
+# Azure Blob Storage support
+pip install "bsp-registry-tools[azure]"
+
+# AWS S3 support
+pip install "bsp-registry-tools[aws]"
+
+# Both providers
+pip install "bsp-registry-tools[deploy]"
+```
 
 ## Quick Start
 
@@ -185,12 +217,12 @@ bsp shell poky-qemuarm64-scarthgap
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,tree,export,shell} ...
+           {build,list,containers,tree,export,shell,server,deploy} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell}
+  {build,list,containers,tree,export,shell,server,deploy}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs
@@ -198,6 +230,8 @@ positional arguments:
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
+    server              Start a GraphQL / REST HTTP server
+    deploy              Deploy build artifacts to cloud storage
 
 options:
   -h, --help            show this help message and exit
@@ -328,7 +362,7 @@ BSP Registry
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout]
+bsp build <bsp_name> [--clean] [--checkout] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build --device <device> --release <release> [--feature <feat>...] [--clean] [--checkout]
 bsp build --all [--clean] [--keep-going] [--checkout]
 ```
@@ -339,6 +373,12 @@ bsp build --all [--clean] [--keep-going] [--checkout]
 | `--checkout` | Validate configuration and checkout repos without building (fast, implies no Docker build) |
 | `--all`, `-a` | Build every BSP preset defined in the registry one by one (sequential) |
 | `--keep-going`, `-k` | When used with `--all`, continue building remaining presets after a failure and print a summary at the end (default: stop on first failure) |
+| `--deploy` | Deploy artifacts to cloud storage after a successful build |
+| `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
+| `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
+| `--deploy-prefix PREFIX` | Remote path prefix template (overrides registry config) |
+| `--deploy-archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--deploy-archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 
 **Examples:**
 
@@ -360,6 +400,12 @@ bsp build --all
 
 # Build all presets, continue past failures, clean before each build
 bsp build --all --keep-going --clean
+
+# Build and deploy artifacts to Azure automatically
+bsp build poky-qemuarm64-scarthgap --deploy
+
+# Build and deploy to a specific AWS bucket
+bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-container my-s3-bucket
 ```
 
 #### `shell` — Interactive shell in build environment
@@ -402,9 +448,272 @@ bsp export poky-qemuarm64-scarthgap
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
 
+#### `server` — Start an HTTP server (REST + GraphQL)
+
+Starts a FastAPI-based HTTP server that exposes the full BSP registry via both a REST API and a GraphQL API.  Requires the `server` optional extras (`pip install "bsp-registry-tools[server]"`).
+
+```bash
+bsp server [--host HOST] [--port PORT] [--reload]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host HOST` | `127.0.0.1` | Host address to bind to |
+| `--port PORT` | `8080` | Port to listen on |
+| `--reload` | — | Enable auto-reload on code changes (development mode) |
+
+---
+
+#### `deploy` — Upload build artifacts to cloud storage
+
+Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
+to Azure Blob Storage or AWS S3.
+
+```bash
+bsp deploy <bsp_name> [OPTIONS]
+bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
+| `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--dry-run` | List what would be uploaded without uploading (no credentials required) |
+
+**Examples:**
+
+```bash
+# Start server on localhost:8080 (default)
+bsp server
+
+# Expose on all interfaces on port 9000
+bsp server --host 0.0.0.0 --port 9000
+
+# With a specific registry file
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0 --port 8080
+
+# Development mode with auto-reload
+bsp server --reload
+```
+
+Once started, the following interfaces are available:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
+| `http://localhost:8080/redoc` | ReDoc UI (REST) |
+| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
+| `http://localhost:8080/api/v1/…` | REST API endpoints |
+
+## HTTP Server (REST + GraphQL)
+
+The `bsp server` command exposes the entire BSP registry over HTTP.  Both a REST API and a GraphQL API are available simultaneously on the same port.
+
+### Installation
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
+### Starting the server
+
+```bash
+# Default: http://127.0.0.1:8080
+bsp server
+
+# Custom host/port
+bsp server --host 0.0.0.0 --port 9000
+
+# Using a specific registry file
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0 --port 8080
+```
+
+### REST API (`/api/v1/`)
+
+#### Query endpoints (GET)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/bsp` | List all BSP presets |
+| GET | `/api/v1/devices` | List all hardware devices |
+| GET | `/api/v1/releases` | List all releases |
+| GET | `/api/v1/releases?device=<slug>` | List releases compatible with a device |
+| GET | `/api/v1/features` | List all optional features |
+| GET | `/api/v1/distros` | List all distribution definitions |
+| GET | `/api/v1/frameworks` | List all framework definitions |
+| GET | `/api/v1/containers` | List all Docker container definitions |
+
+**Example:**
+
+```bash
+curl http://localhost:8080/api/v1/devices
+```
+
+```json
+[
+  {
+    "slug": "qemuarm64",
+    "description": "QEMU ARM64 (emulated)",
+    "vendor": "qemu",
+    "soc_vendor": "arm",
+    "soc_family": null,
+    "includes": ["kas/qemu/qemuarm64.yaml"],
+    "local_conf": []
+  }
+]
+```
+
+#### Action endpoints (POST)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/export` | Resolve and return a BSP config as YAML |
+| POST | `/api/v1/build` | Trigger a BSP build (blocking) |
+| POST | `/api/v1/shell` | Run a command inside the build container |
+
+All action endpoints accept a JSON body with either `bsp_name` **or** both `device` + `release`:
+
+```bash
+# Export by preset name
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap"}'
+
+# Export by components
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"device": "qemuarm64", "release": "scarthgap", "features": []}'
+
+# Validate (checkout only) without building
+curl -X POST http://localhost:8080/api/v1/build \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap", "checkout_only": true}'
+```
+
+#### Interactive REST documentation
+
+Navigate to **`http://localhost:8080/docs`** for the full Swagger / OpenAPI UI or **`http://localhost:8080/redoc`** for ReDoc.
+
+### GraphQL API (`/graphql`)
+
+Navigate to **`http://localhost:8080/graphql`** for the interactive GraphiQL editor.
+
+#### Queries
+
+```graphql
+# List all devices
+{ devices { slug description vendor socVendor } }
+
+# List all BSP presets
+{ bsp { name description device release features } }
+
+# List releases compatible with a specific device
+{ releases(device: "qemuarm64") { slug description yoctoVersion } }
+
+# List features, distros, frameworks, and containers
+{ features { slug description compatibleWith }
+  distros { slug description framework }
+  frameworks { slug vendor }
+  containers { name image } }
+```
+
+#### Mutations
+
+```graphql
+# Export BSP config by preset name
+mutation {
+  exportBsp(bspName: "poky-qemuarm64-scarthgap") {
+    yamlContent
+  }
+}
+
+# Export by components
+mutation {
+  exportBsp(device: "qemuarm64", release: "scarthgap") {
+    yamlContent
+  }
+}
+
+# Validate (checkout only) without building
+mutation {
+  buildBsp(bspName: "poky-qemuarm64-scarthgap", checkoutOnly: true) {
+    status
+    message
+  }
+}
+
+# Run a command in the build container
+mutation {
+  shellCommand(bspName: "poky-qemuarm64-scarthgap", command: "bitbake -e") {
+    returnCode
+    output
+  }
+}
+```
+
+### Python API — embedding the server
+
+You can also embed the server directly in Python code:
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+app = create_app(registry_path="/path/to/bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+Or reuse an already-initialised `BspManager`:
+
+```python
+from bsp import BspManager
+from bsp.server import create_app
+import uvicorn
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+app = create_app(manager=manager)
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+---
+
+# Deploy using registry-configured settings (Azure by default)
+bsp deploy poky-qemuarm64-scarthgap
+
+# Preview what would be uploaded without uploading
+bsp deploy poky-qemuarm64-scarthgap --dry-run
+
+# Deploy to an explicit Azure container
+bsp deploy poky-qemuarm64-scarthgap --container bsp-artifacts
+
+# Deploy to AWS S3
+bsp deploy poky-qemuarm64-scarthgap --provider aws --bucket my-s3-bucket
+
+# Deploy by components with a custom prefix
+bsp deploy --device qemuarm64 --release scarthgap --prefix "builds/{vendor}/{device}/{date}"
+
+# Upload only compressed image files
+bsp deploy poky-qemuarm64-scarthgap --pattern "**/*.wic.gz"
+```
+
+**Authentication:**
+
+| Provider | Authentication |
+|----------|---------------|
+| Azure | `AZURE_STORAGE_CONNECTION_STRING` env var, or `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (supports `az login`, service principal env vars, Managed Identity) |
+| AWS | Standard boto3 credential chain: `~/.aws/credentials`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars, IAM role, instance profile |
+
+See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details, YAML configuration, and CI/CD integration examples.
+
 ## Registry Configuration Reference
 
-The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  Key top-level sections:
+The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
 
 ### `specification`
 
@@ -570,6 +879,86 @@ registry:
 > **Note**: `release` (singular) and `releases` (plural) are mutually exclusive.
 > Exactly one must be specified per preset entry.
 
+### `deploy` (optional)
+
+Global cloud deployment configuration applied to all builds.  An individual
+`BspPreset` can also include a `deploy:` block that overrides specific settings
+for that preset (see [Per-preset override](#per-preset-deploy-override) below).
+
+```yaml
+deploy:
+  provider: azure                                   # "azure" (default) or "aws"
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}      # Azure only; supports $ENV{} expansion
+  container: bsp-artifacts                          # Azure container name
+  # bucket: my-s3-bucket                           # AWS alternative to container
+  prefix: "{vendor}/{device}/{release}/{date}"      # remote path prefix template
+  patterns:                                         # glob patterns for files to upload
+    - "**/*.wic.gz"
+    - "**/*.wic.bz2"
+    - "**/*.tar.bz2"
+    - "**/*.ext4"
+    - "**/*.sdimg"
+  artifact_dirs:                                    # subdirs under build_path to search
+    - tmp/deploy/images
+    - tmp/deploy/sdk
+  include_manifest: true                            # upload a JSON manifest of all artifacts
+```
+
+**Prefix template variables:**
+
+| Variable | Value |
+|----------|-------|
+| `{device}` | Device slug |
+| `{release}` | Release slug |
+| `{distro}` | Effective distro slug |
+| `{vendor}` | Device vendor slug |
+| `{date}` | Build date in `YYYY-MM-DD` format |
+| `{datetime}` | Build datetime in `YYYYMMDD-HHMMSS` format |
+
+#### Per-preset deploy override
+
+Add a `deploy:` block directly on a `BspPreset` to override specific global
+deploy settings for that preset.  Only fields that differ from their default
+values override the global config; other fields keep the global value.
+CLI flags (`--provider`, `--container`, …) are applied last.
+
+```yaml
+deploy:                               # global: Azure, shared container
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: qemuarm64-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+
+    # Overrides only container and prefix; provider/account_url come from global.
+    - name: imx8mp-adv-scarthgap-release
+      device: imx8mp-adv
+      release: scarthgap
+      features: []
+      deploy:
+        container: imx8mp-release-artifacts         # ← override
+        prefix: "release/{device}/{release}/{date}" # ← override
+        patterns:
+          - "**/*.wic.gz"                           # ← override
+
+    # Switches to AWS entirely for this preset.
+    - name: aws-build-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      deploy:
+        provider: aws                 # ← override: switch provider
+        container: my-s3-bucket       # ← override: bucket name
+```
+
+See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
+
 ## KAS Configuration Files
 
 KAS configuration files define Yocto layer repositories, machine settings, and build targets. See the [examples/kas/](examples/kas/) directory for reference configurations.
@@ -657,6 +1046,62 @@ kas = KasManager(
 kas.validate_kas_files()
 ```
 
+### Starting the HTTP server programmatically
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+# Create and run the server (requires bsp-registry-tools[server])
+app = create_app(registry_path="bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+
+### Cloud Deployment API
+
+```python
+from bsp import BspManager
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+# Deploy artifacts from a preset build (dry-run)
+result = manager.deploy_bsp("poky-qemuarm64-scarthgap", dry_run=True)
+print(f"Would upload {result.success_count} artifact(s)")
+
+# Deploy with overrides
+result = manager.deploy_bsp(
+    "poky-qemuarm64-scarthgap",
+    deploy_overrides={
+        "provider": "aws",
+        "container": "my-s3-bucket",
+        "prefix": "builds/{device}/{release}/{date}",
+    },
+)
+for artifact in result.artifacts:
+    print(f"  {artifact.local_path.name} → {artifact.remote_url}")
+
+# Deploy by components
+result = manager.deploy_by_components(
+    device_slug="qemuarm64",
+    release_slug="scarthgap",
+)
+
+# Use the storage backend and deployer directly
+from bsp.storage import create_backend
+from bsp.deployer import ArtifactDeployer
+from bsp.models import DeployConfig
+
+config = DeployConfig(
+    provider="azure",
+    container="bsp-artifacts",
+    prefix="{device}/{release}/{date}",
+    patterns=["**/*.wic.gz"],
+)
+backend = create_backend("azure", container_name="bsp-artifacts", dry_run=True)
+deployer = ArtifactDeployer(config, backend)
+result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", release="scarthgap")
+```
+
 ## Development
 
 ### Setup Development Environment
@@ -698,18 +1143,33 @@ bsp-registry-tools/
 │   ├── models.py             # Dataclass models (v2.0 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
 │   ├── utils.py              # YAML / Docker utilities
-│   └── exceptions.py         # Custom exceptions
+│   ├── exceptions.py         # Custom exceptions
+│   └── server/               # Optional HTTP server (requires [server] extras)
+│       ├── __init__.py       # Exports create_app
+│       ├── app.py            # FastAPI application factory
+│       ├── rest.py           # REST router (/api/v1/*)
+│       ├── graphql_schema.py # Strawberry GraphQL schema
+│       └── types.py          # Pydantic response models
+│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
+│   └── storage/              # Cloud storage backends
+│       ├── __init__.py       # Exports CloudStorageBackend and create_backend()
+│       ├── base.py           # Abstract CloudStorageBackend base class
+│       ├── azure.py          # AzureStorageBackend (azure-storage-blob)
+│       ├── aws.py            # AwsStorageBackend (boto3)
+│       └── factory.py        # create_backend() factory function
 ├── pyproject.toml            # Package configuration
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
 ├── docs/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
-│   └── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
 │   ├── test_cli.py
+│   ├── test_deploy.py        # Deployment tests
 │   ├── test_registry_fetcher.py
 │   └── ...
 ├── examples/
@@ -764,22 +1224,28 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
+| `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
+| `AzureStorageBackend` | Azure Blob Storage backend (requires `azure-storage-blob`) |
+| `AwsStorageBackend` | AWS S3 backend (requires `boto3`) |
 
 ### Data Classes
 
 | Class | Description |
 |-------|-------------|
-| `RegistryRoot` | Root registry container (specification, registry, containers, environments) |
+| `RegistryRoot` | Root registry container (specification, registry, containers, environments, deploy) |
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
 | `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
-| `BspPreset` | Named preset combining device + release + features |
+| `BspPreset` | Named preset combining device + release + features + optional deploy config |
 | `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
 | `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
 | `Docker` | Docker image, build arg, privileged mode, and runtime_args configuration |
 | `NamedEnvironment` | Named environment bundling a container reference, variables, and optional copy entries |
 | `EnvironmentVariable` | Name/value pair with `$ENV{}` expansion support |
+| `DeployConfig` | Cloud deployment configuration (provider, container/bucket, prefix, patterns, artifact dirs) |
+| `DeployResult` | Result of a deployment run: list of uploaded artifacts with URLs and checksums |
 
 ### Exceptions
 
