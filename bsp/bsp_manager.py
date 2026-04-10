@@ -7,19 +7,35 @@ import os
 import shutil
 import sys
 import tempfile
+from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
+from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
 from .kas_manager import KasManager
-from .models import BspPreset, Docker, EnvironmentVariable
+from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
+from .storage import create_backend
 from .utils import get_registry_from_yaml_file, build_docker
 
 if COLORAMA_AVAILABLE:
     from colorama import Fore, Style
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _expand_env(value: str) -> str:
+    """Expand ``$ENV{VAR}`` placeholders in *value* with OS environment values."""
+    import re
+    def _replace(m):
+        var = m.group(1)
+        return os.environ.get(var, m.group(0))
+    return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
 
 # =============================================================================
 # Main BSP Management Class with v2.0 Support
@@ -960,6 +976,9 @@ class BspManager:
         resolved: ResolvedConfig,
         checkout_only: bool = False,
         label: str = "",
+        deploy_after_build: bool = False,
+        preset: Optional[BspPreset] = None,
+        deploy_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -968,6 +987,10 @@ class BspManager:
             resolved: Resolved build configuration
             checkout_only: If True, only checkout and validate without building
             label: Descriptive label for log messages
+            deploy_after_build: If True, deploy artifacts after a successful build
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
+            deploy_overrides: CLI-level overrides for the deploy configuration
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1006,16 +1029,30 @@ class BspManager:
             else:
                 kas_mgr.build_project()
                 logging.info(f"Build completed successfully!")
+                if deploy_after_build:
+                    self._deploy_resolved(
+                        resolved,
+                        preset=preset,
+                        deploy_overrides=deploy_overrides or {},
+                    )
         finally:
             self._cleanup_temp_kas_file()
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False) -> None:
+    def build_bsp(
+        self,
+        bsp_name: str,
+        checkout_only: bool = False,
+        deploy_after_build: bool = False,
+        deploy_overrides: Optional[Dict] = None,
+    ) -> None:
         """
         Build a BSP by preset name.
 
         Args:
             bsp_name: Name of the BSP preset to build
             checkout_only: If True, only checkout and validate without building
+            deploy_after_build: If True, deploy artifacts after a successful build
+            deploy_overrides: CLI-level overrides for the deploy configuration
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1026,6 +1063,9 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{preset.name} - {preset.description}",
+            deploy_after_build=deploy_after_build,
+            preset=preset,
+            deploy_overrides=deploy_overrides,
         )
 
     def build_by_components(
@@ -1034,6 +1074,8 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         checkout_only: bool = False,
+        deploy_after_build: bool = False,
+        deploy_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1043,6 +1085,8 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
             checkout_only: If True, only checkout and validate without building
+            deploy_after_build: If True, deploy artifacts after a successful build
+            deploy_overrides: CLI-level overrides for the deploy configuration
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1057,6 +1101,8 @@ class BspManager:
             resolved,
             checkout_only=checkout_only,
             label=f"{device_slug}/{release_slug}",
+            deploy_after_build=deploy_after_build,
+            deploy_overrides=deploy_overrides,
         )
 
     # ------------------------------------------------------------------
@@ -1269,6 +1315,201 @@ class BspManager:
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
         )
+
+    # ------------------------------------------------------------------
+    # Deploy
+    # ------------------------------------------------------------------
+
+    def _resolve_deploy_config(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        deploy_overrides: Optional[Dict] = None,
+    ) -> DeployConfig:
+        """
+        Resolve the effective ``DeployConfig`` for a build.
+
+        Merge order (later entries override earlier ones):
+        1. Root-level ``deploy`` from the registry (global defaults)
+        2. Preset-level ``deploy`` (if the preset defines one) — only fields
+           that differ from the ``DeployConfig`` defaults are applied, so a
+           minimal preset block only needs to specify the fields it wants to
+           override.
+        3. CLI-supplied *deploy_overrides* dict
+
+        If no deploy config is defined anywhere a default ``DeployConfig``
+        is returned.
+
+        Args:
+            resolved: Resolved build configuration.
+            preset: Optional BSP preset whose ``deploy`` block (if any) is
+                    merged on top of the root-level config.
+            deploy_overrides: Dict of field overrides from the CLI.
+
+        Returns:
+            Effective ``DeployConfig`` instance.
+        """
+        # Start with global registry deploy config or defaults
+        base = self.model.deploy if self.model and self.model.deploy else DeployConfig()
+
+        # Expand $ENV{VAR} in account_url if present
+        if base.account_url:
+            base = replace(base, account_url=_expand_env(base.account_url))
+
+        # Apply preset-level deploy overrides (only fields that differ from defaults)
+        if preset is not None and preset.deploy is not None:
+            preset_deploy = preset.deploy
+            defaults = DeployConfig()
+            preset_overrides = {
+                f.name: getattr(preset_deploy, f.name)
+                for f in dataclass_fields(preset_deploy)
+                if getattr(preset_deploy, f.name) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
+        # Apply CLI overrides
+        if deploy_overrides:
+            base = replace(base, **{k: v for k, v in deploy_overrides.items() if v is not None})
+
+        return base
+
+    def _deploy_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+    ) -> DeployResult:
+        """
+        Deploy build artifacts for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration containing build path and
+                      device/release/distro metadata.
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When True log what would be uploaded without uploading.
+
+        Returns:
+            ``DeployResult`` with metadata for every uploaded artifact.
+        """
+        deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
+
+        if dry_run:
+            deploy_cfg = DeployConfig(**{**deploy_cfg.__dict__, "provider": deploy_cfg.provider})
+
+        # Determine container/bucket name
+        container_or_bucket = deploy_cfg.container or deploy_cfg.bucket
+        if not container_or_bucket and not dry_run:
+            logging.error(
+                "No storage container/bucket configured for deployment. "
+                "Set 'deploy.container' in the registry or pass --container/--bucket."
+            )
+            sys.exit(1)
+
+        # Build provider-specific kwargs
+        provider = deploy_cfg.provider
+        if provider == "azure":
+            backend_kwargs: Dict = {
+                "container_name": container_or_bucket or "bsp-artifacts",
+                "account_url": deploy_cfg.account_url,
+                "dry_run": dry_run,
+            }
+        elif provider == "aws":
+            backend_kwargs = {
+                "bucket_name": container_or_bucket or "bsp-artifacts",
+                "region": deploy_cfg.region,
+                "profile": deploy_cfg.profile,
+                "dry_run": dry_run,
+            }
+        else:
+            logging.error("Unsupported deploy provider: %s", provider)
+            sys.exit(1)
+
+        try:
+            backend = create_backend(provider, **backend_kwargs)
+        except (ImportError, ValueError) as exc:
+            logging.error("Failed to initialize storage backend: %s", exc)
+            sys.exit(1)
+
+        deployer = ArtifactDeployer(deploy_cfg, backend)
+        result = deployer.deploy(
+            build_path=resolved.build_path,
+            device=resolved.device.slug,
+            release=resolved.release.slug,
+            distro=resolved.effective_distro or "",
+            vendor=resolved.device.vendor,
+        )
+
+        # Print summary
+        action = "[dry-run] Would upload" if dry_run else "Uploaded"
+        if result.artifacts:
+            print(f"\n{action} {result.success_count} artifact(s):")
+            for art in result.artifacts:
+                print(f"  {art.local_path.name} → {art.remote_url}")
+            if result.manifest_url:
+                print(f"  manifest.json → {result.manifest_url}")
+        else:
+            print("No artifacts found to deploy.")
+
+        return result
+
+    def deploy_bsp(
+        self,
+        bsp_name: str,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+    ) -> DeployResult:
+        """
+        Deploy artifacts for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When True list what would be uploaded without uploading.
+
+        Returns:
+            ``DeployResult`` with upload metadata.
+
+        Raises:
+            SystemExit: If preset not found or deployment fails.
+        """
+        logging.info("Deploying artifacts for BSP preset: %s", bsp_name)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        return self._deploy_resolved(resolved, preset=preset, deploy_overrides=deploy_overrides, dry_run=dry_run)
+
+    def deploy_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+    ) -> DeployResult:
+        """
+        Deploy artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When True list what would be uploaded without uploading.
+
+        Returns:
+            ``DeployResult`` with upload metadata.
+
+        Raises:
+            SystemExit: If any component is not found or deployment fails.
+        """
+        logging.info(
+            "Deploying artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._deploy_resolved(resolved, deploy_overrides=deploy_overrides, dry_run=dry_run)
 
     # ------------------------------------------------------------------
     # Cleanup

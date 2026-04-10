@@ -10,8 +10,45 @@ from pathlib import Path
 
 from .bsp_manager import BspManager
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
+from .models import ArchiveConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
 from .utils import SUPPORTED_REGISTRY_VERSION
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _collect_deploy_overrides(args) -> dict:
+    """
+    Extract deploy-related CLI arguments into a flat override dict.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    provider = getattr(args, "deploy_provider", None)
+    if provider is not None:
+        overrides["provider"] = provider
+    container = getattr(args, "deploy_container", None)
+    if container is not None:
+        overrides["container"] = container
+    prefix = getattr(args, "deploy_prefix", None)
+    if prefix is not None:
+        overrides["prefix"] = prefix
+    patterns = getattr(args, "deploy_patterns", None)
+    if patterns:
+        overrides["patterns"] = patterns
+    archive_name = getattr(args, "deploy_archive_name", None)
+    archive_format = getattr(args, "deploy_archive_format", None)
+    if archive_name is not None or archive_format is not None:
+        defaults = ArchiveConfig()
+        overrides["archive"] = ArchiveConfig(
+            name=archive_name if archive_name is not None else defaults.name,
+            format=archive_format if archive_format is not None else defaults.format,
+        )
+    return overrides
+
 
 # =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
@@ -97,6 +134,54 @@ def main() -> int:
             "--checkout",
             action="store_true",
             help="Checkout and validate build configuration without building (fast)"
+        )
+        build_parser.add_argument(
+            "--deploy",
+            action="store_true",
+            dest="deploy_after_build",
+            help="Deploy artifacts to cloud storage after a successful build"
+        )
+        build_parser.add_argument(
+            "--deploy-provider",
+            type=str,
+            dest="deploy_provider",
+            metavar="PROVIDER",
+            help="Cloud storage provider for deployment (azure, aws)"
+        )
+        build_parser.add_argument(
+            "--deploy-container",
+            "--deploy-bucket",
+            type=str,
+            dest="deploy_container",
+            metavar="CONTAINER",
+            help="Azure container or AWS bucket name for deployment"
+        )
+        build_parser.add_argument(
+            "--deploy-prefix",
+            type=str,
+            dest="deploy_prefix",
+            metavar="PREFIX",
+            help="Remote path prefix template for deployment"
+        )
+        build_parser.add_argument(
+            "--deploy-archive-name",
+            type=str,
+            dest="deploy_archive_name",
+            default=None,
+            metavar="NAME",
+            help=(
+                "Bundle all artifacts into a single archive with this name before uploading "
+                "(supports {device}, {release}, {distro}, {vendor}, {date}, {datetime})"
+            )
+        )
+        build_parser.add_argument(
+            "--deploy-archive-format",
+            type=str,
+            dest="deploy_archive_format",
+            default=None,
+            metavar="FORMAT",
+            choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
+            help="Compression format for the archive bundle (default: tar.gz)"
         )
 
         # ----------------------------------------------------------------
@@ -230,6 +315,99 @@ def main() -> int:
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
         )
 
+        # ----------------------------------------------------------------
+        # Deploy command
+        # ----------------------------------------------------------------
+        deploy_parser = subparsers.add_parser(
+            "deploy", help="Deploy build artifacts to cloud storage"
+        )
+        deploy_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="Name of the BSP preset whose artifacts to deploy"
+        )
+        deploy_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based deployment)"
+        )
+        deploy_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based deployment)"
+        )
+        deploy_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug (can be specified multiple times)"
+        )
+        deploy_parser.add_argument(
+            "--provider",
+            type=str,
+            dest="deploy_provider",
+            default=None,
+            metavar="PROVIDER",
+            help="Cloud storage provider: azure (default) or aws"
+        )
+        deploy_parser.add_argument(
+            "--container",
+            "--bucket",
+            type=str,
+            dest="deploy_container",
+            default=None,
+            metavar="CONTAINER",
+            help="Azure Blob container name or AWS S3 bucket name"
+        )
+        deploy_parser.add_argument(
+            "--prefix",
+            type=str,
+            dest="deploy_prefix",
+            default=None,
+            metavar="PREFIX",
+            help=(
+                "Remote path prefix template "
+                "(supports {device}, {release}, {distro}, {vendor}, {date})"
+            )
+        )
+        deploy_parser.add_argument(
+            "--pattern",
+            action="append",
+            dest="deploy_patterns",
+            metavar="PATTERN",
+            help="Glob pattern for artifacts to upload (can be specified multiple times)"
+        )
+        deploy_parser.add_argument(
+            "--archive-name",
+            type=str,
+            dest="deploy_archive_name",
+            default=None,
+            metavar="NAME",
+            help=(
+                "Bundle all artifacts into a single archive with this name before uploading "
+                "(supports {device}, {release}, {distro}, {vendor}, {date}, {datetime})"
+            )
+        )
+        deploy_parser.add_argument(
+            "--archive-format",
+            type=str,
+            dest="deploy_archive_format",
+            default=None,
+            metavar="FORMAT",
+            choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
+            help="Compression format for the archive bundle (default: tar.gz)"
+        )
+        deploy_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="List what would be uploaded without actually uploading"
+        )
+
         args = parser.parse_args()
 
         # Setup logging based on verbosity
@@ -294,14 +472,24 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            deploy_after_build = getattr(args, "deploy_after_build", False)
+            deploy_overrides = _collect_deploy_overrides(args)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.build_bsp(bsp_name, checkout_only=checkout_only)
+                bsp_mgr.build_bsp(
+                    bsp_name,
+                    checkout_only=checkout_only,
+                    deploy_after_build=deploy_after_build,
+                    deploy_overrides=deploy_overrides,
+                )
             elif device and release:
                 bsp_mgr.build_by_components(
-                    device, release, features, checkout_only=checkout_only
+                    device, release, features,
+                    checkout_only=checkout_only,
+                    deploy_after_build=deploy_after_build,
+                    deploy_overrides=deploy_overrides,
                 )
             else:
                 logging.error(
@@ -396,6 +584,35 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 shell_parser.print_help()
+                return 1
+
+        elif args.command == "deploy":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            dry_run = getattr(args, "dry_run", False)
+            deploy_overrides = _collect_deploy_overrides(args)
+
+            if _check_exclusive(bsp_name, device, release, deploy_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.deploy_bsp(
+                    bsp_name,
+                    deploy_overrides=deploy_overrides,
+                    dry_run=dry_run,
+                )
+            elif device and release:
+                bsp_mgr.deploy_by_components(
+                    device, release, features,
+                    deploy_overrides=deploy_overrides,
+                    dry_run=dry_run,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                deploy_parser.print_help()
                 return 1
 
         else:

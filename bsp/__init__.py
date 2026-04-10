@@ -69,6 +69,7 @@ from .models import (
     BspPreset,
     Registry,
     RegistryRoot,
+    DeployConfig,
 )
 from .utils import (
     read_yaml_file,
@@ -83,6 +84,8 @@ from .environment import EnvironmentManager
 from .kas_manager import KasManager
 from .bsp_manager import BspManager
 from .cli import main
+from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
+from .storage import CloudStorageBackend, create_backend
 
 __all__ = [
     # Exceptions
@@ -122,6 +125,7 @@ __all__ = [
     "BspPreset",
     "Registry",
     "RegistryRoot",
+    "DeployConfig",
     # YAML / Docker utilities
     "read_yaml_file",
     "parse_yaml_file",
@@ -139,4 +143,11 @@ __all__ = [
     "BspManager",
     # CLI
     "main",
+    # Deployer
+    "ArtifactDeployer",
+    "DeployResult",
+    "UploadedArtifact",
+    # Storage
+    "CloudStorageBackend",
+    "create_backend",
 ]
