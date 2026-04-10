@@ -1431,6 +1431,11 @@ deploy:
 
   # Upload a JSON manifest listing all uploaded artifacts (names, sizes, SHA-256)
   include_manifest: true
+
+  # Optional: bundle all artifacts into a single archive before uploading
+  # archive:
+  #   name: "firmware-{device}-{release}-{date}"
+  #   format: tar.gz
 ```
 
 ### `deploy` fields
@@ -1445,6 +1450,7 @@ deploy:
 | `patterns`         | list[str]     | see below | Glob patterns for artifact files to upload |
 | `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to search for artifacts |
 | `include_manifest` | bool          | `true`  | Whether to upload a JSON manifest file listing all uploaded artifacts |
+| `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [ArchiveConfig](#archiveconfig) below. |
 | `region`           | string (opt.) | —       | AWS region (boto3 default if omitted) |
 | `profile`          | string (opt.) | —       | AWS credentials profile name |
 
@@ -1464,6 +1470,28 @@ deploy:
 | `{vendor}`   | Device vendor slug |
 | `{date}`     | Build date in `YYYY-MM-DD` format |
 | `{datetime}` | Build date+time in `YYYYMMDD-HHMMSS` format |
+
+### ArchiveConfig
+
+When an `archive:` block is present, all collected artifact files are bundled
+into a single compressed archive **before** upload.  Only the archive (plus the
+manifest when `include_manifest: true`) is uploaded.
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  archive:
+    name: "firmware-{device}-{release}-{date}"
+    format: tar.gz
+```
+
+| Field    | Type   | Default                       | Description |
+|----------|--------|-------------------------------|-------------|
+| `name`   | string | `"artifacts-{device}-{date}"` | Archive filename template without extension.  Supports the same placeholders as `prefix`. |
+| `format` | string | `"tar.gz"`                    | Compression format: `tar.gz`, `tar.bz2`, `tar.xz`, or `zip`. |
+
+The appropriate extension is appended automatically.
 
 ### Preset-level `deploy` override
 
