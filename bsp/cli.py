@@ -648,7 +648,7 @@ def main() -> int:
                 shell_parser.print_help()
                 return 1
 
-elif args.command == "deploy":
+        elif args.command == "deploy":
             device = getattr(args, "device", None)
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
