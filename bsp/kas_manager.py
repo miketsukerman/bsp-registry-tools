@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -527,9 +528,23 @@ class KasManager:
         if task:
             args.extend(["--task", task])
 
+        build_start = time.monotonic()
         try:
             self._run_kas_command(args, show_output)
+            elapsed = time.monotonic() - build_start
+            total_seconds = round(elapsed)
+            minutes, seconds = divmod(total_seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            if hours:
+                duration_str = f"{hours}h {minutes}m {seconds}s"
+            elif minutes:
+                duration_str = f"{minutes}m {seconds}s"
+            elif total_seconds > 0:
+                duration_str = f"{seconds}s"
+            else:
+                duration_str = f"{elapsed:.2f}s"
             logging.info("Build completed successfully!")
+            logging.info(f"Build time: {duration_str}")
         except SystemExit:
             raise
         except Exception as e:
