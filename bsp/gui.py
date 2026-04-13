@@ -857,6 +857,7 @@ if TEXTUAL_AVAILABLE:
             Binding("s", "shell", "Shell"),
             Binding("e", "export_config", "Export"),
             Binding("f", "flash", "Flash"),
+            Binding("d", "deploy", "Deploy"),
             Binding("l", "toggle_log", "Log"),
             Binding("c", "cancel", "Cancel", show=False),
             Binding("x", "cancel", "Cancel", show=False),
@@ -929,6 +930,7 @@ if TEXTUAL_AVAILABLE:
                 yield Button("$ Shell", id="btn-shell", variant="default", disabled=True)
                 yield Button("↑ Export", id="btn-export", variant="default", disabled=True)
                 yield Button("⚡ Flash", id="btn-flash", variant="warning", disabled=True)
+                yield Button("☁ Deploy", id="btn-deploy", variant="primary", disabled=True)
                 yield Button("✕ Cancel", id="btn-cancel", variant="error", disabled=True)
 
             # Output log panel
@@ -1232,6 +1234,9 @@ if TEXTUAL_AVAILABLE:
             # Enable action buttons
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
                 self.query_one(btn_id, Button).disabled = False
+            # Deploy button: only enable when build artifacts are present
+            has_artifacts = bool(self._scan_build_artifacts(bsp_name))
+            self.query_one("#btn-deploy", Button).disabled = not has_artifacts
 
         @on(ListView.Selected, "#artifacts-view")
         def on_artifact_selected(self, event: ListView.Selected) -> None:
@@ -1488,6 +1493,10 @@ if TEXTUAL_AVAILABLE:
             artifacts_list = self.query_one("#artifacts-view", ListView)
             path_widget = self.query_one("#artifacts-path", Static)
 
+            # Keep deploy button in sync with artifact availability
+            if self._selected_bsp_name == bsp_name:
+                self.query_one("#btn-deploy", Button).disabled = not bool(artifacts)
+
             # Always show the build path
             build_path = self._resolve_build_path(bsp_name)
             if build_path:
@@ -1549,6 +1558,10 @@ if TEXTUAL_AVAILABLE:
         def on_cancel(self) -> None:
             self.action_cancel()
 
+        @on(Button.Pressed, "#btn-deploy")
+        def on_deploy(self) -> None:
+            self.action_deploy()
+
         # ── Keybinding actions ───────────────────────────────────
 
         def action_toggle_log(self) -> None:
@@ -1563,7 +1576,7 @@ if TEXTUAL_AVAILABLE:
             """Reload the BSP registry."""
             self._bsp_manager = None
             self._selected_bsp_name = None
-            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-cancel"):
+            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-deploy", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
             self.query_one("#env-view", Static).update("")
@@ -1648,6 +1661,20 @@ if TEXTUAL_AVAILABLE:
                     )
 
             self.push_screen(FlashScreen(self._selected_bsp_name, images), _on_result)
+
+        def action_deploy(self) -> None:
+            """Deploy build artifacts for the selected BSP to cloud storage."""
+            if not self._selected_bsp_name:
+                self._log("[yellow]No BSP selected[/yellow]")
+                return
+            artifacts = self._scan_build_artifacts(self._selected_bsp_name)
+            if not artifacts:
+                self._log(
+                    f"[yellow]No build artifacts found for "
+                    f"[bold]{self._selected_bsp_name}[/bold] — build first[/yellow]"
+                )
+                return
+            self._run_bsp_command("deploy", self._selected_bsp_name)
 
         def action_cancel(self) -> None:
             """Terminate the currently running build/export command."""
