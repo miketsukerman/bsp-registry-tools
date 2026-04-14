@@ -4,6 +4,7 @@ Tests for bsp/lava_job_builder.py.
 
 import tempfile
 from pathlib import Path
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +21,7 @@ from bsp.resolver import ResolvedConfig
 def _make_resolved(
     device_slug: str = "qemu-arm64",
     release_slug: str = "scarthgap",
-    feature_slugs=None,
+    feature_slugs: Optional[List[str]] = None,
     build_path: str = "build/poky/qemu-arm64/scarthgap",
 ) -> ResolvedConfig:
     """Create a minimal ResolvedConfig for testing."""

@@ -1556,12 +1556,16 @@ class BspManager:
         # Gather server-level defaults from the registry
         registry_lava = getattr(self.model, "lava", None) if self.model else None
 
+        def _registry_lava_str(attr: str) -> str:
+            """Return the expanded string value of a registry LAVA field, or ''."""
+            return _expand_env(getattr(registry_lava, attr) if registry_lava else "")
+
         # Resolve LAVA connection settings (CLI > preset > registry)
         lava_cfg = testing_config.lava if (testing_config and testing_config.lava) else None
 
-        server = lava_server or _expand_env(registry_lava.server if registry_lava else "")
-        token = lava_token or _expand_env(registry_lava.token if registry_lava else "")
-        username = _expand_env(registry_lava.username if registry_lava else "")
+        server = lava_server or _registry_lava_str("server")
+        token = lava_token or _registry_lava_str("token")
+        username = _registry_lava_str("username")
         wait_timeout = registry_lava.wait_timeout if registry_lava else 3600
         poll_interval = registry_lava.poll_interval if registry_lava else 30
 

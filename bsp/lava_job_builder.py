@@ -159,6 +159,8 @@ def _make_jinja_env(template_dir: Optional[str] = None) -> "Environment":
     else:
         loader = BaseLoader()
 
+    # keep_trailing_newline ensures rendered YAML ends with a newline, as
+    # required by LAVA's job submission API which rejects definitions without it.
     env = Environment(loader=loader, keep_trailing_newline=True)
     env.filters["basename"] = _basename_filter
     env.filters["max"] = max
