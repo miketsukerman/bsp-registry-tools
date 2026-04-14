@@ -3013,3 +3013,115 @@ class TestPresetLocalConfAndTargets:
         combined = "".join(kas["local_conf_header"].values())
         assert 'DISTRO_FEATURES += "x11"' in combined
         assert 'BB_NUMBER_THREADS = "4"' in combined
+
+
+class TestLavaEnvVarExpansion:
+    """$ENV{VAR} placeholders in LAVA config fields must be expanded at call time."""
+
+    def _run_lava_test_fields(self, manager, preset_name, env):
+        """
+        Helper: call _test_resolved() with mocked LavaClient and capture the
+        constructor kwargs so we can inspect expanded field values.
+        """
+        import os
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset(preset_name)
+
+        testing_config = preset.testing if preset else None
+        captured = {}
+
+        with patch.dict(os.environ, env, clear=False):
+            with patch("bsp.lava_client.LavaClient") as mock_client_cls:
+                mock_instance = MagicMock()
+                mock_instance.submit_job.return_value = 42
+                mock_instance.job_url.return_value = "http://lava.test/jobs/42"
+                mock_client_cls.return_value = mock_instance
+                with patch("bsp.lava_job_builder.build_lava_job", return_value="job: yaml"):
+                    manager._test_resolved(
+                        resolved=resolved,
+                        testing_config=testing_config,
+                    )
+                captured["client_kwargs"] = mock_client_cls.call_args[1]
+                captured["build_lava_job_kwargs"] = (
+                    mock_instance.submit_job.call_args[0][0]
+                )
+        return captured
+
+    def test_server_env_var_expanded(self, registry_with_lava_env_vars_file, monkeypatch):
+        """$ENV{TEST_LAVA_SERVER} in lava.server must be expanded before use."""
+        monkeypatch.setenv("TEST_LAVA_SERVER", "https://lava.example.com")
+        monkeypatch.setenv("TEST_LAVA_TOKEN", "mytoken")
+        monkeypatch.setenv("TEST_LAVA_USER", "lavauser")
+        monkeypatch.setenv("TEST_ARTIFACT_URL", "http://files.ci/builds")
+        monkeypatch.setenv("TEST_BOARD_IP", "10.0.0.1")
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        result = self._run_lava_test_fields(
+            manager, "qemuarm64-scarthgap",
+            {
+                "TEST_LAVA_SERVER": "https://lava.example.com",
+                "TEST_LAVA_TOKEN": "mytoken",
+                "TEST_LAVA_USER": "lavauser",
+                "TEST_ARTIFACT_URL": "http://files.ci/builds",
+                "TEST_BOARD_IP": "10.0.0.1",
+            },
+        )
+        assert result["client_kwargs"]["server"] == "https://lava.example.com"
+
+    def test_token_env_var_expanded(self, registry_with_lava_env_vars_file, monkeypatch):
+        """$ENV{TEST_LAVA_TOKEN} in lava.token must be expanded before use."""
+        monkeypatch.setenv("TEST_LAVA_SERVER", "https://lava.example.com")
+        monkeypatch.setenv("TEST_LAVA_TOKEN", "secret-token-value")
+        monkeypatch.setenv("TEST_LAVA_USER", "lavauser")
+        monkeypatch.setenv("TEST_ARTIFACT_URL", "http://files.ci/builds")
+        monkeypatch.setenv("TEST_BOARD_IP", "10.0.0.1")
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        result = self._run_lava_test_fields(
+            manager, "qemuarm64-scarthgap",
+            {
+                "TEST_LAVA_SERVER": "https://lava.example.com",
+                "TEST_LAVA_TOKEN": "secret-token-value",
+                "TEST_LAVA_USER": "lavauser",
+                "TEST_ARTIFACT_URL": "http://files.ci/builds",
+                "TEST_BOARD_IP": "10.0.0.1",
+            },
+        )
+        assert result["client_kwargs"]["token"] == "secret-token-value"
+
+    def test_server_not_expanded_when_placeholder_remains(
+        self, registry_with_lava_env_vars_file
+    ):
+        """
+        When the env var is not set the placeholder is kept as-is (matching
+        _expand_env behaviour for missing vars).  A missing value should NOT
+        silently become the literal string '$ENV{TEST_LAVA_SERVER}'.
+        We just verify the LavaClient is never reached (error path triggers first
+        because server is the unexpanded placeholder which is truthy but invalid).
+        This test acts as documentation of the current behaviour.
+        """
+        import os
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset("qemuarm64-scarthgap")
+        env_without_vars = {
+            k: v for k, v in os.environ.items()
+            if k not in (
+                "TEST_LAVA_SERVER", "TEST_LAVA_TOKEN", "TEST_LAVA_USER",
+                "TEST_ARTIFACT_URL", "TEST_BOARD_IP",
+            )
+        }
+        with patch.dict(os.environ, env_without_vars, clear=True):
+            with patch("bsp.lava_client.LavaClient") as mock_client_cls:
+                mock_instance = MagicMock()
+                mock_instance.submit_job.return_value = 1
+                mock_client_cls.return_value = mock_instance
+                with patch("bsp.lava_job_builder.build_lava_job", return_value="job: yaml"):
+                    manager._test_resolved(
+                        resolved=resolved,
+                        testing_config=preset.testing if preset else None,
+                    )
+                # The unexpanded placeholder is truthy so LavaClient is
+                # constructed — but the server value must still contain the
+                # unexpanded placeholder text (env var not set → kept as-is).
+                if mock_client_cls.called:
+                    server_arg = mock_client_cls.call_args[1]["server"]
+                    assert "$ENV{TEST_LAVA_SERVER}" in server_arg

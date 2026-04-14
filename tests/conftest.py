@@ -1692,3 +1692,57 @@ def registry_with_preset_local_conf_and_targets_file(tmp_dir):
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML)
     return registry_path
+
+
+REGISTRY_WITH_LAVA_ENV_VARS_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+lava:
+  server: "$ENV{TEST_LAVA_SERVER}"
+  token: "$ENV{TEST_LAVA_TOKEN}"
+  username: "$ENV{TEST_LAVA_USER}"
+registry:
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      includes:
+        - kas/scarthgap.yaml
+  bsp:
+    - name: qemuarm64-scarthgap
+      description: "QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      build:
+        container: "debian-bookworm"
+        path: build/qemuarm64-scarthgap
+      testing:
+        lava:
+          device_type: "qemu-aarch64"
+          artifact_url: "$ENV{TEST_ARTIFACT_URL}"
+          tags: ["hil"]
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "$ENV{TEST_BOARD_IP}"
+"""
+
+
+@pytest.fixture
+def registry_with_lava_env_vars_file(tmp_dir):
+    """Create a registry YAML with $ENV{} placeholders in LAVA config fields."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_LAVA_ENV_VARS_YAML)
+    return registry_path

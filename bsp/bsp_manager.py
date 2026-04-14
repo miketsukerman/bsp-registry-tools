@@ -1559,9 +1559,9 @@ class BspManager:
         # Resolve LAVA connection settings (CLI > preset > registry)
         lava_cfg = testing_config.lava if (testing_config and testing_config.lava) else None
 
-        server = lava_server or (registry_lava.server if registry_lava else "")
-        token = lava_token or (registry_lava.token if registry_lava else "")
-        username = registry_lava.username if registry_lava else ""
+        server = lava_server or _expand_env(registry_lava.server if registry_lava else "")
+        token = lava_token or _expand_env(registry_lava.token if registry_lava else "")
+        username = _expand_env(registry_lava.username if registry_lava else "")
         wait_timeout = registry_lava.wait_timeout if registry_lava else 3600
         poll_interval = registry_lava.poll_interval if registry_lava else 30
 
@@ -1573,7 +1573,7 @@ class BspManager:
                 tpl = (self.config_path.parent / tpl).resolve()
             job_template_path = str(tpl)
 
-        effective_artifact_url = (
+        effective_artifact_url = _expand_env(
             artifact_url
             or (lava_cfg.artifact_url if lava_cfg else "")
         )
@@ -1583,7 +1583,7 @@ class BspManager:
         robot_variables: dict = {}
         if lava_cfg and lava_cfg.robot:
             robot_suites = list(lava_cfg.robot.suites)
-            robot_variables = dict(lava_cfg.robot.variables)
+            robot_variables = {k: _expand_env(v) for k, v in lava_cfg.robot.variables.items()}
 
         if not server:
             logging.error(
