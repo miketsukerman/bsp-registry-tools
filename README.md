@@ -1105,6 +1105,8 @@ registry:
     # preset per release, named "{name}-{release_slug}":
     #   poky-qemuarm64-scarthgap  (auto-composed path: build/poky-qemuarm64-scarthgap)
     #   poky-qemuarm64-styhead    (auto-composed path: build/poky-qemuarm64-styhead)
+    # The "testing" block (and "deploy", "local_conf", "targets") is inherited
+    # by every expanded preset, so a single testing block covers all releases.
     - name: poky-qemuarm64
       description: "Poky QEMU ARM64"
       device: qemuarm64
@@ -1112,10 +1114,29 @@ registry:
       features: [systemd, debug]
       build:              # optional: container override (path is always auto-composed)
         container: "debian-bookworm"
+      testing:            # inherited by poky-qemuarm64-scarthgap AND poky-qemuarm64-styhead
+        lava:
+          device_type: "qemu-aarch64"
+          artifact_url: "http://files.ci/builds"
+          tags: ["hil", "qemu"]
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "10.0.0.5"
 ```
 
 > **Note**: `release` (singular) and `releases` (plural) are mutually exclusive.
-> Exactly one must be specified per preset entry.
+> Exactly one must be specified per preset entry.  When `releases` is used, all
+> non-build fields (`features`, `local_conf`, `targets`, `deploy`, `testing`) are
+> inherited unchanged by every expanded preset.  Build paths are computed per
+> release as `{build.path or "build/{name}"}-{release_slug}`.  You can therefore
+> test every release in the list with a single `testing` block:
+>
+> ```bash
+> bsp test poky-qemuarm64-scarthgap --wait
+> bsp test poky-qemuarm64-styhead --wait
+> ```
 
 ### `deploy` (optional)
 
