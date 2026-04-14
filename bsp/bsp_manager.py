@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
+from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
 from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
 from .path_resolver import resolver
@@ -1510,6 +1511,176 @@ class BspManager:
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
         return self._deploy_resolved(resolved, deploy_overrides=deploy_overrides, dry_run=dry_run)
+
+    # ------------------------------------------------------------------
+    # Gather (download artifacts from cloud storage)
+    # ------------------------------------------------------------------
+
+    def _gather_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download build artifacts for the given :class:`~bsp.resolver.ResolvedConfig`.
+
+        The effective :class:`~bsp.models.DeployConfig` is resolved with the
+        same merge order as :meth:`_deploy_resolved` so that ``gather`` and
+        ``deploy`` always refer to the same storage location.
+
+        Args:
+            resolved: Resolved build configuration containing device/release
+                      metadata and the default local build path.
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
+            dest_dir: Local directory to write downloaded artifacts into.
+                      When ``None`` the build path from *resolved* is used.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` placeholder in the
+                           prefix template (``YYYY-MM-DD``).
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with the local paths of every
+            downloaded artifact.
+        """
+        deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
+
+        # Determine container/bucket name
+        container_or_bucket = deploy_cfg.container or deploy_cfg.bucket
+        if not container_or_bucket and not dry_run:
+            logging.error(
+                "No storage container/bucket configured for gather. "
+                "Set 'deploy.container' in the registry or pass --container/--bucket."
+            )
+            sys.exit(1)
+
+        # Build provider-specific kwargs
+        provider = deploy_cfg.provider
+        if provider == "azure":
+            backend_kwargs: Dict = {
+                "container_name": container_or_bucket or "bsp-artifacts",
+                "account_url": deploy_cfg.account_url,
+                "dry_run": dry_run,
+            }
+        elif provider == "aws":
+            backend_kwargs = {
+                "bucket_name": container_or_bucket or "bsp-artifacts",
+                "region": deploy_cfg.region,
+                "profile": deploy_cfg.profile,
+                "dry_run": dry_run,
+            }
+        else:
+            logging.error("Unsupported gather provider: %s", provider)
+            sys.exit(1)
+
+        try:
+            backend = create_backend(provider, **backend_kwargs)
+        except (ImportError, ValueError) as exc:
+            logging.error("Failed to initialize storage backend: %s", exc)
+            sys.exit(1)
+
+        effective_dest = dest_dir if dest_dir is not None else resolved.build_path
+
+        gatherer = ArtifactGatherer(deploy_cfg, backend)
+        result = gatherer.gather(
+            dest_dir=effective_dest,
+            device=resolved.device.slug,
+            release=resolved.release.slug,
+            distro=resolved.effective_distro or "",
+            vendor=resolved.device.vendor,
+            date_override=date_override,
+        )
+
+        # Print summary
+        action = "[dry-run] Would download" if dry_run else "Downloaded"
+        if result.artifacts:
+            print(f"\n{action} {result.total_count} artifact(s) → {effective_dest}:")
+            for local_path in result.artifacts:
+                print(f"  {local_path.name}")
+        else:
+            print(f"No artifacts found to gather from '{provider}' storage.")
+
+        return result
+
+    def gather_bsp(
+        self,
+        bsp_name: str,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download artifacts for a BSP preset from cloud storage.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            dest_dir: Local destination directory.  Defaults to the preset's
+                      configured build path when ``None``.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with download metadata.
+        """
+        logging.info("Gathering artifacts for BSP preset: %s", bsp_name)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        return self._gather_resolved(
+            resolved,
+            preset=preset,
+            dest_dir=dest_dir,
+            deploy_overrides=deploy_overrides,
+            dry_run=dry_run,
+            date_override=date_override,
+        )
+
+    def gather_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            dest_dir: Local destination directory.  Defaults to the resolved
+                      build path when ``None``.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with download metadata.
+        """
+        logging.info(
+            "Gathering artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._gather_resolved(
+            resolved,
+            dest_dir=dest_dir,
+            deploy_overrides=deploy_overrides,
+            dry_run=dry_run,
+            date_override=date_override,
+        )
 
     # ------------------------------------------------------------------
     # Test (HIL via LAVA + Robot Framework)

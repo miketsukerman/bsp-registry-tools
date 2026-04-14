@@ -2,10 +2,11 @@
 Abstract base class for cloud storage backends.
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 
 class CloudStorageBackend(ABC):
@@ -13,15 +14,16 @@ class CloudStorageBackend(ABC):
     Abstract base class for cloud storage backends.
 
     Concrete implementations (Azure, AWS) must implement
-    ``upload_file`` and ``list_artifacts``.  The ``upload_directory``
-    method is provided here and delegates to ``upload_file``.
+    ``upload_file``, ``download_file``, and ``list_artifacts``.  The
+    ``upload_directory`` and ``download_prefix`` methods are provided here
+    and delegate to ``upload_file`` / ``download_file`` respectively.
     """
 
     def __init__(self, dry_run: bool = False):
         """
         Args:
-            dry_run: When ``True`` no files are actually uploaded; the
-                     method calls are logged but not executed.
+            dry_run: When ``True`` no files are actually uploaded or downloaded;
+                     the method calls are logged but not executed.
         """
         self.dry_run = dry_run
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -45,6 +47,21 @@ class CloudStorageBackend(ABC):
 
         Raises:
             RuntimeError: On upload failure.
+        """
+
+    @abstractmethod
+    def download_file(self, remote_path: str, local_path: Path) -> None:
+        """
+        Download a single blob/object from cloud storage.
+
+        Args:
+            remote_path: Source path/key inside the container or bucket.
+            local_path: Destination path on the local filesystem.  The
+                        parent directory is created automatically if it does
+                        not exist.
+
+        Raises:
+            RuntimeError: On download failure.
         """
 
     @abstractmethod
@@ -77,6 +94,78 @@ class CloudStorageBackend(ABC):
             URL string.
         """
         return remote_path
+
+    def get_manifest(self, remote_prefix: str) -> Optional[Dict]:
+        """
+        Fetch and parse a ``manifest.json`` stored under *remote_prefix*.
+
+        The manifest is expected at ``{remote_prefix}/manifest.json`` and must
+        be valid JSON.  Returns ``None`` when the manifest is missing or cannot
+        be parsed instead of raising.
+
+        Args:
+            remote_prefix: Remote prefix used during deployment (same value
+                           passed to :meth:`upload_file`).
+
+        Returns:
+            Parsed manifest as a Python dict, or ``None`` if not available.
+        """
+        import tempfile
+
+        if self.dry_run:
+            self.logger.info("[dry-run] Would fetch manifest from %s/manifest.json", remote_prefix)
+            return None
+
+        manifest_remote = f"{remote_prefix}/manifest.json"
+        tmp = Path(tempfile.mktemp(suffix=".json", prefix="bsp_manifest_"))
+        try:
+            self.download_file(manifest_remote, tmp)
+            with open(tmp) as fh:
+                return json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("Manifest not available at %s: %s", manifest_remote, exc)
+            return None
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def download_prefix(self, remote_prefix: str, dest_dir: Path) -> List[Path]:
+        """
+        Download all blobs under *remote_prefix* into *dest_dir*.
+
+        Uses :meth:`list_artifacts` to enumerate the remote objects and then
+        calls :meth:`download_file` for each one.  Skips ``manifest.json``
+        because it is metadata, not a build artifact.
+
+        Args:
+            remote_prefix: Remote prefix to enumerate.
+            dest_dir: Local directory to write files into.
+
+        Returns:
+            List of local ``Path`` objects for every downloaded file.
+        """
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        downloaded: List[Path] = []
+
+        if self.dry_run:
+            self.logger.info(
+                "[dry-run] Would download all blobs under %s → %s", remote_prefix, dest_dir
+            )
+            return downloaded
+
+        remote_keys = self.list_artifacts(remote_prefix)
+        for key in remote_keys:
+            filename = Path(key).name
+            if filename == "manifest.json":
+                continue
+            local_path = dest_dir / filename
+            try:
+                self.download_file(key, local_path)
+                downloaded.append(local_path)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.error("Failed to download %s: %s", key, exc)
+
+        return downloaded
 
     def upload_directory(
         self,

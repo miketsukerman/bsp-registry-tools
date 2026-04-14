@@ -50,6 +50,30 @@ def _collect_deploy_overrides(args) -> dict:
     return overrides
 
 
+def _collect_gather_overrides(args) -> dict:
+    """
+    Extract gather-related CLI arguments into a flat deploy-override dict.
+
+    Only the storage location fields are extracted (provider, container,
+    prefix).  Archive and pattern fields are upload-only concepts and are
+    therefore intentionally omitted.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    provider = getattr(args, "deploy_provider", None)
+    if provider is not None:
+        overrides["provider"] = provider
+    container = getattr(args, "deploy_container", None)
+    if container is not None:
+        overrides["container"] = container
+    prefix = getattr(args, "deploy_prefix", None)
+    if prefix is not None:
+        overrides["prefix"] = prefix
+    return overrides
+
+
 # =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
 # =============================================================================
@@ -441,6 +465,95 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
+        # Gather command
+        # ----------------------------------------------------------------
+        gather_parser = subparsers.add_parser(
+            "gather",
+            help="Download BSP build artifacts from cloud storage"
+        )
+        gather_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="Name of the BSP preset whose artifacts to download (mutually exclusive with --device/--release)"
+        )
+        gather_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based gather)"
+        )
+        gather_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based gather)"
+        )
+        gather_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug (can be specified multiple times)"
+        )
+        gather_parser.add_argument(
+            "--dest-dir",
+            type=str,
+            dest="dest_dir",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to write downloaded artifacts into. "
+                "Defaults to the build path configured in the registry."
+            )
+        )
+        gather_parser.add_argument(
+            "--provider",
+            type=str,
+            dest="deploy_provider",
+            default=None,
+            metavar="PROVIDER",
+            help="Cloud storage provider: azure (default) or aws"
+        )
+        gather_parser.add_argument(
+            "--container",
+            "--bucket",
+            type=str,
+            dest="deploy_container",
+            default=None,
+            metavar="CONTAINER",
+            help="Azure Blob container name or AWS S3 bucket name"
+        )
+        gather_parser.add_argument(
+            "--prefix",
+            type=str,
+            dest="deploy_prefix",
+            default=None,
+            metavar="PREFIX",
+            help=(
+                "Remote path prefix template "
+                "(supports {device}, {release}, {distro}, {vendor}, {date})"
+            )
+        )
+        gather_parser.add_argument(
+            "--date",
+            type=str,
+            dest="gather_date",
+            default=None,
+            metavar="DATE",
+            help=(
+                "Date override for the {date} placeholder in the prefix template "
+                "(YYYY-MM-DD). Defaults to today's date."
+            )
+        )
+        gather_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="List what would be downloaded without actually downloading"
+        )
+
+        # ----------------------------------------------------------------
         # Test command
         # ----------------------------------------------------------------
         test_parser = subparsers.add_parser(
@@ -731,6 +844,41 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 deploy_parser.print_help()
+                return 1
+
+        elif args.command == "gather":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            dest_dir = getattr(args, "dest_dir", None)
+            dry_run = getattr(args, "dry_run", False)
+            date_override = getattr(args, "gather_date", None)
+            gather_overrides = _collect_gather_overrides(args)
+
+            if _check_exclusive(bsp_name, device, release, gather_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.gather_bsp(
+                    bsp_name,
+                    dest_dir=dest_dir,
+                    deploy_overrides=gather_overrides,
+                    dry_run=dry_run,
+                    date_override=date_override,
+                )
+            elif device and release:
+                bsp_mgr.gather_by_components(
+                    device, release, features,
+                    dest_dir=dest_dir,
+                    deploy_overrides=gather_overrides,
+                    dry_run=dry_run,
+                    date_override=date_override,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                gather_parser.print_help()
                 return 1
 
         elif args.command == "test":

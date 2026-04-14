@@ -91,6 +91,7 @@ from .lava_job_builder import build_lava_job
 from .bsp_manager import BspManager
 from .cli import main
 from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
+from .gatherer import ArtifactGatherer, GatherResult
 from .storage import CloudStorageBackend, create_backend
 
 __all__ = [
@@ -161,6 +162,9 @@ __all__ = [
     "ArtifactDeployer",
     "DeployResult",
     "UploadedArtifact",
+    # Gatherer
+    "ArtifactGatherer",
+    "GatherResult",
     # Storage
     "CloudStorageBackend",
     "create_backend",
