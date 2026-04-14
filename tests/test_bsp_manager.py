@@ -1250,6 +1250,25 @@ registry:
         with pytest.raises(SystemExit):
             manager.resolver.list_presets()
 
+    def test_expanded_preset_inherits_testing_config(
+        self, registry_with_multi_release_testing_file
+    ):
+        """Expanded presets must carry the testing block from the parent preset."""
+        manager = BspManager(config_path=str(registry_with_multi_release_testing_file))
+        manager.initialize()
+        for release_slug in ("scarthgap", "walnascar"):
+            preset = manager.get_bsp_by_name(f"poky-qemux86-64-{release_slug}")
+            assert preset is not None, f"preset poky-qemux86-64-{release_slug} not found"
+            assert preset.testing is not None, (
+                f"testing config missing on expanded preset poky-qemux86-64-{release_slug}"
+            )
+            assert preset.testing.lava is not None
+            assert preset.testing.lava.device_type == "qemu-qemux86-64"
+            assert preset.testing.lava.artifact_url == "http://files.ci/builds"
+            assert "hil" in preset.testing.lava.tags
+            assert preset.testing.lava.robot is not None
+            assert "vendors/qemu/tests/robot/smoke.robot" in preset.testing.lava.robot.suites
+
 
 class TestVendorOverrides:
     """Tests for vendor_overrides (with sub-releases) on Release."""

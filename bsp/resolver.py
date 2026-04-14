@@ -856,7 +856,11 @@ class V2Resolver:
                     vendor_release=preset.vendor_release,
                     override=preset.override,
                     features=list(preset.features),
+                    local_conf=preset.local_conf,
+                    targets=list(preset.targets),
                     build=expanded_build,
+                    deploy=preset.deploy,
+                    testing=preset.testing,
                 )
             )
         return expanded

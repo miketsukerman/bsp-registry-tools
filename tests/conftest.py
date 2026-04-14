@@ -791,6 +791,63 @@ def registry_with_multi_release_bsp_file(tmp_dir):
     return registry_path
 
 
+REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  devices:
+    - slug: qemux86-64
+      description: "QEMU x86-64"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/qemu/qemux86-64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+    - slug: walnascar
+      description: "Yocto 5.2"
+      yocto_version: "5.2"
+      includes:
+        - kas/walnascar.yaml
+  features: []
+  bsp:
+    - name: poky-qemux86-64
+      description: "Poky QEMU x86-64"
+      device: qemux86-64
+      releases: [scarthgap, walnascar]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemux86-64
+      testing:
+        lava:
+          device_type: "qemu-qemux86-64"
+          artifact_url: "http://files.ci/builds"
+          tags: ["hil", "qemu"]
+          robot:
+            suites:
+              - vendors/qemu/tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "192.168.1.1"
+"""
+
+
+@pytest.fixture
+def registry_with_multi_release_testing_file(tmp_dir):
+    """Create a registry YAML with a multi-release preset that has a testing block."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML)
+    return registry_path
+
+
 REGISTRY_WITH_MULTI_RELEASE_NO_PATH_BSP_YAML = """
 specification:
   version: "2.0"
