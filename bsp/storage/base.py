@@ -117,8 +117,11 @@ class CloudStorageBackend(ABC):
             return None
 
         manifest_remote = f"{remote_prefix}/manifest.json"
-        tmp = Path(tempfile.mktemp(suffix=".json", prefix="bsp_manifest_"))
         try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".json", prefix="bsp_manifest_", delete=False
+            ) as fh:
+                tmp = Path(fh.name)
             self.download_file(manifest_remote, tmp)
             with open(tmp) as fh:
                 return json.load(fh)
