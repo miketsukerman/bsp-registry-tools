@@ -89,13 +89,48 @@ class TestBuildLavaJobBasic:
         assert "debug" in result
 
     def test_image_url_formed_from_artifact_url_and_build_path(self):
+        # artifact_url is now a full-URL override; it is used as-is.
         resolved = _make_resolved(build_path="build/poky/myboard/scarthgap")
         result = build_lava_job(
             resolved,
             device_type="x",
-            artifact_url="http://files.example.com",
+            artifact_url="http://files.example.com/my-image.wic.gz",
+        )
+        assert "http://files.example.com/my-image.wic.gz" in result
+
+    def test_image_url_from_artifact_server_url_and_artifact_name(self):
+        # artifact_server_url + artifact_name → image_url composition
+        resolved = _make_resolved(build_path="build/poky/myboard/scarthgap")
+        result = build_lava_job(
+            resolved,
+            device_type="x",
+            artifact_server_url="http://files.example.com",
+            artifact_name="core-image-minimal.wic.gz",
+        )
+        assert "http://files.example.com/core-image-minimal.wic.gz" in result
+
+    def test_image_url_from_artifact_server_url_and_build_path(self):
+        # legacy path: artifact_server_url + build_path when artifact_name absent
+        resolved = _make_resolved(build_path="build/poky/myboard/scarthgap")
+        result = build_lava_job(
+            resolved,
+            device_type="x",
+            artifact_server_url="http://files.example.com",
         )
         assert "http://files.example.com/build/poky/myboard/scarthgap" in result
+
+    def test_artifact_url_takes_priority_over_server_url(self):
+        # Full artifact_url wins over artifact_server_url + artifact_name
+        resolved = _make_resolved(build_path="build/poky/myboard/scarthgap")
+        result = build_lava_job(
+            resolved,
+            device_type="x",
+            artifact_url="http://override.example.com/full.wic.gz",
+            artifact_server_url="http://server.example.com",
+            artifact_name="other.wic.gz",
+        )
+        assert "http://override.example.com/full.wic.gz" in result
+        assert "http://server.example.com" not in result
 
     def test_no_image_url_when_artifact_url_empty(self):
         resolved = _make_resolved()
@@ -187,6 +222,8 @@ class TestBuildLavaJobCustomTemplate:
             "jn={{ job_name }}\n"
             "iu={{ image_url }}\n"
             "au={{ artifact_url }}\n"
+            "asu={{ artifact_server_url }}\n"
+            "an={{ artifact_name }}\n"
             "bp={{ build_path }}\n"
             "ds={{ device_slug }}\n"
             "rs={{ release_slug }}\n"
@@ -204,7 +241,9 @@ class TestBuildLavaJobCustomTemplate:
         result = build_lava_job(
             resolved,
             device_type="dt-val",
-            artifact_url="http://art",
+            artifact_url="http://art/img.wic.gz",
+            artifact_server_url="http://server",
+            artifact_name="img.wic.gz",
             job_template_path=str(tpl),
             lava_tags=["t1"],
             robot_suites=["s.robot"],
@@ -217,6 +256,8 @@ class TestBuildLavaJobCustomTemplate:
         assert "lt=t1" in result
         assert "ro=s.robot" in result
         assert "tm=2" in result  # 120 // 60
+        assert "asu=http://server" in result
+        assert "an=img.wic.gz" in result
 
 
 # =============================================================================
@@ -229,7 +270,7 @@ class TestBuiltinTemplateYamlValid:
         result = build_lava_job(
             resolved,
             device_type="qemu-aarch64",
-            artifact_url="http://files.example.com",
+            artifact_server_url="http://files.example.com",
             lava_tags=["ci"],
             robot_suites=["tests/smoke.robot"],
             robot_variables={"IP": "10.0.0.1"},

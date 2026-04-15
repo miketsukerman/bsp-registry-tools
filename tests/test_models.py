@@ -475,3 +475,78 @@ class TestV2DataClasses:
         )
         assert "yocto" in feat.compatible_with
         assert "isar" in feat.compatible_with
+
+
+# =============================================================================
+# LavaServerConfig and LavaTestConfig — new artifact fields
+# =============================================================================
+
+from bsp.models import LavaServerConfig, LavaTestConfig, TestingConfig, RegistryRoot, Specification, Registry
+
+
+class TestLavaServerConfig:
+    def test_artifact_server_url_defaults_to_empty(self):
+        cfg = LavaServerConfig()
+        assert cfg.artifact_server_url == ""
+
+    def test_artifact_server_url_set(self):
+        cfg = LavaServerConfig(artifact_server_url="http://files.example.com/builds")
+        assert cfg.artifact_server_url == "http://files.example.com/builds"
+
+    def test_existing_fields_unaffected(self):
+        cfg = LavaServerConfig(server="https://lava.example.com", token="tok")
+        assert cfg.server == "https://lava.example.com"
+        assert cfg.token == "tok"
+
+
+class TestLavaTestConfig:
+    def test_artifact_server_url_defaults_to_empty(self):
+        cfg = LavaTestConfig()
+        assert cfg.artifact_server_url == ""
+
+    def test_artifact_name_defaults_to_empty(self):
+        cfg = LavaTestConfig()
+        assert cfg.artifact_name == ""
+
+    def test_artifact_url_still_present(self):
+        cfg = LavaTestConfig(artifact_url="http://direct.example.com/image.wic.gz")
+        assert cfg.artifact_url == "http://direct.example.com/image.wic.gz"
+
+    def test_artifact_server_url_and_name_set(self):
+        cfg = LavaTestConfig(
+            artifact_server_url="http://files.example.com",
+            artifact_name="core-image-minimal.wic.gz",
+        )
+        assert cfg.artifact_server_url == "http://files.example.com"
+        assert cfg.artifact_name == "core-image-minimal.wic.gz"
+
+    def test_all_three_artifact_fields_independent(self):
+        cfg = LavaTestConfig(
+            artifact_url="http://full.example.com/img.wic.gz",
+            artifact_server_url="http://server.example.com",
+            artifact_name="img.wic.gz",
+        )
+        assert cfg.artifact_url == "http://full.example.com/img.wic.gz"
+        assert cfg.artifact_server_url == "http://server.example.com"
+        assert cfg.artifact_name == "img.wic.gz"
+
+
+class TestLavaServerConfigInRegistryRoot:
+    def test_registry_level_lava_artifact_server_url(self):
+        lava = LavaServerConfig(
+            server="https://lava.example.com",
+            artifact_server_url="http://fileserver/builds",
+        )
+        root = RegistryRoot(
+            specification=Specification(version="2.0"),
+            registry=Registry(),
+            lava=lava,
+        )
+        assert root.lava.artifact_server_url == "http://fileserver/builds"
+
+    def test_registry_level_lava_defaults(self):
+        root = RegistryRoot(
+            specification=Specification(version="2.0"),
+            registry=Registry(),
+        )
+        assert root.lava is None

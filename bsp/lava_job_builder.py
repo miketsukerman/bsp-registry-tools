@@ -16,12 +16,26 @@ All variables below are available in the Jinja2 template:
     Human-readable job name composed from device slug, release slug, and any
     active feature slugs.
 ``image_url``
-    Full URL to the primary image artifact.  Constructed by joining
-    *artifact_url* with *build_path*.  Templates may use ``image_url``
-    directly or build custom URLs from the individual context variables below.
+    Full URL to the primary image artifact.  Resolution priority:
+
+    1. ``artifact_url`` when provided (full override, no composition).
+    2. ``artifact_server_url`` + ``artifact_name`` when both are non-empty
+       (``<artifact_server_url>/<artifact_name>``).
+    3. ``artifact_server_url`` + ``build_path`` when ``artifact_name`` is
+       absent (legacy behaviour, same as before).
+    4. Empty string when nothing is configured.
+
+    Templates may use ``image_url`` directly or build custom URLs from the
+    individual context variables below.
 ``artifact_url``
-    Base URL where build artifacts are served (from ``testing.lava.artifact_url``
-    or overridden at the CLI).
+    Full override URL (from ``testing.lava.artifact_url`` or ``--artifact-url``
+    on the CLI).  When non-empty this value is used as-is for ``image_url``.
+``artifact_server_url``
+    Base URL of the artifact server (from ``lava.artifact_server_url`` at
+    registry level or ``testing.lava.artifact_server_url`` at preset level).
+``artifact_name``
+    Image file name (from ``testing.lava.artifact_name``).  Combined with
+    ``artifact_server_url`` to form ``image_url``.
 ``build_path``
     Relative build output directory path (from :attr:`ResolvedConfig.build_path`).
 ``device_slug``
@@ -176,6 +190,8 @@ def build_lava_job(
     resolved: ResolvedConfig,
     device_type: str,
     artifact_url: str = "",
+    artifact_server_url: str = "",
+    artifact_name: str = "",
     job_template_path: Optional[str] = None,
     lava_tags: Optional[List[str]] = None,
     robot_suites: Optional[List[str]] = None,
@@ -189,8 +205,21 @@ def build_lava_job(
         resolved: Resolved BSP build configuration (device, release, features,
                   build_path, etc.).
         device_type: LAVA device-type label (e.g. ``"qemu-aarch64"``).
-        artifact_url: Base URL where built image artifacts are accessible.
-                      When empty no ``deploy`` action image URL is generated.
+        artifact_url: Complete URL to the primary image artifact.  When
+                      non-empty this value is used as ``image_url`` directly,
+                      bypassing ``artifact_server_url`` + ``artifact_name``
+                      composition.
+        artifact_server_url: Base URL of the artifact server
+                             (e.g. ``"http://fileserver/builds"``).  Combined
+                             with ``artifact_name`` (or ``build_path`` when
+                             ``artifact_name`` is empty) to form ``image_url``
+                             when ``artifact_url`` is not provided.
+        artifact_name: Image file name
+                       (e.g. ``"core-image-minimal-qemu.wic.gz"``).
+                       When provided, ``image_url`` is composed as
+                       ``<artifact_server_url>/<artifact_name>``.
+                       When empty, the legacy ``<artifact_server_url>/<build_path>``
+                       composition is used.
         job_template_path: Optional path to a Jinja2 ``.yaml.j2`` template
                            file.  When ``None`` the built-in minimal template
                            is used.
@@ -218,10 +247,14 @@ def build_lava_job(
     job_name_parts = [resolved.device.slug, resolved.release.slug] + feature_slugs
     job_name = "-".join(job_name_parts)
 
-    # Build the image artifact URL
+    # Build the image artifact URL (priority: full artifact_url > server+name > server+path)
     build_path = resolved.build_path or ""
-    if artifact_url and build_path:
-        image_url = artifact_url.rstrip("/") + "/" + build_path.lstrip("/")
+    if artifact_url:
+        image_url = artifact_url
+    elif artifact_server_url and artifact_name:
+        image_url = artifact_server_url.rstrip("/") + "/" + artifact_name.lstrip("/")
+    elif artifact_server_url and build_path:
+        image_url = artifact_server_url.rstrip("/") + "/" + build_path.lstrip("/")
     else:
         image_url = artifact_url or ""
 
@@ -230,6 +263,8 @@ def build_lava_job(
         "job_name": job_name,
         "image_url": image_url,
         "artifact_url": artifact_url,
+        "artifact_server_url": artifact_server_url,
+        "artifact_name": artifact_name,
         "build_path": build_path,
         "device_slug": resolved.device.slug,
         "release_slug": resolved.release.slug,

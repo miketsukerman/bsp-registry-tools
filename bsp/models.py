@@ -522,6 +522,13 @@ class LavaServerConfig:
                from the environment.
         username: LAVA username.  Use ``$ENV{LAVA_USER}`` to read it from the
                   environment.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Acts as a
+                             registry-wide default that individual preset
+                             ``testing.lava.artifact_server_url`` blocks can
+                             override.  Used together with ``artifact_name``
+                             to form the full image URL; overridden by
+                             ``--artifact-url`` (full URL) on the CLI.
         wait_timeout: Maximum number of seconds to wait for a submitted job to
                       complete when ``--wait`` is requested (default: 3600).
         poll_interval: Polling interval in seconds when waiting for job
@@ -530,6 +537,7 @@ class LavaServerConfig:
     server: str = ""
     token: str = ""
     username: str = ""
+    artifact_server_url: str = ""
     wait_timeout: int = 3600
     poll_interval: int = 30
 
@@ -563,11 +571,24 @@ class LavaTestConfig:
                       ``.yml.j2``).  Resolved relative to the registry
                       directory.  When omitted a built-in minimal template is
                       used.
-        artifact_url: Base URL where built image artifacts are served (e.g.
-                      ``http://fileserver/builds``).  Combined with the
-                      resolved ``build_path`` to form the full image URL
-                      inside the LAVA job.  Overridden by ``--artifact-url``
-                      on the command line.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Overrides
+                             the registry-level ``lava.artifact_server_url``
+                             for this preset.  Combined with ``artifact_name``
+                             to form the full image URL.  Takes precedence over
+                             the registry-level default but is itself overridden
+                             by a full ``artifact_url`` or the ``--artifact-url``
+                             CLI flag.
+        artifact_name: Image file name (e.g. ``"core-image-minimal-qemu.wic.gz"``).
+                       Prepended with ``artifact_server_url`` to produce the
+                       ``image_url`` context variable inside the LAVA job
+                       template.  Mutually exclusive with ``artifact_url`` —
+                       use ``artifact_url`` when you need to specify the
+                       complete URL without any automatic path composition.
+        artifact_url: Complete URL to the primary image artifact.  Overrides
+                      the ``artifact_server_url`` + ``artifact_name`` combination
+                      and the registry-level default.  Also overridden by the
+                      ``--artifact-url`` CLI flag.
         tags: Optional list of LAVA device tags that the scheduler must
               match when allocating a worker (e.g. ``["hil", "imx8"]``).
         robot: Optional Robot Framework test configuration embedded in the
@@ -575,6 +596,8 @@ class LavaTestConfig:
     """
     device_type: str = ""
     job_template: Optional[str] = None
+    artifact_server_url: str = ""
+    artifact_name: str = ""
     artifact_url: str = ""
     tags: List[str] = field(default_factory=empty_list)
     robot: Optional[RobotTestConfig] = None

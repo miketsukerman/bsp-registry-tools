@@ -1748,10 +1748,22 @@ class BspManager:
                 tpl = (self.config_path.parent / tpl).resolve()
             job_template_path = str(tpl)
 
+        # Resolve artifact_server_url: registry default → preset override
+        effective_artifact_server_url = _expand_env(
+            (lava_cfg.artifact_server_url if lava_cfg else "")
+            or _registry_lava_str("artifact_server_url")
+        )
+        # Resolve artifact_name from the preset (no registry-level equivalent)
+        effective_artifact_name = _expand_env(lava_cfg.artifact_name if lava_cfg else "")
+
+        # Resolve artifact_url: CLI flag > preset artifact_url
+        # artifact_url is the "full URL" escape hatch and wins over the
+        # artifact_server_url + artifact_name composition.
         effective_artifact_url = _expand_env(
             artifact_url
             or (lava_cfg.artifact_url if lava_cfg else "")
         )
+
         lava_tags = lava_cfg.tags if lava_cfg else []
 
         robot_suites: List[str] = []
@@ -1780,6 +1792,8 @@ class BspManager:
             resolved=resolved,
             device_type=device_type,
             artifact_url=effective_artifact_url,
+            artifact_server_url=effective_artifact_server_url,
+            artifact_name=effective_artifact_name,
             job_template_path=job_template_path,
             lava_tags=lava_tags,
             robot_suites=robot_suites,
