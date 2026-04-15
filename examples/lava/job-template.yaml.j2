@@ -2,18 +2,21 @@
 {# Rendered by bsp/lava_job_builder.py — see module docstring for context  #}
 {#                                                                          #}
 {# Available context variables:                                             #}
-{#   device_type    - LAVA device type label                                #}
-{#   job_name       - human-readable job name                               #}
-{#   image_url      - full URL to the primary image artifact                #}
-{#   artifact_url   - base URL where build artifacts are served             #}
-{#   build_path     - relative build output directory path                  #}
-{#   device_slug    - device slug (e.g. "qemu-arm64")                       #}
-{#   release_slug   - release slug (e.g. "scarthgap")                       #}
-{#   feature_slugs  - list of active feature slugs                          #}
-{#   lava_tags      - list of LAVA device tags                              #}
-{#   robot_suites   - list of Robot Framework .robot file paths             #}
-{#   robot_variables - dict of Robot Framework --variable pairs             #}
-{#   timeout_minutes - overall job timeout in minutes                       #}
+{#   device_type         - LAVA device type label                           #}
+{#   job_name            - human-readable job name                          #}
+{#   image_url           - full URL to the primary image artifact           #}
+{#   artifact_url        - complete override URL to the image artifact       #}
+{#                         (wins over artifact_server_url composition)      #}
+{#   artifact_server_url - base URL of the artifact server                  #}
+{#   artifact_name       - image file name prepended with artifact_server_url#}
+{#   build_path          - relative build output directory path             #}
+{#   device_slug         - device slug (e.g. "qemu-arm64")                  #}
+{#   release_slug        - release slug (e.g. "scarthgap")                  #}
+{#   feature_slugs       - list of active feature slugs                     #}
+{#   lava_tags           - list of LAVA device tags                         #}
+{#   robot_suites        - list of Robot Framework .robot file paths        #}
+{#   robot_variables     - dict of Robot Framework --variable pairs         #}
+{#   timeout_minutes     - overall job timeout in minutes                   #}
 
 job_name: "{{ job_name }}"
 device_type: {{ device_type }}

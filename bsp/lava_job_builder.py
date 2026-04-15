@@ -256,7 +256,7 @@ def build_lava_job(
     elif artifact_server_url and build_path:
         image_url = artifact_server_url.rstrip("/") + "/" + build_path.lstrip("/")
     else:
-        image_url = artifact_url or ""
+        image_url = ""
 
     context: Dict = {
         "device_type": device_type,
