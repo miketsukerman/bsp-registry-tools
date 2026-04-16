@@ -573,14 +573,15 @@ class LavaContext:
     image-format decisions.
 
     When a preset does not specify ``testing.lava.context`` the resolver falls
-    back to the device's ``architecture`` field for ``arch``; ``machine``
-    defaults to empty string.
+    back to the device's ``architecture`` field for ``arch`` and to the
+    device's ``slug`` for ``machine``.
 
     Attributes:
         arch: CPU architecture string understood by the LAVA dispatcher
               (e.g. ``"amd64"``, ``"arm64"``, ``"arm"``).
         machine: Machine / board identifier used by the dispatcher
-                 (e.g. ``"qemux86-64"``, ``"imx8mpevk"``).
+                 (e.g. ``"qemux86-64"``, ``"imx8mpevk"``).  Defaults to
+                 the device slug when not set explicitly.
     """
     arch: str = ""
     machine: str = ""

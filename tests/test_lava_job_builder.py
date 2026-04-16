@@ -350,3 +350,48 @@ class TestBuildLavaJobContext:
         parsed = yaml.safe_load(result)
         assert parsed is not None
         assert parsed.get("context") == {"arch": "amd64", "machine": "qemux86-64"}
+
+
+# =============================================================================
+# build_lava_job — machine defaults to device.slug via bsp_manager resolution
+# (testing the context dict that the manager would build)
+# =============================================================================
+
+class TestBuildLavaJobMachineDefaultsToDeviceSlug:
+    """
+    The bsp_manager always sets device_machine = device.slug when no explicit
+    testing.lava.context.machine is provided.  These tests verify that the
+    job builder renders whatever dict it receives correctly, including the
+    slug-derived machine value.
+    """
+
+    def test_machine_from_device_slug_rendered_in_builtin_template(self):
+        resolved = _make_resolved(device_slug="imx8mpevk")
+        # Simulate manager-resolved context: machine = device slug
+        result = build_lava_job(
+            resolved,
+            device_type="imx8mpevk",
+            lava_context={"device_arch": "", "device_machine": "imx8mpevk"},
+        )
+        assert "context:" in result
+        assert "machine: imx8mpevk" in result
+
+    def test_machine_from_device_slug_is_valid_yaml(self):
+        resolved = _make_resolved(device_slug="qemux86-64")
+        result = build_lava_job(
+            resolved,
+            device_type="qemu",
+            lava_context={"device_arch": "amd64", "device_machine": "qemux86-64"},
+        )
+        parsed = yaml.safe_load(result)
+        assert parsed["context"]["machine"] == "qemux86-64"
+
+    def test_arch_empty_machine_slug_still_renders_context(self):
+        resolved = _make_resolved(device_slug="my-device")
+        result = build_lava_job(
+            resolved,
+            device_type="my-device",
+            lava_context={"device_arch": "", "device_machine": "my-device"},
+        )
+        assert "context:" in result
+        assert "machine: my-device" in result

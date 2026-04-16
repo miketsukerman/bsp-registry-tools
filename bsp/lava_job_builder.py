@@ -48,11 +48,13 @@ All variables below are available in the Jinja2 template:
     List of LAVA device tags required by this job.
 ``context``
     Dict with keys ``device_arch`` and ``device_machine`` for the LAVA job's
-    ``context:`` section.  Sourced from ``testing.lava.context`` in the preset;
-    when absent, ``device_arch`` falls back to the device's ``architecture``
-    field and ``device_machine`` defaults to empty string.  The dict is
-    ``None`` when neither source provides a value, so templates should guard
-    with ``{% if context %}``.
+    ``context:`` section.  Resolution priority:
+
+    * ``device_arch``: ``testing.lava.context.arch`` › ``device.architecture`` › ``""``
+    * ``device_machine``: ``testing.lava.context.machine`` › ``device.slug``
+
+    The dict is ``None`` when both fields would be empty (edge case), so
+    templates should guard with ``{% if context %}``.
 ``robot_suites``
     List of Robot Framework ``.robot`` file paths to execute (may be empty).
 ``robot_variables``

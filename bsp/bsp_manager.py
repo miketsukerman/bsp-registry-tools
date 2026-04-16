@@ -1767,22 +1767,26 @@ class BspManager:
         lava_tags = lava_cfg.tags if lava_cfg else []
 
         # Resolve LAVA job context (arch / machine).
-        # Priority: preset testing.lava.context > device.architecture (for arch only).
-        # The context dict is None when neither source provides a value, so the
-        # template can guard with ``{% if context %}``.
-        effective_lava_context: Optional[dict] = None
+        # Priority for arch:    preset testing.lava.context.arch > device.architecture > ""
+        # Priority for machine: preset testing.lava.context.machine > device.slug
+        # The context dict is None only when both arch and machine end up empty.
+        device_arch_fallback = getattr(resolved.device, "architecture", None) or ""
+        device_machine_fallback = resolved.device.slug
+
         if lava_cfg and lava_cfg.context:
-            effective_lava_context = {
-                "device_arch": lava_cfg.context.arch or "",
-                "device_machine": lava_cfg.context.machine or "",
+            effective_arch = lava_cfg.context.arch or device_arch_fallback
+            effective_machine = lava_cfg.context.machine or device_machine_fallback
+        else:
+            effective_arch = device_arch_fallback
+            effective_machine = device_machine_fallback
+
+        if effective_arch or effective_machine:
+            effective_lava_context: Optional[dict] = {
+                "device_arch": effective_arch,
+                "device_machine": effective_machine,
             }
         else:
-            device_arch = getattr(resolved.device, "architecture", None) or ""
-            if device_arch:
-                effective_lava_context = {
-                    "device_arch": device_arch,
-                    "device_machine": "",
-                }
+            effective_lava_context = None
 
         robot_suites: List[str] = []
         robot_variables: dict = {}
