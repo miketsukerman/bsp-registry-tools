@@ -215,6 +215,10 @@ class Device:
               before the build.  Both paths resolve relative to the
               registry file's parent directory.
         soc_family: Optional SoC family identifier (e.g., 'imx8', 'cortex-a57')
+        architecture: Optional target CPU architecture string (e.g. ``"amd64"``,
+                      ``"arm64"``, ``"arm"``).  Used as the default value for
+                      the LAVA job context ``arch`` field when no explicit
+                      ``testing.lava.context.arch`` is provided in the preset.
         build: Deprecated – legacy nested build block.  Use ``includes`` /
                ``local_conf`` / ``copy`` directly and ``BspPreset.build``
                for container and path.
@@ -227,6 +231,7 @@ class Device:
     local_conf: List[str] = field(default_factory=empty_list)
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     soc_family: Optional[str] = None
+    architecture: Optional[str] = None
     build: Optional[DeviceBuild] = None
 
 
@@ -559,6 +564,29 @@ class RobotTestConfig:
 
 
 @dataclass
+class LavaContext:
+    """
+    LAVA job context block (``context:`` in the submitted YAML).
+
+    These values are passed verbatim into the LAVA job's ``context:`` section
+    and are forwarded to the device's LAVA dispatcher for scheduling and
+    image-format decisions.
+
+    When a preset does not specify ``testing.lava.context`` the resolver falls
+    back to the device's ``architecture`` field for ``arch``; ``machine``
+    defaults to empty string.
+
+    Attributes:
+        arch: CPU architecture string understood by the LAVA dispatcher
+              (e.g. ``"amd64"``, ``"arm64"``, ``"arm"``).
+        machine: Machine / board identifier used by the dispatcher
+                 (e.g. ``"qemux86-64"``, ``"imx8mpevk"``).
+    """
+    arch: str = ""
+    machine: str = ""
+
+
+@dataclass
 class LavaTestConfig:
     """
     LAVA-specific test configuration for a BSP preset or device.
@@ -591,6 +619,9 @@ class LavaTestConfig:
                       ``--artifact-url`` CLI flag.
         tags: Optional list of LAVA device tags that the scheduler must
               match when allocating a worker (e.g. ``["hil", "imx8"]``).
+        context: Optional LAVA job context block (``arch`` and ``machine``).
+                 When omitted the resolver falls back to the device's
+                 ``architecture`` field for ``arch``.
         robot: Optional Robot Framework test configuration embedded in the
                LAVA job.
     """
@@ -600,6 +631,7 @@ class LavaTestConfig:
     artifact_name: str = ""
     artifact_url: str = ""
     tags: List[str] = field(default_factory=empty_list)
+    context: Optional[LavaContext] = None
     robot: Optional[RobotTestConfig] = None
 
 

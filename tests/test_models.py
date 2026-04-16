@@ -550,3 +550,65 @@ class TestLavaServerConfigInRegistryRoot:
             registry=Registry(),
         )
         assert root.lava is None
+
+
+# =============================================================================
+# LavaContext model tests
+# =============================================================================
+
+from bsp.models import LavaContext
+
+
+class TestLavaContext:
+    def test_defaults_to_empty_strings(self):
+        ctx = LavaContext()
+        assert ctx.arch == ""
+        assert ctx.machine == ""
+
+    def test_arch_and_machine_set(self):
+        ctx = LavaContext(arch="amd64", machine="qemux86-64")
+        assert ctx.arch == "amd64"
+        assert ctx.machine == "qemux86-64"
+
+    def test_partial_arch_only(self):
+        ctx = LavaContext(arch="arm64")
+        assert ctx.arch == "arm64"
+        assert ctx.machine == ""
+
+    def test_partial_machine_only(self):
+        ctx = LavaContext(machine="imx8mpevk")
+        assert ctx.arch == ""
+        assert ctx.machine == "imx8mpevk"
+
+
+class TestLavaTestConfigContext:
+    def test_context_defaults_to_none(self):
+        from bsp.models import LavaTestConfig
+        cfg = LavaTestConfig()
+        assert cfg.context is None
+
+    def test_context_can_be_set(self):
+        from bsp.models import LavaTestConfig
+        ctx = LavaContext(arch="amd64", machine="qemux86-64")
+        cfg = LavaTestConfig(context=ctx)
+        assert cfg.context is ctx
+        assert cfg.context.arch == "amd64"
+        assert cfg.context.machine == "qemux86-64"
+
+
+class TestDeviceArchitecture:
+    def test_architecture_defaults_to_none(self):
+        from bsp.models import Device
+        dev = Device(slug="qemu", description="QEMU", vendor="qemu", soc_vendor="intel")
+        assert dev.architecture is None
+
+    def test_architecture_can_be_set(self):
+        from bsp.models import Device
+        dev = Device(
+            slug="qemu",
+            description="QEMU",
+            vendor="qemu",
+            soc_vendor="intel",
+            architecture="amd64",
+        )
+        assert dev.architecture == "amd64"

@@ -287,3 +287,66 @@ class TestBuiltinTemplateYamlValid:
         result = build_lava_job(resolved, device_type="qemu-aarch64")
         parsed = yaml.safe_load(result)
         assert parsed is not None
+
+
+# =============================================================================
+# build_lava_job — lava_context parameter
+# =============================================================================
+
+class TestBuildLavaJobContext:
+    def test_no_context_when_lava_context_is_none(self):
+        resolved = _make_resolved()
+        result = build_lava_job(resolved, device_type="qemu", lava_context=None)
+        assert "context:" not in result
+
+    def test_context_rendered_in_builtin_template(self):
+        resolved = _make_resolved()
+        result = build_lava_job(
+            resolved,
+            device_type="qemu",
+            lava_context={"device_arch": "amd64", "device_machine": "qemux86-64"},
+        )
+        assert "context:" in result
+        assert "arch: amd64" in result
+        assert "machine: qemux86-64" in result
+
+    def test_context_rendered_in_custom_template(self, tmp_path):
+        tpl = tmp_path / "ctx.yaml.j2"
+        tpl.write_text(
+            "{% if context %}ctx_arch={{ context.device_arch }}\n"
+            "ctx_mach={{ context.device_machine }}{% endif %}\n"
+        )
+        resolved = _make_resolved()
+        result = build_lava_job(
+            resolved,
+            device_type="qemu",
+            lava_context={"device_arch": "arm64", "device_machine": "imx8mpevk"},
+            job_template_path=str(tpl),
+        )
+        assert "ctx_arch=arm64" in result
+        assert "ctx_mach=imx8mpevk" in result
+
+    def test_context_absent_in_custom_template_when_none(self, tmp_path):
+        tpl = tmp_path / "ctx.yaml.j2"
+        tpl.write_text("{% if context %}CONTEXT{% endif %}no-context\n")
+        resolved = _make_resolved()
+        result = build_lava_job(
+            resolved,
+            device_type="qemu",
+            lava_context=None,
+            job_template_path=str(tpl),
+        )
+        assert "CONTEXT" not in result
+        assert "no-context" in result
+
+    def test_builtin_template_with_context_is_valid_yaml(self):
+        resolved = _make_resolved(build_path="build/poky/qemu/scarthgap")
+        result = build_lava_job(
+            resolved,
+            device_type="qemu",
+            artifact_server_url="http://files.example.com",
+            lava_context={"device_arch": "amd64", "device_machine": "qemux86-64"},
+        )
+        parsed = yaml.safe_load(result)
+        assert parsed is not None
+        assert parsed.get("context") == {"arch": "amd64", "machine": "qemux86-64"}

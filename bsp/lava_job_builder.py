@@ -46,6 +46,13 @@ All variables below are available in the Jinja2 template:
     List of active feature slugs (may be empty).
 ``lava_tags``
     List of LAVA device tags required by this job.
+``context``
+    Dict with keys ``device_arch`` and ``device_machine`` for the LAVA job's
+    ``context:`` section.  Sourced from ``testing.lava.context`` in the preset;
+    when absent, ``device_arch`` falls back to the device's ``architecture``
+    field and ``device_machine`` defaults to empty string.  The dict is
+    ``None`` when neither source provides a value, so templates should guard
+    with ``{% if context %}``.
 ``robot_suites``
     List of Robot Framework ``.robot`` file paths to execute (may be empty).
 ``robot_variables``
@@ -78,6 +85,11 @@ tags:
 {% for tag in lava_tags %}
   - {{ tag }}
 {% endfor %}
+{% endif %}
+{% if context %}
+context:
+  arch: {{ context.device_arch }}
+  machine: {{ context.device_machine }}
 {% endif %}
 
 timeouts:
@@ -192,6 +204,7 @@ def build_lava_job(
     artifact_url: str = "",
     artifact_server_url: str = "",
     artifact_name: str = "",
+    lava_context: Optional[Dict[str, str]] = None,
     job_template_path: Optional[str] = None,
     lava_tags: Optional[List[str]] = None,
     robot_suites: Optional[List[str]] = None,
@@ -220,6 +233,11 @@ def build_lava_job(
                        ``<artifact_server_url>/<artifact_name>``.
                        When empty, the legacy ``<artifact_server_url>/<build_path>``
                        composition is used.
+        lava_context: Optional dict with keys ``device_arch`` and
+                      ``device_machine`` for the LAVA job ``context:`` block.
+                      When ``None`` the ``context`` template variable is also
+                      ``None`` and templates should guard with
+                      ``{% if context %}``.
         job_template_path: Optional path to a Jinja2 ``.yaml.j2`` template
                            file.  When ``None`` the built-in minimal template
                            is used.
@@ -270,6 +288,7 @@ def build_lava_job(
         "release_slug": resolved.release.slug,
         "feature_slugs": feature_slugs,
         "lava_tags": lava_tags or [],
+        "context": lava_context,
         "robot_suites": robot_suites or [],
         "robot_variables": robot_variables or {},
         "timeout_minutes": max(wait_timeout // 60, 1),
