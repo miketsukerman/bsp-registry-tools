@@ -61,6 +61,8 @@ from .models import (
     VendorRelease,
     SocVendorOverride,
     VendorOverride,
+    Vendor,
+    FrameworkOverride,
     Framework,
     Distro,
     Release,

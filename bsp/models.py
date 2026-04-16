@@ -222,6 +222,12 @@ class Device:
         build: Deprecated – legacy nested build block.  Use ``includes`` /
                ``local_conf`` / ``copy`` directly and ``BspPreset.build``
                for container and path.
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              only when the active build-system framework
+                              matches that key (i.e. the effective distro's
+                              ``framework`` field equals the key).
     """
     slug: str
     description: str
@@ -233,6 +239,7 @@ class Device:
     soc_family: Optional[str] = None
     architecture: Optional[str] = None
     build: Optional[DeviceBuild] = None
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
 
 
 @dataclass
@@ -358,11 +365,49 @@ class Vendor:
         description: Optional longer description of the vendor
         website: Optional vendor website URL
         includes: KAS configuration files common to all boards from this vendor
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              (after ``includes``) only when the active
+                              build-system framework matches that key.
     """
     slug: str
     name: str
     description: str = ""
     website: str = ""
+    includes: List[str] = field(default_factory=empty_list)
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
+
+
+@dataclass
+class FrameworkOverride:
+    """
+    Framework-specific KAS configuration override for a device or vendor.
+
+    A ``FrameworkOverride`` entry inside ``Device.frameworks_overrides`` or
+    ``Vendor.frameworks_overrides`` allows a device or vendor to contribute
+    additional KAS include files that are **only** added when the active
+    build-system framework matches the override's key.
+
+    The key in the containing ``frameworks_overrides`` dict is the framework
+    slug (e.g. ``"yocto"``, ``"isar"``).
+
+    Example (device)::
+
+        devices:
+          - slug: qemuarm64
+            vendor: qemu
+            soc_vendor: arm
+            includes:
+              - kas/devices/qemu/qemuarm64.yaml
+            frameworks_overrides:
+              yocto:
+                includes:
+                  - kas/yocto/devices/qemu/qemuarm64.yaml
+
+    Attributes:
+        includes: KAS configuration files to add when this framework is active.
+    """
     includes: List[str] = field(default_factory=empty_list)
 
 

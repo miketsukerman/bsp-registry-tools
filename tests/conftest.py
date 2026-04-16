@@ -591,6 +591,74 @@ registry:
 """
 
 
+REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+    - slug: isar
+      description: "Isar build system"
+      vendor: "Ilbers GmbH"
+      includes:
+        - kas/isar/isar.yaml
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+  vendors:
+    - slug: qemu
+      name: "QEMU"
+      description: "QEMU (emulated devices)"
+      url: "https://www.qemu.org/"
+      includes:
+        - kas/vendors/qemu/common.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/vendors/qemu/yocto.yaml
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm64.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/devices/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+  bsp:
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
+"""
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -679,6 +747,14 @@ def registry_with_frameworks_file(tmp_dir):
     """Create a registry YAML file with framework definitions and compatible_with features."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_FRAMEWORKS_YAML)
+    return registry_path
+
+
+@pytest.fixture
+def registry_with_frameworks_overrides_file(tmp_dir):
+    """Create a registry YAML file with frameworks_overrides on device and vendor."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML)
     return registry_path
 
 

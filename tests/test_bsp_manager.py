@@ -368,6 +368,68 @@ class TestBspManagerFrameworks:
         assert "yocto" in captured.out
 
 
+class TestFrameworksOverrides:
+    """Tests for frameworks_overrides on Device and Vendor."""
+
+    def test_vendor_frameworks_overrides_loaded(self, registry_with_frameworks_overrides_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        vendor = next(
+            v for v in manager.resolver.model.registry.vendors if v.slug == "qemu"
+        )
+        assert "yocto" in vendor.frameworks_overrides
+        assert "kas/yocto/vendors/qemu/yocto.yaml" in vendor.frameworks_overrides["yocto"].includes
+
+    def test_device_frameworks_overrides_loaded(self, registry_with_frameworks_overrides_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        device = manager.resolver.get_device("qemuarm64")
+        assert "yocto" in device.frameworks_overrides
+        assert "kas/yocto/devices/qemu/qemuarm64.yaml" in device.frameworks_overrides["yocto"].includes
+
+    def test_vendor_frameworks_override_included_in_kas_files(
+        self, registry_with_frameworks_overrides_file
+    ):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        assert "kas/yocto/vendors/qemu/yocto.yaml" in resolved.kas_files
+
+    def test_device_frameworks_override_included_in_kas_files(
+        self, registry_with_frameworks_overrides_file
+    ):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        assert "kas/yocto/devices/qemu/qemuarm64.yaml" in resolved.kas_files
+
+    def test_vendor_frameworks_override_ordering(self, registry_with_frameworks_overrides_file):
+        """vendor.includes must come before vendor.frameworks_overrides includes."""
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        vendor_idx = resolved.kas_files.index("kas/vendors/qemu/common.yaml")
+        fw_override_idx = resolved.kas_files.index("kas/yocto/vendors/qemu/yocto.yaml")
+        assert vendor_idx < fw_override_idx
+
+    def test_device_frameworks_override_ordering(self, registry_with_frameworks_overrides_file):
+        """device.includes must come before device.frameworks_overrides includes."""
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        device_idx = resolved.kas_files.index("kas/devices/qemu/qemuarm64.yaml")
+        fw_override_idx = resolved.kas_files.index("kas/yocto/devices/qemu/qemuarm64.yaml")
+        assert device_idx < fw_override_idx
+
+    def test_no_frameworks_overrides_when_no_framework(self, registry_file):
+        """When there is no active framework, frameworks_overrides should not add anything."""
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("test-device", "test-release")
+        # No yocto framework includes expected; no crash either
+        assert resolved.kas_files is not None
+
+
 class TestBspManagerBuildByComponents:
     def test_build_by_components_calls_kas(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
