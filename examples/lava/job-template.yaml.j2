@@ -27,6 +27,12 @@ tags:
 {% endfor %}
 {% endif %}
 
+{% if context %}
+context:
+  arch: {{ context.device_arch }}
+  machine: {{ context.device_machine }}
+{% endif %}
+
 timeouts:
   job:
     minutes: {{ timeout_minutes }}
@@ -47,8 +53,7 @@ actions:
       images:
         rootfs:
           url: {{ image_url }}
-          image_arg: "-drive file={rootfs},if=virtio,format=ext4"
-          compression: gz
+          image_arg: "-drive file={rootfs},if=ide,format=raw"
 
   - boot:
       timeout:
@@ -68,8 +73,8 @@ actions:
         minutes: {{ [timeout_minutes // 2, 15] | max }}
       definitions:
 {% for suite in robot_suites %}
-        - repository: {{ suite }}
-          from: file
+        - repository: https://github.com/Advantech-EECC/bsp-registry
+          from: git
           name: "{{ suite | basename | replace('.robot', '') }}"
           path: {{ suite }}
 {% if robot_variables %}
@@ -84,7 +89,7 @@ actions:
       timeout:
         minutes: {{ [timeout_minutes // 2, 10] | max }}
       definitions:
-        - repository: https://git.linaro.org/qa/test-definitions.git
+        - repository: https://github.com/Linaro/test-definitions.git
           from: git
           path: automated/linux/smoke/smoke.yaml
           name: smoke
@@ -118,7 +123,7 @@ actions:
 {% endif %}
 {% endfor %}
 {% else %}
-        - repository: https://git.linaro.org/qa/test-definitions.git
+        - repository: https://github.com/Linaro/test-definitions.git
           from: git
           path: automated/linux/smoke/smoke.yaml
           name: smoke
