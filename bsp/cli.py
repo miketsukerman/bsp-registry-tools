@@ -150,9 +150,25 @@ def main() -> int:
             help="Feature slug to enable (can be specified multiple times)"
         )
         build_parser.add_argument(
+            "--all", "-a",
+            action="store_true",
+            dest="build_all",
+            help="Build all BSP presets defined in the registry (one by one)"
+        )
+        build_parser.add_argument(
+            "--keep-going", "-k",
+            action="store_true",
+            dest="keep_going",
+            help="When used with --all, continue building remaining presets after a failure"
+        )
+        build_parser.add_argument(
             "--clean",
             action="store_true",
-            help="Clean before building"
+            help=(
+                "Before building, remove previous build artefacts from "
+                "<build_path>/tmp/ while preserving tmp/deploy/ (images/packages) "
+                "and tmp/log/ (build logs) to free disk space"
+            )
         )
         build_parser.add_argument(
             "--checkout",
@@ -686,6 +702,9 @@ def main() -> int:
 
         if args.command == "build":
             checkout_only = getattr(args, "checkout", False)
+            build_all = getattr(args, "build_all", False)
+            keep_going = getattr(args, "keep_going", False)
+            clean = getattr(args, "clean", False)
             device = getattr(args, "device", None)
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
@@ -700,12 +719,24 @@ def main() -> int:
             target = getattr(args, "target", None)
             task = getattr(args, "task", None)
 
-            if _check_exclusive(bsp_name, device, release, build_parser):
+            if build_all:
+                if bsp_name or device or release or features:
+                    logging.error(
+                        "--all cannot be combined with a preset name or "
+                        "--device/--release/--feature."
+                    )
+                    build_parser.print_help()
+                    return 1
+                bsp_mgr.build_all_presets(
+                    checkout_only=checkout_only, keep_going=keep_going, clean=clean
+                )
+            elif _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
-            if bsp_name:
+            elif bsp_name:
                 bsp_mgr.build_bsp(
                     bsp_name,
                     checkout_only=checkout_only,
+                    clean=clean,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
                     target=target,
@@ -725,6 +756,7 @@ def main() -> int:
                 bsp_mgr.build_by_components(
                     device, release, features,
                     checkout_only=checkout_only,
+                    clean=clean,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
                     target=target,
@@ -744,7 +776,8 @@ def main() -> int:
                         return 1
             else:
                 logging.error(
-                    "Specify either a BSP preset name or both --device and --release."
+                    "Specify either a BSP preset name, both --device and --release, "
+                    "or --all to build every preset."
                 )
                 build_parser.print_help()
                 return 1

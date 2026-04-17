@@ -383,14 +383,16 @@ BSP Registry
 bsp build <bsp_name> [--clean] [--checkout] [--target TARGET] [--task TASK]
 bsp build <bsp_name> [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build <bsp_name> [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
-bsp build --device <device> --release <release> [--feature FEATURE...] [--target TARGET] [--task TASK] [--checkout] [--test ...]
-
+bsp build --device <device> --release <release> [--feature FEATURE...] [--clean] [--checkout] [--target TARGET] [--task TASK] [--test ...]
+bsp build --all [--clean] [--keep-going] [--checkout]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--clean` | Clean build directory before building |
-| `--checkout` | Validate configuration and checkout repos without building |
+| `--clean` | Before building, remove previous build artefacts from `<build_path>/tmp/` while preserving `tmp/deploy/` (images and packages) and `tmp/log/` (build logs) to free disk space |
+| `--checkout` | Validate configuration and checkout repos without building (fast, implies no Docker build) |
+| `--all`, `-a` | Build every BSP preset defined in the registry one by one (sequential) |
+| `--keep-going`, `-k` | When used with `--all`, continue building remaining presets after a failure and print a summary at the end (default: stop on first failure) |
 | `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
 | `--task TASK` | Bitbake task to run (e.g. `compile`, `configure`) to pass to KAS |
 | `--deploy` | Deploy artifacts to cloud storage after a successful build |
@@ -409,11 +411,23 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--target
 **Examples:**
 
 ```bash
-# Full build
+# Full build of a named preset
 bsp build poky-qemuarm64-scarthgap
 
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
+
+# Clean before building to free disk space; removes tmp/work/ etc., keeps tmp/deploy/ and tmp/log/
+bsp build poky-qemuarm64-scarthgap --clean
+
+# Build by device + release (with optional features)
+bsp build --device qemuarm64 --release scarthgap --feature ota
+
+# Build all presets sequentially, stop on first failure (default)
+bsp build --all
+
+# Build all presets, continue past failures, clean before each build
+bsp build --all --keep-going --clean
 
 # Build a specific Bitbake image (overrides registry-configured targets)
 bsp build poky-qemuarm64-scarthgap --target core-image-minimal
