@@ -1671,6 +1671,12 @@ bsp build --device imx8mp-adv --release scarthgap --feature ota
 # Build with multiple features
 bsp build --device imx8mp-adv --release scarthgap --feature ota --feature secure-boot
 
+# Build a specific Bitbake image (overrides registry-configured targets)
+bsp build imx8mp-adv-scarthgap --target core-image-minimal
+
+# Build a specific image and run only the compile task
+bsp build imx8mp-adv-scarthgap --target core-image-minimal --task compile
+
 # Build and deploy artifacts to Azure automatically
 bsp build imx8mp-adv-scarthgap --deploy
 

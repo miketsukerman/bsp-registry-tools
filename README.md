@@ -381,11 +381,11 @@ BSP Registry
 
 ```bash
 # Build by preset name
-bsp build <bsp_name> [--clean] [--checkout] [--path PATH] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
+bsp build <bsp_name> [--clean] [--checkout] [--path PATH] [--target TARGET] [--task TASK] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build <bsp_name> [--clean] [--checkout] [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
 
 # Build by components
-bsp build --device DEVICE --release RELEASE [--feature FEATURE ...] [--clean] [--checkout] [--path PATH]
+bsp build --device DEVICE --release RELEASE [--feature FEATURE ...] [--clean] [--checkout] [--path PATH] [--target TARGET] [--task TASK]
 bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--test ...]
 ```
 
@@ -397,6 +397,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--clean` | Clean build directory before building |
 | `--checkout` | Validate configuration and checkout repos without building |
 | `--path PATH` | Override the output build directory path defined in the registry |
+| `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
+| `--task TASK` | Bitbake task to run (e.g. `compile`, `configure`) to pass to KAS |
 | `--deploy` | Deploy artifacts to cloud storage after a successful build |
 | `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
 | `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
@@ -430,6 +432,12 @@ bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
 
 # Component-based build with custom output path
 bsp build --device qemuarm64 --release scarthgap --path /mnt/fast-ssd/build
+
+# Build a specific Bitbake image (overrides registry-configured targets)
+bsp build poky-qemuarm64-scarthgap --target core-image-minimal
+
+# Build a specific image and run only the compile task
+bsp build poky-qemuarm64-scarthgap --target core-image-minimal --task compile
 
 # Build and deploy artifacts to Azure automatically
 bsp build poky-qemuarm64-scarthgap --deploy
