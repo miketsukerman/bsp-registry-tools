@@ -61,11 +61,17 @@ from .models import (
     VendorRelease,
     SocVendorOverride,
     VendorOverride,
+    Vendor,
+    FrameworkOverride,
     Framework,
     Distro,
     Release,
     FeatureCompatibility,
     Feature,
+    LavaServerConfig,
+    RobotTestConfig,
+    LavaTestConfig,
+    TestingConfig,
     BspPreset,
     Registry,
     RegistryRoot,
@@ -82,9 +88,12 @@ from .resolver import ResolvedConfig, V2Resolver
 from .path_resolver import PathResolver, resolver
 from .environment import EnvironmentManager
 from .kas_manager import KasManager
+from .lava_client import LavaClient, LavaTestCase, LavaTestSuite
+from .lava_job_builder import build_lava_job
 from .bsp_manager import BspManager
 from .cli import main
 from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
+from .gatherer import ArtifactGatherer, GatherResult
 from .storage import CloudStorageBackend, create_backend
 
 __all__ = [
@@ -122,6 +131,10 @@ __all__ = [
     "Release",
     "FeatureCompatibility",
     "Feature",
+    "LavaServerConfig",
+    "RobotTestConfig",
+    "LavaTestConfig",
+    "TestingConfig",
     "BspPreset",
     "Registry",
     "RegistryRoot",
@@ -140,6 +153,10 @@ __all__ = [
     "resolver",
     "EnvironmentManager",
     "KasManager",
+    "LavaClient",
+    "LavaTestCase",
+    "LavaTestSuite",
+    "build_lava_job",
     "BspManager",
     # CLI
     "main",
@@ -147,6 +164,9 @@ __all__ = [
     "ArtifactDeployer",
     "DeployResult",
     "UploadedArtifact",
+    # Gatherer
+    "ArtifactGatherer",
+    "GatherResult",
     # Storage
     "CloudStorageBackend",
     "create_backend",

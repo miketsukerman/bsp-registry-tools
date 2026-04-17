@@ -670,14 +670,18 @@ class V2Resolver:
         # Build ordered KAS file list
         # Order: framework.includes -> distro.includes (effective distro)
         #        -> vendor.includes (registry.vendors[device.vendor])
+        #        -> vendor.frameworks_overrides[framework].includes
         #        -> release.includes -> release.vendor_overrides[vendor or override slug]
-        #        -> device.includes -> feature.includes
+        #        -> device.includes -> device.frameworks_overrides[framework].includes
+        #        -> feature.includes
         # Prefer device.includes (new style); fall back to device.build.includes (legacy).
         kas_files: List[str] = []
+        effective_framework_slug: Optional[str] = None
         if effective_distro_slug:
             distro_obj = self.get_distro(effective_distro_slug)
             if distro_obj.framework:
-                framework_obj = self.get_framework(distro_obj.framework)
+                effective_framework_slug = distro_obj.framework
+                framework_obj = self.get_framework(effective_framework_slug)
                 kas_files.extend(framework_obj.includes)
             kas_files.extend(distro_obj.includes)
         # Include vendor-level includes when a matching vendor entry exists
@@ -687,6 +691,10 @@ class V2Resolver:
         )
         if vendor_obj:
             kas_files.extend(vendor_obj.includes)
+            if effective_framework_slug and vendor_obj.frameworks_overrides:
+                fw_override = vendor_obj.frameworks_overrides.get(effective_framework_slug)
+                if fw_override:
+                    kas_files.extend(fw_override.includes)
         kas_files.extend(release.includes)
         kas_files.extend(self._apply_vendor_overrides(
             release.vendor_overrides, device.vendor, device.soc_vendor,
@@ -696,6 +704,10 @@ class V2Resolver:
             device.build.includes if device.build else []
         )
         kas_files.extend(device_includes)
+        if effective_framework_slug and device.frameworks_overrides:
+            fw_override = device.frameworks_overrides.get(effective_framework_slug)
+            if fw_override:
+                kas_files.extend(fw_override.includes)
         for feature in features:
             kas_files.extend(feature.includes)
             if feature.vendor_overrides:
@@ -856,7 +868,11 @@ class V2Resolver:
                     vendor_release=preset.vendor_release,
                     override=preset.override,
                     features=list(preset.features),
+                    local_conf=preset.local_conf,
+                    targets=list(preset.targets),
                     build=expanded_build,
+                    deploy=preset.deploy,
+                    testing=preset.testing,
                 )
             )
         return expanded

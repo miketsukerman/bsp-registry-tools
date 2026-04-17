@@ -1073,6 +1073,11 @@ registry:
 > **Note**: `release` (singular) and `releases` (plural) are mutually exclusive.
 > Exactly one must be specified per preset entry.  When `releases` is used the
 > expanded preset names follow the pattern `{name}-{release_slug}`.
+>
+> All non-build fields — `features`, `local_conf`, `targets`, `deploy`, and
+> `testing` — are **inherited unchanged** by every expanded preset.  Only
+> `build.path` is transformed per release (see below); `build.container` is
+> copied as-is.
 
 #### Build path for multi-release presets
 
@@ -1090,6 +1095,46 @@ When the `releases` list is used the per-release build path is computed as:
 In both cases the `build.container` override (if present) is applied unchanged
 to every expanded preset.
 
+#### Multi-release preset with HIL testing
+
+All non-build fields are propagated to every expanded preset.  The `testing`
+block below is therefore active for **both** `poky-qemux86-64-scarthgap` and
+`poky-qemux86-64-walnascar`:
+
+```yaml
+registry:
+  bsp:
+    - name: poky-qemux86-64
+      description: "Poky QEMU x86-64"
+      device: qemux86-64
+      releases: [scarthgap, walnascar]
+      features: [systemd, usrmerge, yocto-ssh]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemux86-64
+      # testing block is inherited by every expanded preset
+      testing:
+        lava:
+          device_type: "qemu-qemux86-64"                  # LAVA device type label
+          artifact_url: "http://files.ci/builds"          # where the image is served
+          tags: ["hil", "qemu"]                           # optional LAVA scheduler tags
+          job_template: "vendors/qemu/lava/qemu.yaml.j2"  # optional; builtin used if omitted
+          robot:
+            suites:
+              - vendors/qemu/tests/robot/smoke.robot
+              - vendors/qemu/tests/robot/boot.robot
+            variables:
+              BOARD_IP: "192.168.178.65"
+              SSH_PORT: "22"
+```
+
+This expands into two concrete presets that can each be tested independently:
+
+```bash
+bsp test poky-qemux86-64-scarthgap --wait
+bsp test poky-qemux86-64-walnascar --wait
+```
+
 ### `bsp[*]` fields
 
 | Field            | Type             | Description                                                                     |
@@ -1105,6 +1150,8 @@ to every expanded preset.
 | `local_conf`     | string (opt.)    | YAML block scalar (`\|`) of `local.conf` lines to append for this preset. Each non-empty line is appended to the resolved `local_conf` after device- and feature-level entries. Trailing whitespace is stripped; blank lines are ignored. |
 | `targets`        | list[str] (opt.) | List of Bitbake build targets (images or recipes) for this preset. When set, the targets are written into the `target` section of the generated KAS YAML file, instructing KAS which images to build. |
 | `build`          | object (opt.)    | Optional build overrides (container and/or output path)                         |
+| `deploy`         | object (opt.)    | Preset-level cloud deployment override. Accepts the same fields as the global `deploy:` block; any omitted field keeps its global value. When `releases` is used, the same `deploy` block is applied to every expanded preset. |
+| `testing`        | object (opt.)    | Per-preset HIL testing configuration (see [`bsp[*].testing`](#bspptesting-fields) below). When `releases` is used, the same `testing` block is applied to every expanded preset. |
 
 ### `bsp[*].build` fields
 
@@ -1112,6 +1159,29 @@ to every expanded preset.
 |-------------|---------------|-----------------------------------------------------------------------------------|
 | `container` | string (opt.) | Container name override (key in `containers` section). When absent the container is taken from the release's named environment (or `"default"`). |
 | `path`      | string (opt.) | Build output directory. When absent, the path is auto-composed as `build/<distro>-<device>-<release>[-<feature>…]` for single-release presets, or `build/<name>-<release_slug>[-<override_slug>]` for multi-release presets. When `releases` (plural) is used, this value is treated as a *base path stem*: the release slug (and the vendor override slug when `override` is set) is appended to it — e.g. `path: build/my-bsp` expands to `build/my-bsp-scarthgap` and `build/my-bsp-styhead`. |
+
+### `bsp[*].testing` fields
+
+| Field  | Type          | Description |
+|--------|---------------|-------------|
+| `lava` | object (opt.) | LAVA HIL test configuration for this preset (see `bsp[*].testing.lava` below) |
+
+### `bsp[*].testing.lava` fields
+
+| Field          | Type          | Description |
+|----------------|---------------|-------------|
+| `device_type`  | string        | LAVA device type label (e.g. `"qemu-aarch64"`). **Required** to submit a LAVA job. |
+| `artifact_url` | string (opt.) | Base URL where the build image is served (e.g. `"http://files.ci/builds"`). Overridden by `--artifact-url` CLI flag. |
+| `tags`         | list[str] (opt.) | Optional LAVA scheduler tags used to select the right worker (e.g. `["hil", "qemu"]`). |
+| `job_template` | string (opt.) | Path to a Jinja2 LAVA job template. When omitted, the built-in minimal template is used. |
+| `robot`        | object (opt.) | Robot Framework suites to run inside the LAVA pipeline (see `bsp[*].testing.lava.robot` below). |
+
+### `bsp[*].testing.lava.robot` fields
+
+| Field       | Type             | Description |
+|-------------|------------------|-------------|
+| `suites`    | list[str]        | Paths to `.robot` suite files to execute (e.g. `tests/robot/smoke.robot`). |
+| `variables` | dict[str, str]   | Key/value pairs passed as `--variable KEY:VALUE` arguments to Robot Framework. |
 
 ### Preset with `local_conf` and `targets`
 
@@ -1612,6 +1682,12 @@ bsp build --all --keep-going --clean
 
 # Checkout/validate all presets without building
 bsp build --all --checkout
+
+# Build a specific Bitbake image (overrides registry-configured targets)
+bsp build imx8mp-adv-scarthgap --target core-image-minimal
+
+# Build a specific image and run only the compile task
+bsp build imx8mp-adv-scarthgap --target core-image-minimal --task compile
 
 # Build and deploy artifacts to Azure automatically
 bsp build imx8mp-adv-scarthgap --deploy

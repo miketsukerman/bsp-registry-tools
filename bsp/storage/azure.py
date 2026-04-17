@@ -107,6 +107,19 @@ class AzureStorageBackend(CloudStorageBackend):
 
         return self.get_upload_url(remote_path)
 
+    def download_file(self, remote_path: str, local_path: Path) -> None:
+        """Download blob *remote_path* from the configured container to *local_path*."""
+        local_path = Path(local_path)
+        if self.dry_run:
+            self.logger.info("[dry-run] Would download azure://%s/%s → %s", self.container_name, remote_path, local_path)
+            return
+
+        self.logger.info("Downloading azure://%s/%s → %s", self.container_name, remote_path, local_path)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        blob_client = self._client.get_blob_client(container=self.container_name, blob=remote_path)
+        with open(local_path, "wb") as fh:
+            blob_client.download_blob().readinto(fh)
+
     def list_artifacts(self, remote_prefix: str) -> List[str]:
         """List blob names under *remote_prefix* in the configured container."""
         if self.dry_run:

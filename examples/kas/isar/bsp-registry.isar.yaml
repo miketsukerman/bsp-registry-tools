@@ -30,20 +30,6 @@ environments:
 registry:
 
   # =====================================
-  # Devices
-  # =====================================
-
-  devices:
-
-    # Isar project uses qemuamd64 as the name for the x86-64 QEMU machine
-    - slug: qemuamd64
-      description: "QEMU AMD64 (X86-64) (emulated)"
-      vendor: qemu
-      soc_vendor: amd
-      includes:
-        - kas/devices/qemu/qemuamd64.yaml
-
-  # =====================================
   # Build System Frameworks
   # (e.g. Yocto, Isar)
   # =====================================
@@ -59,16 +45,36 @@ registry:
         - kas/isar/isar.yaml
 
   # =====================================
+  # Devices
+  # =====================================
+
+  devices:
+
+    # Isar project uses qemuamd64 as the name for the x86-64 QEMU machine
+    - slug: qemuamd64
+      description: "QEMU AMD64 (X86-64) (emulated)"
+      vendor: qemu
+      soc_vendor: amd
+      includes:
+        - kas/devices/qemu/qemuamd64.yaml
+
+  # =====================================
   # Distributions
   # =====================================
 
   distro:
     
-    - slug: isar
+    - slug: isar-v0.11
       description: "Isar v0.11 (Siemens build system)"
       framework: isar
       includes:
         - kas/isar/isar-v0.11.yaml
+
+    - slug: isar-v1.0
+      description: "Isar v1.0 (Siemens build system)"
+      framework: isar
+      includes:
+        - kas/isar/isar-v1.0.yaml
 
   # =====================================
   # Releases
@@ -78,17 +84,17 @@ registry:
 
     # Isar v0.11 – uses the isar-build named environment (Debian container + isar download cache)
     - slug: ubuntu-noble
-      distro: isar
+      distro: isar-v1.0 
       description: "Ubuntu Noble (Isar)"
-      isar_version: "0.11"
+      isar_version: "1.0"
       environment: isar-build
       includes:
         - kas/isar/distro/ubuntu-noble.yaml
 
     - slug: debian-trixie
-      distro: isar
+      distro: isar-v1.0
       description: "Debian Trixie (Isar)"
-      isar_version: "0.11"
+      isar_version: "1.0"
       environment: isar-build
       includes:
         - kas/isar/distro/debian-trixie.yaml

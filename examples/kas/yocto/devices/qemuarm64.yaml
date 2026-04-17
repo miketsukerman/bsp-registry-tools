@@ -1,0 +1,6 @@
+header:
+  version: 14
+
+local_conf_header:
+  qemuarm64: |
+    WKS_FILE = "systemd-bootdisk.wks"

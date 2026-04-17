@@ -15,40 +15,6 @@ containers:
 registry:
 
   # =====================================
-  # Devices
-  # =====================================
-
-  devices:
-
-    - slug: qemuarm64
-      description: "QEMU ARM64 (emulated)"
-      vendor: qemu
-      soc_vendor: arm
-      includes:
-        - kas/devices/qemu/qemuarm64.yaml
-
-    - slug: qemuarm
-      description: "QEMU ARM (32-bit, emulated)"
-      vendor: qemu
-      soc_vendor: arm
-      includes:
-        - kas/devices/qemu/qemuarm.yaml
-
-    - slug: qemux86
-      description: "QEMU x86 (emulated)"
-      vendor: qemu
-      soc_vendor: intel
-      includes:
-        - kas/devices/qemu/qemux86.yaml
-  
-    - slug: qemux86-64
-      description: "QEMU x86-64 (emulated)"
-      vendor: qemu
-      soc_vendor: intel
-      includes:
-        - kas/devices/qemu/qemux86-64.yaml
-  
-  # =====================================
   # Build System Frameworks
   # (e.g. Yocto, Isar)
   # =====================================
@@ -107,6 +73,21 @@ registry:
       includes:
         - kas/yocto/releases/styhead.yaml
 
+    - slug: walnascar
+      distro: poky
+      description: "Yocto 5.2 (Walnascar)"
+      yocto_version: "5.2"
+      includes:
+        - kas/yocto/releases/walnascar.yaml
+
+    - slug: whinlatter
+      distro: poky
+      description: "Yocto 5.3 (Whinlatter)"
+      yocto_version: "5.3"
+      includes:
+        - kas/yocto/yocto-ext.yaml
+        - kas/yocto/releases/whinlatter.yaml
+
   # =====================================
   # Features (optional add-ons)
   # =====================================
@@ -149,8 +130,14 @@ registry:
     - name: poky-qemuarm64
       description: "Poky QEMU ARM64"
       device: qemuarm64
-      releases: [scarthgap, styhead]
+      releases: [scarthgap, styhead, walnascar, whinlatter]
       features: [systemd, debug, yocto-ssh]
+      testing:
+        lava:
+          device_type: "qemu"                                   # LAVA device type label
+          artifact_url: "http://192.168.3.179:8000/core-image-minimal-qemux86-64.rootfs.wic"  # where the image is served
+          tags: ["hil", "qemu"]                                 # optional LAVA scheduler tags
+          job_template: "vendors/qemu/lava/qemu.yaml.j2"        # optional; builtin used if omitted
 
     # --- QEMU x86-64 ---
     - name: poky-harden-qemux86-64-scarthgap
@@ -167,7 +154,7 @@ registry:
     - name: poky-qemux86-64
       description: "Poky QEMU x86-64"
       device: qemux86-64
-      releases: [scarthgap, styhead]
+      releases: [scarthgap, styhead, walnascar, whinlatter]
       features: [systemd, debug, yocto-ssh]
       build:
         container: "debian-bookworm"
