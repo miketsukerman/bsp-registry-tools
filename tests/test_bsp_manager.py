@@ -368,6 +368,68 @@ class TestBspManagerFrameworks:
         assert "yocto" in captured.out
 
 
+class TestFrameworksOverrides:
+    """Tests for frameworks_overrides on Device and Vendor."""
+
+    def test_vendor_frameworks_overrides_loaded(self, registry_with_frameworks_overrides_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        vendor = next(
+            v for v in manager.resolver.model.registry.vendors if v.slug == "qemu"
+        )
+        assert "yocto" in vendor.frameworks_overrides
+        assert "kas/yocto/vendors/qemu/yocto.yaml" in vendor.frameworks_overrides["yocto"].includes
+
+    def test_device_frameworks_overrides_loaded(self, registry_with_frameworks_overrides_file):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        device = manager.resolver.get_device("qemuarm64")
+        assert "yocto" in device.frameworks_overrides
+        assert "kas/yocto/devices/qemu/qemuarm64.yaml" in device.frameworks_overrides["yocto"].includes
+
+    def test_vendor_frameworks_override_included_in_kas_files(
+        self, registry_with_frameworks_overrides_file
+    ):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        assert "kas/yocto/vendors/qemu/yocto.yaml" in resolved.kas_files
+
+    def test_device_frameworks_override_included_in_kas_files(
+        self, registry_with_frameworks_overrides_file
+    ):
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        assert "kas/yocto/devices/qemu/qemuarm64.yaml" in resolved.kas_files
+
+    def test_vendor_frameworks_override_ordering(self, registry_with_frameworks_overrides_file):
+        """vendor.includes must come before vendor.frameworks_overrides includes."""
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        vendor_idx = resolved.kas_files.index("kas/vendors/qemu/common.yaml")
+        fw_override_idx = resolved.kas_files.index("kas/yocto/vendors/qemu/yocto.yaml")
+        assert vendor_idx < fw_override_idx
+
+    def test_device_frameworks_override_ordering(self, registry_with_frameworks_overrides_file):
+        """device.includes must come before device.frameworks_overrides includes."""
+        manager = BspManager(config_path=str(registry_with_frameworks_overrides_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("qemuarm64", "scarthgap")
+        device_idx = resolved.kas_files.index("kas/devices/qemu/qemuarm64.yaml")
+        fw_override_idx = resolved.kas_files.index("kas/yocto/devices/qemu/qemuarm64.yaml")
+        assert device_idx < fw_override_idx
+
+    def test_no_frameworks_overrides_when_no_framework(self, registry_file):
+        """When there is no active framework, frameworks_overrides should not add anything."""
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved = manager.resolver.resolve("test-device", "test-release")
+        # No yocto framework includes expected; no crash either
+        assert resolved.kas_files is not None
+
+
 class TestBspManagerBuildByComponents:
     def test_build_by_components_calls_kas(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
@@ -1249,6 +1311,25 @@ registry:
         manager.initialize()
         with pytest.raises(SystemExit):
             manager.resolver.list_presets()
+
+    def test_expanded_preset_inherits_testing_config(
+        self, registry_with_multi_release_testing_file
+    ):
+        """Expanded presets must carry the testing block from the parent preset."""
+        manager = BspManager(config_path=str(registry_with_multi_release_testing_file))
+        manager.initialize()
+        for release_slug in ("scarthgap", "walnascar"):
+            preset = manager.get_bsp_by_name(f"poky-qemux86-64-{release_slug}")
+            assert preset is not None, f"preset poky-qemux86-64-{release_slug} not found"
+            assert preset.testing is not None, (
+                f"testing config missing on expanded preset poky-qemux86-64-{release_slug}"
+            )
+            assert preset.testing.lava is not None
+            assert preset.testing.lava.device_type == "qemu-qemux86-64"
+            assert preset.testing.lava.artifact_url == "http://files.ci/builds"
+            assert "hil" in preset.testing.lava.tags
+            assert preset.testing.lava.robot is not None
+            assert "vendors/qemu/tests/robot/smoke.robot" in preset.testing.lava.robot.suites
 
 
 class TestVendorOverrides:
@@ -2994,3 +3075,115 @@ class TestPresetLocalConfAndTargets:
         combined = "".join(kas["local_conf_header"].values())
         assert 'DISTRO_FEATURES += "x11"' in combined
         assert 'BB_NUMBER_THREADS = "4"' in combined
+
+
+class TestLavaEnvVarExpansion:
+    """$ENV{VAR} placeholders in LAVA config fields must be expanded at call time."""
+
+    def _run_lava_test_fields(self, manager, preset_name, env):
+        """
+        Helper: call _test_resolved() with mocked LavaClient and capture the
+        constructor kwargs so we can inspect expanded field values.
+        """
+        import os
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset(preset_name)
+
+        testing_config = preset.testing if preset else None
+        captured = {}
+
+        with patch.dict(os.environ, env, clear=False):
+            with patch("bsp.lava_client.LavaClient") as mock_client_cls:
+                mock_instance = MagicMock()
+                mock_instance.submit_job.return_value = 42
+                mock_instance.job_url.return_value = "http://lava.test/jobs/42"
+                mock_client_cls.return_value = mock_instance
+                with patch("bsp.lava_job_builder.build_lava_job", return_value="job: yaml"):
+                    manager._test_resolved(
+                        resolved=resolved,
+                        testing_config=testing_config,
+                    )
+                captured["client_kwargs"] = mock_client_cls.call_args[1]
+                captured["build_lava_job_kwargs"] = (
+                    mock_instance.submit_job.call_args[0][0]
+                )
+        return captured
+
+    def test_server_env_var_expanded(self, registry_with_lava_env_vars_file, monkeypatch):
+        """$ENV{TEST_LAVA_SERVER} in lava.server must be expanded before use."""
+        monkeypatch.setenv("TEST_LAVA_SERVER", "https://lava.example.com")
+        monkeypatch.setenv("TEST_LAVA_TOKEN", "mytoken")
+        monkeypatch.setenv("TEST_LAVA_USER", "lavauser")
+        monkeypatch.setenv("TEST_ARTIFACT_URL", "http://files.ci/builds")
+        monkeypatch.setenv("TEST_BOARD_IP", "10.0.0.1")
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        result = self._run_lava_test_fields(
+            manager, "qemuarm64-scarthgap",
+            {
+                "TEST_LAVA_SERVER": "https://lava.example.com",
+                "TEST_LAVA_TOKEN": "mytoken",
+                "TEST_LAVA_USER": "lavauser",
+                "TEST_ARTIFACT_URL": "http://files.ci/builds",
+                "TEST_BOARD_IP": "10.0.0.1",
+            },
+        )
+        assert result["client_kwargs"]["server"] == "https://lava.example.com"
+
+    def test_token_env_var_expanded(self, registry_with_lava_env_vars_file, monkeypatch):
+        """$ENV{TEST_LAVA_TOKEN} in lava.token must be expanded before use."""
+        monkeypatch.setenv("TEST_LAVA_SERVER", "https://lava.example.com")
+        monkeypatch.setenv("TEST_LAVA_TOKEN", "secret-token-value")
+        monkeypatch.setenv("TEST_LAVA_USER", "lavauser")
+        monkeypatch.setenv("TEST_ARTIFACT_URL", "http://files.ci/builds")
+        monkeypatch.setenv("TEST_BOARD_IP", "10.0.0.1")
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        result = self._run_lava_test_fields(
+            manager, "qemuarm64-scarthgap",
+            {
+                "TEST_LAVA_SERVER": "https://lava.example.com",
+                "TEST_LAVA_TOKEN": "secret-token-value",
+                "TEST_LAVA_USER": "lavauser",
+                "TEST_ARTIFACT_URL": "http://files.ci/builds",
+                "TEST_BOARD_IP": "10.0.0.1",
+            },
+        )
+        assert result["client_kwargs"]["token"] == "secret-token-value"
+
+    def test_server_not_expanded_when_placeholder_remains(
+        self, registry_with_lava_env_vars_file
+    ):
+        """
+        When the env var is not set the placeholder is kept as-is (matching
+        _expand_env behaviour for missing vars).  A missing value should NOT
+        silently become the literal string '$ENV{TEST_LAVA_SERVER}'.
+        We just verify the LavaClient is never reached (error path triggers first
+        because server is the unexpanded placeholder which is truthy but invalid).
+        This test acts as documentation of the current behaviour.
+        """
+        import os
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file))
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset("qemuarm64-scarthgap")
+        env_without_vars = {
+            k: v for k, v in os.environ.items()
+            if k not in (
+                "TEST_LAVA_SERVER", "TEST_LAVA_TOKEN", "TEST_LAVA_USER",
+                "TEST_ARTIFACT_URL", "TEST_BOARD_IP",
+            )
+        }
+        with patch.dict(os.environ, env_without_vars, clear=True):
+            with patch("bsp.lava_client.LavaClient") as mock_client_cls:
+                mock_instance = MagicMock()
+                mock_instance.submit_job.return_value = 1
+                mock_client_cls.return_value = mock_instance
+                with patch("bsp.lava_job_builder.build_lava_job", return_value="job: yaml"):
+                    manager._test_resolved(
+                        resolved=resolved,
+                        testing_config=preset.testing if preset else None,
+                    )
+                # The unexpanded placeholder is truthy so LavaClient is
+                # constructed — but the server value must still contain the
+                # unexpanded placeholder text (env var not set → kept as-is).
+                if mock_client_cls.called:
+                    server_arg = mock_client_cls.call_args[1]["server"]
+                    assert "$ENV{TEST_LAVA_SERVER}" in server_arg

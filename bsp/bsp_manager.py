@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
+from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
 from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
 from .path_resolver import resolver
@@ -1809,6 +1810,454 @@ class BspManager:
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
         return self._deploy_resolved(resolved, deploy_overrides=deploy_overrides, dry_run=dry_run)
+
+    # ------------------------------------------------------------------
+    # Gather (download artifacts from cloud storage)
+    # ------------------------------------------------------------------
+
+    def _gather_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download build artifacts for the given :class:`~bsp.resolver.ResolvedConfig`.
+
+        The effective :class:`~bsp.models.DeployConfig` is resolved with the
+        same merge order as :meth:`_deploy_resolved` so that ``gather`` and
+        ``deploy`` always refer to the same storage location.
+
+        Args:
+            resolved: Resolved build configuration containing device/release
+                      metadata and the default local build path.
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
+            dest_dir: Local directory to write downloaded artifacts into.
+                      When ``None`` the build path from *resolved* is used.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` placeholder in the
+                           prefix template (``YYYY-MM-DD``).
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with the local paths of every
+            downloaded artifact.
+        """
+        deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
+
+        # Determine container/bucket name
+        container_or_bucket = deploy_cfg.container or deploy_cfg.bucket
+        if not container_or_bucket and not dry_run:
+            logging.error(
+                "No storage container/bucket configured for gather. "
+                "Set 'deploy.container' in the registry or pass --container/--bucket."
+            )
+            sys.exit(1)
+
+        # Build provider-specific kwargs
+        provider = deploy_cfg.provider
+        if provider == "azure":
+            backend_kwargs: Dict = {
+                "container_name": container_or_bucket or "bsp-artifacts",
+                "account_url": deploy_cfg.account_url,
+                "dry_run": dry_run,
+            }
+        elif provider == "aws":
+            backend_kwargs = {
+                "bucket_name": container_or_bucket or "bsp-artifacts",
+                "region": deploy_cfg.region,
+                "profile": deploy_cfg.profile,
+                "dry_run": dry_run,
+            }
+        else:
+            logging.error("Unsupported gather provider: %s", provider)
+            sys.exit(1)
+
+        try:
+            backend = create_backend(provider, **backend_kwargs)
+        except (ImportError, ValueError) as exc:
+            logging.error("Failed to initialize storage backend: %s", exc)
+            sys.exit(1)
+
+        effective_dest = dest_dir if dest_dir is not None else resolved.build_path
+
+        gatherer = ArtifactGatherer(deploy_cfg, backend)
+        result = gatherer.gather(
+            dest_dir=effective_dest,
+            device=resolved.device.slug,
+            release=resolved.release.slug,
+            distro=resolved.effective_distro or "",
+            vendor=resolved.device.vendor,
+            date_override=date_override,
+        )
+
+        # Print summary
+        action = "[dry-run] Would download" if dry_run else "Downloaded"
+        if result.artifacts:
+            print(f"\n{action} {result.total_count} artifact(s) → {effective_dest}:")
+            for local_path in result.artifacts:
+                print(f"  {local_path.name}")
+        else:
+            print(f"No artifacts found to gather from '{provider}' storage.")
+
+        return result
+
+    def gather_bsp(
+        self,
+        bsp_name: str,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download artifacts for a BSP preset from cloud storage.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            dest_dir: Local destination directory.  Defaults to the preset's
+                      configured build path when ``None``.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with download metadata.
+        """
+        logging.info("Gathering artifacts for BSP preset: %s", bsp_name)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        return self._gather_resolved(
+            resolved,
+            preset=preset,
+            dest_dir=dest_dir,
+            deploy_overrides=deploy_overrides,
+            dry_run=dry_run,
+            date_override=date_override,
+        )
+
+    def gather_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        dest_dir: Optional[str] = None,
+        deploy_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        date_override: Optional[str] = None,
+    ) -> GatherResult:
+        """
+        Download artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            dest_dir: Local destination directory.  Defaults to the resolved
+                      build path when ``None``.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            dry_run: When ``True`` log what would be downloaded without
+                     actually downloading anything.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            :class:`~bsp.gatherer.GatherResult` with download metadata.
+        """
+        logging.info(
+            "Gathering artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._gather_resolved(
+            resolved,
+            dest_dir=dest_dir,
+            deploy_overrides=deploy_overrides,
+            dry_run=dry_run,
+            date_override=date_override,
+        )
+
+    # ------------------------------------------------------------------
+    # Test (HIL via LAVA + Robot Framework)
+    # ------------------------------------------------------------------
+
+    def _test_resolved(
+        self,
+        resolved: ResolvedConfig,
+        testing_config=None,
+        lava_server: Optional[str] = None,
+        lava_token: Optional[str] = None,
+        artifact_url: Optional[str] = None,
+        wait: bool = False,
+        label: str = "",
+    ) -> bool:
+        """
+        Submit a LAVA HIL test job for the given ResolvedConfig.
+
+        Resolves LAVA settings from (in priority order):
+        1. CLI overrides (*lava_server*, *lava_token*, *artifact_url*)
+        2. Per-preset ``testing.lava`` block
+        3. Registry-level ``lava:`` block
+
+        Args:
+            resolved: Resolved build configuration (provides device, release,
+                      build path, and features).
+            testing_config: Optional :class:`~bsp.models.TestingConfig` from
+                            the BSP preset.  When ``None`` the caller must
+                            supply *lava_server* and a device_type via
+                            command-line flags.
+            lava_server: LAVA server URL override (CLI ``--lava-server``).
+            lava_token: LAVA authentication token override (CLI ``--lava-token``).
+            artifact_url: Artifact base URL override (CLI ``--artifact-url``).
+            wait: If ``True``, block until the job finishes and print results.
+            label: Descriptive label for log messages.
+
+        Returns:
+            ``True`` when the test run passed (or when *wait* is ``False``),
+            ``False`` on test failure.
+        """
+        from .lava_client import LavaClient
+        from .lava_job_builder import build_lava_job
+
+        # Gather server-level defaults from the registry
+        registry_lava = getattr(self.model, "lava", None) if self.model else None
+
+        def _registry_lava_str(attr: str) -> str:
+            """Return the expanded string value of a registry LAVA field, or ''."""
+            return _expand_env(getattr(registry_lava, attr) if registry_lava else "")
+
+        # Resolve LAVA connection settings (CLI > preset > registry)
+        lava_cfg = testing_config.lava if (testing_config and testing_config.lava) else None
+
+        server = lava_server or _registry_lava_str("server")
+        token = lava_token or _registry_lava_str("token")
+        username = _registry_lava_str("username")
+        wait_timeout = registry_lava.wait_timeout if registry_lava else 3600
+        poll_interval = registry_lava.poll_interval if registry_lava else 30
+
+        device_type = lava_cfg.device_type if lava_cfg else ""
+        job_template_path = None
+        if lava_cfg and lava_cfg.job_template:
+            tpl = Path(lava_cfg.job_template)
+            if not tpl.is_absolute():
+                tpl = (self.config_path.parent / tpl).resolve()
+            job_template_path = str(tpl)
+
+        # Resolve artifact_server_url: registry default → preset override
+        effective_artifact_server_url = _expand_env(
+            (lava_cfg.artifact_server_url if lava_cfg else "")
+            or _registry_lava_str("artifact_server_url")
+        )
+        # Resolve artifact_name from the preset (no registry-level equivalent)
+        effective_artifact_name = _expand_env(lava_cfg.artifact_name if lava_cfg else "")
+
+        # Resolve artifact_url: CLI flag > preset artifact_url
+        # artifact_url is the "full URL" escape hatch and wins over the
+        # artifact_server_url + artifact_name composition.
+        effective_artifact_url = _expand_env(
+            artifact_url
+            or (lava_cfg.artifact_url if lava_cfg else "")
+        )
+
+        lava_tags = lava_cfg.tags if lava_cfg else []
+
+        # Resolve LAVA job context (arch / machine).
+        # Priority for arch:    preset testing.lava.context.arch > device.architecture > ""
+        # Priority for machine: preset testing.lava.context.machine > device.slug
+        # The context dict is None only when both arch and machine end up empty.
+        device_arch_fallback = getattr(resolved.device, "architecture", None) or ""
+        device_machine_fallback = resolved.device.slug
+
+        if lava_cfg and lava_cfg.context:
+            effective_arch = lava_cfg.context.arch or device_arch_fallback
+            effective_machine = lava_cfg.context.machine or device_machine_fallback
+        else:
+            effective_arch = device_arch_fallback
+            effective_machine = device_machine_fallback
+
+        if effective_arch or effective_machine:
+            effective_lava_context: Optional[dict] = {
+                "device_arch": effective_arch,
+                "device_machine": effective_machine,
+            }
+        else:
+            effective_lava_context = None
+
+        robot_suites: List[str] = []
+        robot_variables: dict = {}
+        if lava_cfg and lava_cfg.robot:
+            robot_suites = list(lava_cfg.robot.suites)
+            robot_variables = {k: _expand_env(v) for k, v in lava_cfg.robot.variables.items()}
+
+        if not server:
+            logging.error(
+                "LAVA server URL is not configured. "
+                "Set it via --lava-server, the registry 'lava.server' field, "
+                "or $ENV{LAVA_SERVER}."
+            )
+            return False
+
+        if not device_type:
+            logging.error(
+                "LAVA device_type is not configured for this preset. "
+                "Add a 'testing.lava.device_type' block to the preset in the registry."
+            )
+            return False
+
+        logging.info("Building LAVA job definition for %s...", label or resolved.device.slug)
+        job_yaml = build_lava_job(
+            resolved=resolved,
+            device_type=device_type,
+            artifact_url=effective_artifact_url,
+            artifact_server_url=effective_artifact_server_url,
+            artifact_name=effective_artifact_name,
+            lava_context=effective_lava_context,
+            job_template_path=job_template_path,
+            lava_tags=lava_tags,
+            robot_suites=robot_suites,
+            robot_variables=robot_variables,
+            wait_timeout=wait_timeout,
+        )
+        logging.debug("LAVA job YAML:\n%s", job_yaml)
+
+        client = LavaClient(
+            server=server,
+            token=token,
+            username=username,
+        )
+
+        job_id = client.submit_job(job_yaml)
+        job_url = client.job_url(job_id)
+        print(f"LAVA Job ID: {job_id}")
+        print(f"Job URL:     {job_url}")
+
+        if not wait:
+            print(
+                "Job submitted. Re-run with --wait to block until the job completes."
+            )
+            return True
+
+        try:
+            health = client.wait_for_job(
+                job_id, timeout=wait_timeout, poll_interval=poll_interval
+            )
+        except TimeoutError as exc:
+            logging.error(str(exc))
+            return False
+
+        suites = client.get_job_results(job_id)
+        overall_pass = health == "Complete" and all(s.passed for s in suites)
+
+        # Print results table
+        print(f"\nLAVA Job {job_id} — Health: {health}")
+        if suites:
+            print("\nTest Results:")
+            for suite in suites:
+                status_icon = "✓" if suite.passed else "✗"
+                print(
+                    f"  {status_icon} Suite: {suite.name:<30} "
+                    f"{'PASS' if suite.passed else 'FAIL'}  "
+                    f"({suite.total - suite.failures}/{suite.total} passed)"
+                )
+        else:
+            print("  (no test result data returned by LAVA)")
+
+        if not overall_pass:
+            logging.error("HIL test run FAILED (job: %d).", job_id)
+        else:
+            logging.info("HIL test run PASSED (job: %d).", job_id)
+
+        return overall_pass
+
+    def test_bsp(
+        self,
+        bsp_name: str,
+        lava_server: Optional[str] = None,
+        lava_token: Optional[str] = None,
+        artifact_url: Optional[str] = None,
+        wait: bool = False,
+    ) -> bool:
+        """
+        Submit a LAVA HIL test job for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset to test.
+            lava_server: LAVA server URL override (CLI ``--lava-server``).
+            lava_token: LAVA authentication token override (CLI
+                        ``--lava-token``).
+            artifact_url: Artifact base URL override (CLI ``--artifact-url``).
+            wait: If ``True``, block until the LAVA job completes.
+
+        Returns:
+            ``True`` on success (or when *wait* is ``False``), ``False`` on
+            test failure.
+
+        Raises:
+            SystemExit: If the preset is not found.
+        """
+        logging.info("Submitting HIL test for BSP preset: %s", bsp_name)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        testing_config = getattr(preset, "testing", None)
+        return self._test_resolved(
+            resolved,
+            testing_config=testing_config,
+            lava_server=lava_server,
+            lava_token=lava_token,
+            artifact_url=artifact_url,
+            wait=wait,
+            label=f"{preset.name} - {preset.description}",
+        )
+
+    def test_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        lava_server: Optional[str] = None,
+        lava_token: Optional[str] = None,
+        artifact_url: Optional[str] = None,
+        wait: bool = False,
+    ) -> bool:
+        """
+        Submit a LAVA HIL test job by specifying device, release, and features.
+
+        When using component-based invocation (no preset), only the CLI flags
+        and the registry-level ``lava:`` block are used for LAVA settings.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            lava_server: LAVA server URL (required when no registry-level
+                         ``lava.server`` is set).
+            lava_token: LAVA authentication token.
+            artifact_url: Base URL for image artifacts.
+            wait: Block until job completes when ``True``.
+
+        Returns:
+            ``True`` on success (or when *wait* is ``False``), ``False`` on
+            test failure.
+        """
+        logging.info(
+            "Submitting HIL test for device=%s release=%s features=%s",
+            device_slug,
+            release_slug,
+            feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._test_resolved(
+            resolved,
+            testing_config=None,
+            lava_server=lava_server,
+            lava_token=lava_token,
+            artifact_url=artifact_url,
+            wait=wait,
+            label=f"{device_slug}/{release_slug}",
+        )
 
     # ------------------------------------------------------------------
     # Cleanup

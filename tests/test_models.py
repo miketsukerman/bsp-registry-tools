@@ -475,3 +475,140 @@ class TestV2DataClasses:
         )
         assert "yocto" in feat.compatible_with
         assert "isar" in feat.compatible_with
+
+
+# =============================================================================
+# LavaServerConfig and LavaTestConfig — new artifact fields
+# =============================================================================
+
+from bsp.models import LavaServerConfig, LavaTestConfig, TestingConfig, RegistryRoot, Specification, Registry
+
+
+class TestLavaServerConfig:
+    def test_artifact_server_url_defaults_to_empty(self):
+        cfg = LavaServerConfig()
+        assert cfg.artifact_server_url == ""
+
+    def test_artifact_server_url_set(self):
+        cfg = LavaServerConfig(artifact_server_url="http://files.example.com/builds")
+        assert cfg.artifact_server_url == "http://files.example.com/builds"
+
+    def test_existing_fields_unaffected(self):
+        cfg = LavaServerConfig(server="https://lava.example.com", token="tok")
+        assert cfg.server == "https://lava.example.com"
+        assert cfg.token == "tok"
+
+
+class TestLavaTestConfig:
+    def test_artifact_server_url_defaults_to_empty(self):
+        cfg = LavaTestConfig()
+        assert cfg.artifact_server_url == ""
+
+    def test_artifact_name_defaults_to_empty(self):
+        cfg = LavaTestConfig()
+        assert cfg.artifact_name == ""
+
+    def test_artifact_url_still_present(self):
+        cfg = LavaTestConfig(artifact_url="http://direct.example.com/image.wic.gz")
+        assert cfg.artifact_url == "http://direct.example.com/image.wic.gz"
+
+    def test_artifact_server_url_and_name_set(self):
+        cfg = LavaTestConfig(
+            artifact_server_url="http://files.example.com",
+            artifact_name="core-image-minimal.wic.gz",
+        )
+        assert cfg.artifact_server_url == "http://files.example.com"
+        assert cfg.artifact_name == "core-image-minimal.wic.gz"
+
+    def test_all_three_artifact_fields_independent(self):
+        cfg = LavaTestConfig(
+            artifact_url="http://full.example.com/img.wic.gz",
+            artifact_server_url="http://server.example.com",
+            artifact_name="img.wic.gz",
+        )
+        assert cfg.artifact_url == "http://full.example.com/img.wic.gz"
+        assert cfg.artifact_server_url == "http://server.example.com"
+        assert cfg.artifact_name == "img.wic.gz"
+
+
+class TestLavaServerConfigInRegistryRoot:
+    def test_registry_level_lava_artifact_server_url(self):
+        lava = LavaServerConfig(
+            server="https://lava.example.com",
+            artifact_server_url="http://fileserver/builds",
+        )
+        root = RegistryRoot(
+            specification=Specification(version="2.0"),
+            registry=Registry(),
+            lava=lava,
+        )
+        assert root.lava.artifact_server_url == "http://fileserver/builds"
+
+    def test_registry_level_lava_defaults(self):
+        root = RegistryRoot(
+            specification=Specification(version="2.0"),
+            registry=Registry(),
+        )
+        assert root.lava is None
+
+
+# =============================================================================
+# LavaContext model tests
+# =============================================================================
+
+from bsp.models import LavaContext
+
+
+class TestLavaContext:
+    def test_defaults_to_empty_strings(self):
+        ctx = LavaContext()
+        assert ctx.arch == ""
+        assert ctx.machine == ""
+
+    def test_arch_and_machine_set(self):
+        ctx = LavaContext(arch="amd64", machine="qemux86-64")
+        assert ctx.arch == "amd64"
+        assert ctx.machine == "qemux86-64"
+
+    def test_partial_arch_only(self):
+        ctx = LavaContext(arch="arm64")
+        assert ctx.arch == "arm64"
+        assert ctx.machine == ""
+
+    def test_partial_machine_only(self):
+        ctx = LavaContext(machine="imx8mpevk")
+        assert ctx.arch == ""
+        assert ctx.machine == "imx8mpevk"
+
+
+class TestLavaTestConfigContext:
+    def test_context_defaults_to_none(self):
+        from bsp.models import LavaTestConfig
+        cfg = LavaTestConfig()
+        assert cfg.context is None
+
+    def test_context_can_be_set(self):
+        from bsp.models import LavaTestConfig
+        ctx = LavaContext(arch="amd64", machine="qemux86-64")
+        cfg = LavaTestConfig(context=ctx)
+        assert cfg.context is ctx
+        assert cfg.context.arch == "amd64"
+        assert cfg.context.machine == "qemux86-64"
+
+
+class TestDeviceArchitecture:
+    def test_architecture_defaults_to_none(self):
+        from bsp.models import Device
+        dev = Device(slug="qemu", description="QEMU", vendor="qemu", soc_vendor="intel")
+        assert dev.architecture is None
+
+    def test_architecture_can_be_set(self):
+        from bsp.models import Device
+        dev = Device(
+            slug="qemu",
+            description="QEMU",
+            vendor="qemu",
+            soc_vendor="intel",
+            architecture="amd64",
+        )
+        assert dev.architecture == "amd64"

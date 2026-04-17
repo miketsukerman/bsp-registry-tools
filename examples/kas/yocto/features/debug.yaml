@@ -3,4 +3,4 @@ header:
 
 local_conf_header:
   debug: |
-    IMAGE_FEATURES:append = " allow-empty-password empty-root-password allow-root-login debug-tweaks"
+    IMAGE_FEATURES:append = " allow-empty-password empty-root-password allow-root-login"

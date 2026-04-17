@@ -215,9 +215,19 @@ class Device:
               before the build.  Both paths resolve relative to the
               registry file's parent directory.
         soc_family: Optional SoC family identifier (e.g., 'imx8', 'cortex-a57')
+        architecture: Optional target CPU architecture string (e.g. ``"amd64"``,
+                      ``"arm64"``, ``"arm"``).  Used as the default value for
+                      the LAVA job context ``arch`` field when no explicit
+                      ``testing.lava.context.arch`` is provided in the preset.
         build: Deprecated – legacy nested build block.  Use ``includes`` /
                ``local_conf`` / ``copy`` directly and ``BspPreset.build``
                for container and path.
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              only when the active build-system framework
+                              matches that key (i.e. the effective distro's
+                              ``framework`` field equals the key).
     """
     slug: str
     description: str
@@ -227,7 +237,9 @@ class Device:
     local_conf: List[str] = field(default_factory=empty_list)
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     soc_family: Optional[str] = None
+    architecture: Optional[str] = None
     build: Optional[DeviceBuild] = None
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
 
 
 @dataclass
@@ -353,11 +365,49 @@ class Vendor:
         description: Optional longer description of the vendor
         website: Optional vendor website URL
         includes: KAS configuration files common to all boards from this vendor
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              (after ``includes``) only when the active
+                              build-system framework matches that key.
     """
     slug: str
     name: str
     description: str = ""
     website: str = ""
+    includes: List[str] = field(default_factory=empty_list)
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
+
+
+@dataclass
+class FrameworkOverride:
+    """
+    Framework-specific KAS configuration override for a device or vendor.
+
+    A ``FrameworkOverride`` entry inside ``Device.frameworks_overrides`` or
+    ``Vendor.frameworks_overrides`` allows a device or vendor to contribute
+    additional KAS include files that are **only** added when the active
+    build-system framework matches the override's key.
+
+    The key in the containing ``frameworks_overrides`` dict is the framework
+    slug (e.g. ``"yocto"``, ``"isar"``).
+
+    Example (device)::
+
+        devices:
+          - slug: qemuarm64
+            vendor: qemu
+            soc_vendor: arm
+            includes:
+              - kas/devices/qemu/qemuarm64.yaml
+            frameworks_overrides:
+              yocto:
+                includes:
+                  - kas/yocto/devices/qemu/qemuarm64.yaml
+
+    Attributes:
+        includes: KAS configuration files to add when this framework is active.
+    """
     includes: List[str] = field(default_factory=empty_list)
 
 
@@ -508,6 +558,141 @@ class Feature:
 
 
 @dataclass
+class LavaServerConfig:
+    """
+    LAVA server connection settings (top-level ``lava:`` block in the registry).
+
+    All fields support ``$ENV{VAR}`` expansion so that credentials and URLs can
+    be kept outside the registry file and injected at runtime via environment
+    variables.
+
+    Attributes:
+        server: Base URL of the LAVA server (e.g. ``https://lava.example.com``).
+        token: LAVA authentication token.  Use ``$ENV{LAVA_TOKEN}`` to read it
+               from the environment.
+        username: LAVA username.  Use ``$ENV{LAVA_USER}`` to read it from the
+                  environment.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Acts as a
+                             registry-wide default that individual preset
+                             ``testing.lava.artifact_server_url`` blocks can
+                             override.  Used together with ``artifact_name``
+                             to form the full image URL; overridden by
+                             ``--artifact-url`` (full URL) on the CLI.
+        wait_timeout: Maximum number of seconds to wait for a submitted job to
+                      complete when ``--wait`` is requested (default: 3600).
+        poll_interval: Polling interval in seconds when waiting for job
+                       completion (default: 30).
+    """
+    server: str = ""
+    token: str = ""
+    username: str = ""
+    artifact_server_url: str = ""
+    wait_timeout: int = 3600
+    poll_interval: int = 30
+
+
+@dataclass
+class RobotTestConfig:
+    """
+    Robot Framework test suite configuration embedded in a LAVA job.
+
+    Attributes:
+        suites: List of ``.robot`` suite file paths (relative to the registry
+                directory) that LAVA should execute as test actions.
+        variables: Optional key/value pairs passed to Robot Framework via
+                   ``--variable NAME:VALUE``.  Values support ``$ENV{}``
+                   expansion.
+    """
+    suites: List[str] = field(default_factory=empty_list)
+    variables: Dict[str, str] = field(default_factory=empty_dict)
+
+
+@dataclass
+class LavaContext:
+    """
+    LAVA job context block (``context:`` in the submitted YAML).
+
+    These values are passed verbatim into the LAVA job's ``context:`` section
+    and are forwarded to the device's LAVA dispatcher for scheduling and
+    image-format decisions.
+
+    When a preset does not specify ``testing.lava.context`` the resolver falls
+    back to the device's ``architecture`` field for ``arch`` and to the
+    device's ``slug`` for ``machine``.
+
+    Attributes:
+        arch: CPU architecture string understood by the LAVA dispatcher
+              (e.g. ``"amd64"``, ``"arm64"``, ``"arm"``).
+        machine: Machine / board identifier used by the dispatcher
+                 (e.g. ``"qemux86-64"``, ``"imx8mpevk"``).  Defaults to
+                 the device slug when not set explicitly.
+    """
+    arch: str = ""
+    machine: str = ""
+
+
+@dataclass
+class LavaTestConfig:
+    """
+    LAVA-specific test configuration for a BSP preset or device.
+
+    Attributes:
+        device_type: LAVA device-type label (must match a ``device_type``
+                     configured in the LAVA instance, e.g.
+                     ``"qemu-aarch64"`` or ``"imx8mp-evk"``).
+        job_template: Path to a Jinja2 LAVA job template (``.yaml.j2`` or
+                      ``.yml.j2``).  Resolved relative to the registry
+                      directory.  When omitted a built-in minimal template is
+                      used.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Overrides
+                             the registry-level ``lava.artifact_server_url``
+                             for this preset.  Combined with ``artifact_name``
+                             to form the full image URL.  Takes precedence over
+                             the registry-level default but is itself overridden
+                             by a full ``artifact_url`` or the ``--artifact-url``
+                             CLI flag.
+        artifact_name: Image file name (e.g. ``"core-image-minimal-qemu.wic.gz"``).
+                       Prepended with ``artifact_server_url`` to produce the
+                       ``image_url`` context variable inside the LAVA job
+                       template.  Mutually exclusive with ``artifact_url`` —
+                       use ``artifact_url`` when you need to specify the
+                       complete URL without any automatic path composition.
+        artifact_url: Complete URL to the primary image artifact.  Overrides
+                      the ``artifact_server_url`` + ``artifact_name`` combination
+                      and the registry-level default.  Also overridden by the
+                      ``--artifact-url`` CLI flag.
+        tags: Optional list of LAVA device tags that the scheduler must
+              match when allocating a worker (e.g. ``["hil", "imx8"]``).
+        context: Optional LAVA job context block (``arch`` and ``machine``).
+                 When omitted the resolver falls back to the device's
+                 ``architecture`` field for ``arch``.
+        robot: Optional Robot Framework test configuration embedded in the
+               LAVA job.
+    """
+    device_type: str = ""
+    job_template: Optional[str] = None
+    artifact_server_url: str = ""
+    artifact_name: str = ""
+    artifact_url: str = ""
+    tags: List[str] = field(default_factory=empty_list)
+    context: Optional[LavaContext] = None
+    robot: Optional[RobotTestConfig] = None
+
+
+@dataclass
+class TestingConfig:
+    """
+    Testing configuration block attached to a ``BspPreset``.
+
+    Attributes:
+        lava: LAVA-specific test settings (device type, job template, tags).
+    """
+    lava: Optional[LavaTestConfig] = None
+
+
+@dataclass
 class BspPreset:
     """
     Named BSP preset (optional shortcut for a device+release+features combination).
@@ -551,6 +736,9 @@ class BspPreset:
                device, release, and feature slugs.  When ``releases`` is used,
                the ``path`` sub-field is ignored and the path is always
                auto-composed; the ``container`` override is still applied.
+        testing: Optional HIL test configuration for this preset.  When set,
+                 ``bsp test <preset>`` will submit a LAVA job using the
+                 configuration defined here.
     """
     name: str
     description: str
@@ -564,6 +752,7 @@ class BspPreset:
     targets: List[str] = field(default_factory=empty_list)
     build: Optional[BspBuild] = None
     deploy: Optional["DeployConfig"] = None
+    testing: Optional[TestingConfig] = None
 
 
 @dataclass
@@ -704,6 +893,9 @@ class RegistryRoot:
                       that does not explicitly name an environment.
         deploy: Optional global deployment configuration.  Applied to all
                 builds unless overridden by a preset-level ``deploy`` block.
+        lava: Optional top-level LAVA server connection settings shared across
+              all presets in this registry.  Individual preset ``testing.lava``
+              blocks inherit these settings and can override them on the CLI.
     """
     specification: Specification
     registry: Registry
@@ -711,3 +903,4 @@ class RegistryRoot:
     environment: Optional[GlobalEnvironment] = None
     environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
     deploy: Optional[DeployConfig] = None
+    lava: Optional[LavaServerConfig] = None

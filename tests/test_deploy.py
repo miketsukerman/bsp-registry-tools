@@ -75,6 +75,9 @@ class _FakeBackend(CloudStorageBackend):
         self.uploaded[remote_path] = local_path
         return f"fake://{remote_path}"
 
+    def download_file(self, remote_path, local_path):
+        pass  # not exercised by deploy tests
+
     def list_artifacts(self, remote_prefix):
         return [k for k in self.uploaded if k.startswith(remote_prefix)]
 
@@ -444,6 +447,9 @@ class TestDeployRun:
                     raise RuntimeError("upload failed")
                 upload_calls.append(remote_path)
                 return f"ok://{remote_path}"
+
+            def download_file(self, remote_path, local_path):
+                pass  # not exercised here
 
             def list_artifacts(self, remote_prefix):
                 return []

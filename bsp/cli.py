@@ -50,6 +50,30 @@ def _collect_deploy_overrides(args) -> dict:
     return overrides
 
 
+def _collect_gather_overrides(args) -> dict:
+    """
+    Extract gather-related CLI arguments into a flat deploy-override dict.
+
+    Only the storage location fields are extracted (provider, container,
+    prefix).  Archive and pattern fields are upload-only concepts and are
+    therefore intentionally omitted.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    provider = getattr(args, "deploy_provider", None)
+    if provider is not None:
+        overrides["provider"] = provider
+    container = getattr(args, "deploy_container", None)
+    if container is not None:
+        overrides["container"] = container
+    prefix = getattr(args, "deploy_prefix", None)
+    if prefix is not None:
+        overrides["prefix"] = prefix
+    return overrides
+
+
 # =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
 # =============================================================================
@@ -199,6 +223,38 @@ def main() -> int:
             dest="kas_target",
             metavar="TARGET",
             help="KAS build target to pass to BitBake (e.g. core-image-minimal)"
+        )
+        build_parser.add_argument(
+            "--test",
+            action="store_true",
+            dest="run_test",
+            help="Submit a LAVA HIL test job after a successful build"
+        )
+        build_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the LAVA job to complete (requires --test)"
+        )
+        build_parser.add_argument(
+            "--lava-server",
+            type=str,
+            dest="lava_server",
+            metavar="URL",
+            help="LAVA server base URL (overrides registry 'lava.server')"
+        )
+        build_parser.add_argument(
+            "--lava-token",
+            type=str,
+            dest="lava_token",
+            metavar="TOKEN",
+            help="LAVA authentication token (overrides registry 'lava.token')"
+        )
+        build_parser.add_argument(
+            "--artifact-url",
+            type=str,
+            dest="artifact_url",
+            metavar="URL",
+            help="Base URL where build artifacts are served to the LAVA lab"
         )
 
         # ----------------------------------------------------------------
@@ -453,6 +509,154 @@ def main() -> int:
             help="Path to the image file to flash (auto-selected if omitted)"
         )
 
+        # ----------------------------------------------------------------
+        # Gather command
+        # ----------------------------------------------------------------
+        gather_parser = subparsers.add_parser(
+            "gather",
+            help="Download BSP build artifacts from cloud storage"
+        )
+        gather_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="Name of the BSP preset whose artifacts to download (mutually exclusive with --device/--release)"
+        )
+        gather_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based gather)"
+        )
+        gather_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based gather)"
+        )
+        gather_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug (can be specified multiple times)"
+        )
+        gather_parser.add_argument(
+            "--dest-dir",
+            type=str,
+            dest="dest_dir",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to write downloaded artifacts into. "
+                "Defaults to the build path configured in the registry."
+            )
+        )
+        gather_parser.add_argument(
+            "--provider",
+            type=str,
+            dest="deploy_provider",
+            default=None,
+            metavar="PROVIDER",
+            help="Cloud storage provider: azure (default) or aws"
+        )
+        gather_parser.add_argument(
+            "--container",
+            "--bucket",
+            type=str,
+            dest="deploy_container",
+            default=None,
+            metavar="CONTAINER",
+            help="Azure Blob container name or AWS S3 bucket name"
+        )
+        gather_parser.add_argument(
+            "--prefix",
+            type=str,
+            dest="deploy_prefix",
+            default=None,
+            metavar="PREFIX",
+            help=(
+                "Remote path prefix template "
+                "(supports {device}, {release}, {distro}, {vendor}, {date})"
+            )
+        )
+        gather_parser.add_argument(
+            "--date",
+            type=str,
+            dest="gather_date",
+            default=None,
+            metavar="DATE",
+            help=(
+                "Date override for the {date} placeholder in the prefix template "
+                "(YYYY-MM-DD). Defaults to today's date."
+            )
+        )
+        gather_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="List what would be downloaded without actually downloading"
+        )
+
+        # ----------------------------------------------------------------
+        # Test command
+        # ----------------------------------------------------------------
+        test_parser = subparsers.add_parser(
+            "test",
+            help="Submit a LAVA HIL test job for a BSP preset or component combination"
+        )
+        test_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="Name of the BSP preset to test (mutually exclusive with --device/--release)"
+        )
+        test_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based test)"
+        )
+        test_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based test)"
+        )
+        test_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        )
+        test_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Block until the LAVA job completes and print test results"
+        )
+        test_parser.add_argument(
+            "--lava-server",
+            type=str,
+            dest="lava_server",
+            metavar="URL",
+            help="LAVA server base URL (overrides registry 'lava.server')"
+        )
+        test_parser.add_argument(
+            "--lava-token",
+            type=str,
+            dest="lava_token",
+            metavar="TOKEN",
+            help="LAVA authentication token (overrides registry 'lava.token')"
+        )
+        test_parser.add_argument(
+            "--artifact-url",
+            type=str,
+            dest="artifact_url",
+            metavar="URL",
+            help="Base URL where build artifacts are served to the LAVA lab"
+        )
+
         args = parser.parse_args()
 
         # --gui flag or 'bsp gui' subcommand → launch TUI
@@ -534,6 +738,11 @@ def main() -> int:
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
             kas_target = getattr(args, "kas_target", None)
+            run_test = getattr(args, "run_test", False)
+            wait = getattr(args, "wait", False)
+            lava_server = getattr(args, "lava_server", None)
+            lava_token = getattr(args, "lava_token", None)
+            artifact_url = getattr(args, "artifact_url", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -545,6 +754,16 @@ def main() -> int:
                     deploy_overrides=deploy_overrides,
                     target=kas_target,
                 )
+                if run_test:
+                    passed = bsp_mgr.test_bsp(
+                        bsp_name,
+                        lava_server=lava_server,
+                        lava_token=lava_token,
+                        artifact_url=artifact_url,
+                        wait=wait,
+                    )
+                    if not passed:
+                        return 1
             elif device and release:
                 bsp_mgr.build_by_components(
                     device, release, features,
@@ -553,6 +772,18 @@ def main() -> int:
                     deploy_overrides=deploy_overrides,
                     target=kas_target,
                 )
+                if run_test:
+                    passed = bsp_mgr.test_by_components(
+                        device,
+                        release,
+                        features,
+                        lava_server=lava_server,
+                        lava_token=lava_token,
+                        artifact_url=artifact_url,
+                        wait=wait,
+                    )
+                    if not passed:
+                        return 1
             else:
                 logging.error(
                     "Specify either a BSP preset name or both --device and --release."
@@ -686,6 +917,80 @@ def main() -> int:
                 flash_parser.print_help()
                 return 1
             bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target, image_path=image)
+
+        elif args.command == "gather":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            dest_dir = getattr(args, "dest_dir", None)
+            dry_run = getattr(args, "dry_run", False)
+            date_override = getattr(args, "gather_date", None)
+            gather_overrides = _collect_gather_overrides(args)
+
+            if _check_exclusive(bsp_name, device, release, gather_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.gather_bsp(
+                    bsp_name,
+                    dest_dir=dest_dir,
+                    deploy_overrides=gather_overrides,
+                    dry_run=dry_run,
+                    date_override=date_override,
+                )
+            elif device and release:
+                bsp_mgr.gather_by_components(
+                    device, release, features,
+                    dest_dir=dest_dir,
+                    deploy_overrides=gather_overrides,
+                    dry_run=dry_run,
+                    date_override=date_override,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                gather_parser.print_help()
+                return 1
+
+        elif args.command == "test":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            wait = getattr(args, "wait", False)
+            lava_server = getattr(args, "lava_server", None)
+            lava_token = getattr(args, "lava_token", None)
+            artifact_url = getattr(args, "artifact_url", None)
+
+            if _check_exclusive(bsp_name, device, release, test_parser):
+                return 1
+            if bsp_name:
+                passed = bsp_mgr.test_bsp(
+                    bsp_name,
+                    lava_server=lava_server,
+                    lava_token=lava_token,
+                    artifact_url=artifact_url,
+                    wait=wait,
+                )
+            elif device and release:
+                passed = bsp_mgr.test_by_components(
+                    device,
+                    release,
+                    features,
+                    lava_server=lava_server,
+                    lava_token=lava_token,
+                    artifact_url=artifact_url,
+                    wait=wait,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                test_parser.print_help()
+                return 1
+            if not passed:
+                return 1
 
         else:
             logging.error(f"Unknown command: {args.command}")

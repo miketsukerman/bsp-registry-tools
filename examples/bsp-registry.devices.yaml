@@ -1,0 +1,60 @@
+specification:
+  version: "2.0"
+
+registry: 
+
+  # =====================================
+  # Vendors
+  # =====================================
+
+  vendors:
+    - slug: qemu
+      name: "QEMU"
+      description: "QEMU (emulated devices)"
+      url: "https://www.qemu.org/"  
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/vendors/qemu/qemu-common.yaml
+
+  # =====================================
+  # Devices
+  # =====================================
+
+  devices:
+
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm64.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/devices/qemuarm64.yaml
+
+    - slug: qemuarm
+      description: "QEMU ARM (32-bit, emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/devices/qemuarm.yaml
+
+    - slug: qemux86
+      description: "QEMU x86 (emulated)"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/devices/qemu/qemux86.yaml
+  
+    - slug: qemux86-64
+      description: "QEMU x86-64 (emulated)"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/devices/qemu/qemux86-64.yaml
