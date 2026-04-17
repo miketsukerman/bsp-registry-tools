@@ -239,6 +239,20 @@ def main() -> int:
             metavar="URL",
             help="Base URL where build artifacts are served to the LAVA lab"
         )
+        build_parser.add_argument(
+            "--target",
+            type=str,
+            dest="target",
+            metavar="TARGET",
+            help="Bitbake build target (image or recipe) to pass to KAS (overrides registry targets)"
+        )
+        build_parser.add_argument(
+            "--task",
+            type=str,
+            dest="task",
+            metavar="TASK",
+            help="Bitbake task to run (e.g. compile, configure) to pass to KAS"
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -683,6 +697,8 @@ def main() -> int:
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
             artifact_url = getattr(args, "artifact_url", None)
+            target = getattr(args, "target", None)
+            task = getattr(args, "task", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -692,6 +708,8 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
+                    target=target,
+                    task=task,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -709,6 +727,8 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
+                    target=target,
+                    task=task,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
