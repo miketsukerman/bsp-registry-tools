@@ -218,13 +218,6 @@ def main() -> int:
             help="Compression format for the archive bundle (default: tar.gz)"
         )
         build_parser.add_argument(
-            "--target",
-            type=str,
-            dest="kas_target",
-            metavar="TARGET",
-            help="KAS build target to pass to BitBake (e.g. core-image-minimal)"
-        )
-        build_parser.add_argument(
             "--test",
             action="store_true",
             dest="run_test",
@@ -255,6 +248,20 @@ def main() -> int:
             dest="artifact_url",
             metavar="URL",
             help="Base URL where build artifacts are served to the LAVA lab"
+        )
+        build_parser.add_argument(
+            "--target",
+            type=str,
+            dest="target",
+            metavar="TARGET",
+            help="Bitbake build target (image or recipe) to pass to KAS (overrides registry targets)"
+        )
+        build_parser.add_argument(
+            "--task",
+            type=str,
+            dest="task",
+            metavar="TASK",
+            help="Bitbake task to run (e.g. compile, configure) to pass to KAS"
         )
 
         # ----------------------------------------------------------------
@@ -737,12 +744,13 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
-            kas_target = getattr(args, "kas_target", None)
             run_test = getattr(args, "run_test", False)
             wait = getattr(args, "wait", False)
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
             artifact_url = getattr(args, "artifact_url", None)
+            target = getattr(args, "target", None)
+            task = getattr(args, "task", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -752,7 +760,8 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
-                    target=kas_target,
+                    target=target,
+                    task=task,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -770,7 +779,8 @@ def main() -> int:
                     checkout_only=checkout_only,
                     deploy_after_build=deploy_after_build,
                     deploy_overrides=deploy_overrides,
-                    target=kas_target,
+                    target=target,
+                    task=task,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(

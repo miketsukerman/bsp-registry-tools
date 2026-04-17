@@ -2,7 +2,7 @@
 Tests for the basic bsp CLI entry point (main()) commands (v2.0).
 """
 
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import bsp
 from bsp import BspManager, KasManager
@@ -182,3 +182,56 @@ registry:
         captured = capsys.readouterr()
         assert "override" in captured.out
         assert "imx-6.6.53" in captured.out
+
+
+class TestBuildCommand:
+    def test_build_target_passed_to_build_bsp(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp", "--target", "my-image"
+        ]):
+            with patch("bsp.BspManager.build_bsp") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once()
+        _, kwargs = mock_build.call_args
+        assert kwargs.get("target") == "my-image"
+
+    def test_build_task_passed_to_build_bsp(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp", "--task", "compile"
+        ]):
+            with patch("bsp.BspManager.build_bsp") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once()
+        _, kwargs = mock_build.call_args
+        assert kwargs.get("task") == "compile"
+
+    def test_build_target_and_task_passed_to_build_by_components(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "--device", "test-device", "--release", "test-release",
+            "--target", "core-image-minimal", "--task", "configure"
+        ]):
+            with patch("bsp.BspManager.build_by_components") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once()
+        _, kwargs = mock_build.call_args
+        assert kwargs.get("target") == "core-image-minimal"
+        assert kwargs.get("task") == "configure"
+
+    def test_build_no_target_defaults_to_none(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp"
+        ]):
+            with patch("bsp.BspManager.build_bsp") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once()
+        _, kwargs = mock_build.call_args
+        assert kwargs.get("target") is None
+        assert kwargs.get("task") is None
