@@ -81,6 +81,17 @@ class AwsStorageBackend(CloudStorageBackend):
         self._s3.upload_file(str(local_path), self.bucket_name, remote_path)
         return self.get_upload_url(remote_path)
 
+    def download_file(self, remote_path: str, local_path: Path) -> None:
+        """Download key *remote_path* from the configured bucket to *local_path*."""
+        local_path = Path(local_path)
+        if self.dry_run:
+            self.logger.info("[dry-run] Would download s3://%s/%s → %s", self.bucket_name, remote_path, local_path)
+            return
+
+        self.logger.info("Downloading s3://%s/%s → %s", self.bucket_name, remote_path, local_path)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        self._s3.download_file(self.bucket_name, remote_path, str(local_path))
+
     def list_artifacts(self, remote_prefix: str) -> List[str]:
         """List object keys under *remote_prefix* in the configured bucket."""
         if self.dry_run:

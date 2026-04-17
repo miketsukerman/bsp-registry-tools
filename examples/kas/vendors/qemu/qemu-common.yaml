@@ -1,0 +1,25 @@
+header:
+  version: 14
+
+header:
+  version: 14
+
+distro: poky
+
+target:
+  - core-image-minimal
+  - core-image-sato
+
+local_conf_header:
+  qemu: |
+    IMAGE_FEATURES += "empty-root-password allow-empty-password allow-root-login post-install-logging"
+    DISTRO_FEATURES += "x11"
+
+    CORE_IMAGE_EXTRA_INSTALL += " \
+       util-linux-lscpu \
+       util-linux \
+       procps \
+       lsb-release \
+    "
+  image-fs-types: |
+    IMAGE_FSTYPES += "wic wic.gz"

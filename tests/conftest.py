@@ -591,6 +591,74 @@ registry:
 """
 
 
+REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+    - slug: isar
+      description: "Isar build system"
+      vendor: "Ilbers GmbH"
+      includes:
+        - kas/isar/isar.yaml
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+  vendors:
+    - slug: qemu
+      name: "QEMU"
+      description: "QEMU (emulated devices)"
+      url: "https://www.qemu.org/"
+      includes:
+        - kas/vendors/qemu/common.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/vendors/qemu/yocto.yaml
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/devices/qemu/qemuarm64.yaml
+      frameworks_overrides:
+        yocto:
+          includes:
+            - kas/yocto/devices/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+  bsp:
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
+"""
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -679,6 +747,14 @@ def registry_with_frameworks_file(tmp_dir):
     """Create a registry YAML file with framework definitions and compatible_with features."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_FRAMEWORKS_YAML)
+    return registry_path
+
+
+@pytest.fixture
+def registry_with_frameworks_overrides_file(tmp_dir):
+    """Create a registry YAML file with frameworks_overrides on device and vendor."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML)
     return registry_path
 
 
@@ -788,6 +864,63 @@ def registry_with_multi_release_bsp_file(tmp_dir):
     """Create a registry YAML file with a multi-release BSP preset."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_MULTI_RELEASE_BSP_YAML)
+    return registry_path
+
+
+REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  devices:
+    - slug: qemux86-64
+      description: "QEMU x86-64"
+      vendor: qemu
+      soc_vendor: intel
+      includes:
+        - kas/qemu/qemux86-64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+    - slug: walnascar
+      description: "Yocto 5.2"
+      yocto_version: "5.2"
+      includes:
+        - kas/walnascar.yaml
+  features: []
+  bsp:
+    - name: poky-qemux86-64
+      description: "Poky QEMU x86-64"
+      device: qemux86-64
+      releases: [scarthgap, walnascar]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemux86-64
+      testing:
+        lava:
+          device_type: "qemu-qemux86-64"
+          artifact_url: "http://files.ci/builds"
+          tags: ["hil", "qemu"]
+          robot:
+            suites:
+              - vendors/qemu/tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "192.168.1.1"
+"""
+
+
+@pytest.fixture
+def registry_with_multi_release_testing_file(tmp_dir):
+    """Create a registry YAML with a multi-release preset that has a testing block."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML)
     return registry_path
 
 
@@ -1634,4 +1767,58 @@ def registry_with_preset_local_conf_and_targets_file(tmp_dir):
     """Create a registry YAML with preset-level local_conf and targets."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML)
+    return registry_path
+
+
+REGISTRY_WITH_LAVA_ENV_VARS_YAML = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+lava:
+  server: "$ENV{TEST_LAVA_SERVER}"
+  token: "$ENV{TEST_LAVA_TOKEN}"
+  username: "$ENV{TEST_LAVA_USER}"
+registry:
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      includes:
+        - kas/scarthgap.yaml
+  bsp:
+    - name: qemuarm64-scarthgap
+      description: "QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      build:
+        container: "debian-bookworm"
+        path: build/qemuarm64-scarthgap
+      testing:
+        lava:
+          device_type: "qemu-aarch64"
+          artifact_url: "$ENV{TEST_ARTIFACT_URL}"
+          tags: ["hil"]
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "$ENV{TEST_BOARD_IP}"
+"""
+
+
+@pytest.fixture
+def registry_with_lava_env_vars_file(tmp_dir):
+    """Create a registry YAML with $ENV{} placeholders in LAVA config fields."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_LAVA_ENV_VARS_YAML)
     return registry_path
