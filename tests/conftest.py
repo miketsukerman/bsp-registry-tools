@@ -1822,3 +1822,215 @@ def registry_with_lava_env_vars_file(tmp_dir):
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_LAVA_ENV_VARS_YAML)
     return registry_path
+
+
+# =============================================================================
+# NXP Secure Boot registry fixture
+#
+# Covers:
+#   - HABv4 for i.MX8 SoC family
+#   - AHAB for i.MX8M and i.MX9 SoC families
+#   - Non-NXP device (QEMU) for compatibility-failure tests
+#   - Release-level vendor_overrides with soc_vendors for NXP BSP selection
+#   - Feature-level vendor_overrides with soc_vendors for HABv4/AHAB layers
+#   - Environment variables: SIGNING_KEY (common) and NXP_HAB_PKI_DIR
+#   - Named presets for signed and unsigned variants
+# =============================================================================
+
+REGISTRY_WITH_NXP_SECURE_BOOT_YAML = """
+specification:
+  version: "2.0"
+
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+
+registry:
+
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+    - slug: fsl-imx-xwayland
+      description: "NXP i.MX Wayland distro"
+      vendor: nxp
+      framework: yocto
+      includes:
+        - vendors/nxp/distro/fsl-imx-xwayland.yaml
+
+  devices:
+    # i.MX8 class device — uses HABv4 secure boot
+    - slug: imx8-hab4-board
+      description: "Advantech i.MX8 Board (HABv4)"
+      vendor: advantech
+      soc_vendor: nxp
+      soc_family: imx8
+      includes:
+        - kas/boards/imx8-hab4-board.yaml
+
+    # i.MX8M Plus device — uses AHAB secure boot
+    - slug: imx8mp-ahab-board
+      description: "Advantech i.MX8M Plus Board (AHAB)"
+      vendor: advantech
+      soc_vendor: nxp
+      soc_family: imx8m
+      includes:
+        - kas/boards/imx8mp-ahab-board.yaml
+
+    # i.MX93 device — uses AHAB secure boot
+    - slug: imx93-ahab-board
+      description: "Advantech i.MX93 Board (AHAB)"
+      vendor: advantech
+      soc_vendor: nxp
+      soc_family: imx9
+      includes:
+        - kas/boards/imx93-ahab-board.yaml
+
+    # Non-NXP reference device — secure-boot feature must be rejected
+    - slug: qemu-arm64
+      description: "QEMU ARM64 (non-NXP)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+      vendor_overrides:
+        - vendor: advantech
+          includes:
+            - kas/yocto/vendors/advantech/scarthgap.yaml
+          soc_vendors:
+            - vendor: nxp
+              distro: fsl-imx-xwayland
+              includes:
+                - kas/yocto/vendors/advantech/nxp/scarthgap.yaml
+              releases:
+                - slug: habv4
+                  description: "Scarthgap NXP BSP for i.MX8 (HABv4)"
+                  includes:
+                    - kas/yocto/vendors/advantech/nxp/habv4.yaml
+                - slug: ahab
+                  description: "Scarthgap NXP BSP for i.MX8M+/i.MX9 (AHAB)"
+                  includes:
+                    - kas/yocto/vendors/advantech/nxp/ahab.yaml
+
+  features:
+    # Single secure-boot feature restricted to NXP SoC vendor.
+    # Feature-level vendor_overrides add board-vendor and SoC-vendor
+    # specific KAS layers; the vendor_release slug (habv4/ahab) shared
+    # with the release-level override selects the correct signing flow.
+    - slug: secure-boot
+      description: "NXP Secure Boot (HABv4 / AHAB)"
+      compatibility:
+        soc_vendor:
+          - nxp
+      compatible_with: [yocto]
+      includes:
+        - kas/features/secure-boot/common.yaml
+      env:
+        - name: "SIGNING_KEY"
+          value: "$ENV{SIGNING_KEY}"
+        - name: "NXP_HAB_PKI_DIR"
+          value: "$ENV{NXP_HAB_PKI_DIR}"
+      local_conf:
+        - "INHERIT += \\\"image-sign\\\""
+      vendor_overrides:
+        - vendor: advantech
+          includes:
+            - kas/features/secure-boot/advantech-base.yaml
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - kas/features/secure-boot/nxp-common.yaml
+              releases:
+                - slug: habv4
+                  description: "HABv4 signing layers"
+                  includes:
+                    - kas/features/secure-boot/nxp-habv4.yaml
+                - slug: ahab
+                  description: "AHAB signing layers"
+                  includes:
+                    - kas/features/secure-boot/nxp-ahab.yaml
+
+    # Unrestricted OTA feature (used to verify non-NXP builds still work)
+    - slug: ota
+      description: "Over-the-Air Update via SWUpdate"
+      compatible_with: [yocto]
+      includes:
+        - kas/features/ota.yaml
+      local_conf:
+        - "DISTRO_FEATURES:append = ' swupdate'"
+
+  bsp:
+    # --- HABv4 presets (i.MX8 family) ---
+    - name: imx8-hab4-scarthgap-secure-boot
+      description: "Advantech i.MX8 Scarthgap with HABv4 Secure Boot"
+      device: imx8-hab4-board
+      release: scarthgap
+      vendor_release: habv4
+      features:
+        - secure-boot
+      build:
+        container: "debian-bookworm"
+        path: build/imx8-hab4-scarthgap-secure-boot
+
+    - name: imx8-hab4-scarthgap-unsigned
+      description: "Advantech i.MX8 Scarthgap (no secure boot)"
+      device: imx8-hab4-board
+      release: scarthgap
+      vendor_release: habv4
+      features: []
+      build:
+        container: "debian-bookworm"
+        path: build/imx8-hab4-scarthgap-unsigned
+
+    # --- AHAB presets (i.MX8M Plus) ---
+    - name: imx8mp-ahab-scarthgap-secure-boot
+      description: "Advantech i.MX8M Plus Scarthgap with AHAB Secure Boot"
+      device: imx8mp-ahab-board
+      release: scarthgap
+      vendor_release: ahab
+      features:
+        - secure-boot
+      build:
+        container: "debian-bookworm"
+        path: build/imx8mp-ahab-scarthgap-secure-boot
+
+    # --- AHAB presets (i.MX93) ---
+    - name: imx93-ahab-scarthgap-secure-boot
+      description: "Advantech i.MX93 Scarthgap with AHAB Secure Boot"
+      device: imx93-ahab-board
+      release: scarthgap
+      vendor_release: ahab
+      features:
+        - secure-boot
+      build:
+        container: "debian-bookworm"
+        path: build/imx93-ahab-scarthgap-secure-boot
+"""
+
+
+@pytest.fixture
+def registry_with_nxp_secure_boot_file(tmp_dir):
+    """Create a registry YAML covering NXP HABv4 and AHAB secure-boot scenarios."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_NXP_SECURE_BOOT_YAML)
+    return registry_path
