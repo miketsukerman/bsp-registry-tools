@@ -1274,6 +1274,10 @@ the feature level.
   build time via environment variables that use `$ENV{}` placeholders.
 * Support is initially limited to Yocto (`compatible_with: [yocto]`).
 
+> For the full operational guide — key generation, SoC fusing, image
+> verification, and CI/CD key injection — see
+> [docs/nxp-secure-boot.md](nxp-secure-boot.md).
+
 ### Registry snippet
 
 ```yaml
