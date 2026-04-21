@@ -62,7 +62,6 @@ pip install ".[server]"
 - [FastAPI](https://fastapi.tiangolo.com/) >= 0.100.0
 - [uvicorn](https://www.uvicorn.org/) >= 0.23.0
 - [strawberry-graphql](https://strawberry.rocks/) >= 0.200.0
-
 #### Optional extras for cloud deployment
 
 Cloud SDK dependencies are optional and only needed if you use `bsp deploy`:
@@ -231,12 +230,18 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
+           {build,list,containers,tree,export,shell,server} ...
+           {build,list,containers,tree,export,shell,deploy} ...
+           {build,list,containers,tree,export,shell,server,deploy} ...           {build,list,containers,tree,export,shell,test} ...
            {build,list,containers,tree,export,shell,server,deploy,test} ...
 
 
 Advantech Board Support Package Registry
 
 positional arguments:
+  {build,list,containers,tree,export,shell,server}
+  {build,list,containers,tree,export,shell,deploy}
+  {build,list,containers,tree,export,shell,server,deploy}  {build,list,containers,tree,export,shell,test}
   {build,list,containers,tree,export,shell,server,deploy,test}
 
                         Command to execute
@@ -314,12 +319,12 @@ bsp --registry my-registry.yaml tree
 
 Renders the full registry as a colored ASCII tree, grouped into sections:
 **Frameworks**, **Distros**, **Releases** (with vendor overrides), **Devices**,
-**Features** (with vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
+**Features** (with release and vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
 Use `--no-color` to disable colors (e.g. for scripts or log files).
 
 | Option | Description |
 |--------|-------------|
-| `--full` | Show full details including includes lists, vendor overrides for releases and features, and override slugs for presets |
+| `--full` | Show full details including includes lists, release overrides and vendor overrides for features, vendor overrides for releases, and override slugs for presets |
 | `--compact` | Show compact output with names/slugs only (no sub-items) |
 
 **Example output (`bsp tree`):**
@@ -351,7 +356,7 @@ BSP Registry
 
 **Example output (`bsp tree --full`):**
 
-In `--full` mode all includes lists are expanded and vendor overrides for both releases and features are shown as nested sub-trees:
+In `--full` mode all includes lists are expanded, release overrides and vendor overrides for features are shown as nested sub-trees, and vendor overrides for releases are also expanded:
 
 ```
 BSP Registry
@@ -365,16 +370,18 @@ BSP Registry
 │               └── includes:
 │                   └── kas/yocto/vendors/advantech/nxp/imx-6.6.53.yaml
 └── Features (1)
-    └── rauc: Enable RAUC support in the Yocto image [requires compatible_with: yocto]
+    └── ostree: Enable OSTree support in the Yocto image [requires compatible_with: yocto]
         ├── includes:
-        │   └── features/ota/rauc/rauc.yml
+        │   └── features/ota/ostree/ostree.yml
+        ├── release override: scarthgap
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-scarthgap.yml
+        ├── release override: styhead
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-styhead.yml
         └── vendor override: advantech
-            ├── includes: features/ota/rauc/advantech-rauc.yml
             └── soc vendor: nxp
-                ├── includes: features/ota/rauc/modular-bsp-ota-nxp.yml
-                └── vendor release: imx-6.6.53: RAUC for i.MX 6.6.53
-                    └── includes:
-                        └── features/ota/rauc/rauc-imx-6.6.53.yml
+                └── includes: features/ota/ostree/modular-bsp-ota-nxp.yml
 ```
 
 #### `build` — Build a BSP image
@@ -492,9 +499,6 @@ bsp server [--host HOST] [--port PORT] [--reload]
 | `--host HOST` | `127.0.0.1` | Host address to bind to |
 | `--port PORT` | `8080` | Port to listen on |
 | `--reload` | — | Enable auto-reload on code changes (development mode) |
-
----
-
 #### `deploy` — Upload build artifacts to cloud storage
 
 Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
@@ -900,9 +904,6 @@ manager.initialize()
 app = create_app(manager=manager)
 uvicorn.run(app, host="0.0.0.0", port=8080)
 ```
-
----
-
 # Deploy using registry-configured settings (Azure by default)
 bsp deploy poky-qemuarm64-scarthgap
 
@@ -1080,6 +1081,39 @@ registry:
       includes:
         - kas/scarthgap.yaml
 ```
+
+### `registry.features`
+
+Optional feature definitions that can be enabled per-build.  Features declare
+their own KAS includes and can restrict themselves to specific frameworks/distros
+(`compatible_with`), board vendors (`compatibility`), and/or releases
+(`release_overrides`).
+
+```yaml
+registry:
+  features:
+    - slug: ostree
+      description: "Enable OSTree support in the Yocto image"
+      compatible_with: [yocto]   # restrict to Yocto framework
+      includes:
+        - features/ota/ostree/ostree.yml   # always included when feature is enabled
+      release_overrides:
+        - release: scarthgap
+          includes:
+            - features/ota/ostree/ostree-scarthgap.yml  # only for Scarthgap
+        - release: styhead
+          includes:
+            - features/ota/ostree/ostree-styhead.yml    # only for Styhead
+      vendor_overrides:
+        - vendor: advantech
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/ostree/modular-bsp-ota-nxp.yml  # only for Advantech NXP boards
+```
+
+See [docs/registry-v2.md](docs/registry-v2.md#registryfeatures) for the full
+reference including `compatibility`, `local_conf`, `env`, and all override fields.
 
 ### `registry.bsp`
 
@@ -1348,7 +1382,6 @@ from bsp.server import create_app
 # Create and run the server (requires bsp-registry-tools[server])
 app = create_app(registry_path="bsp-registry.yaml")
 uvicorn.run(app, host="0.0.0.0", port=8080)
-
 ### Cloud Deployment API
 
 ```python
@@ -1540,6 +1573,8 @@ python -m build
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
+| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, release_overrides, vendor_overrides) |
+| `BspPreset` | Named preset combining device + release + features |
 | `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
 | `BspPreset` | Named preset combining device + release + features + optional deploy and testing configs |
 
