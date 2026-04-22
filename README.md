@@ -1551,6 +1551,7 @@ python -m build
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
 | `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
 | `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
+| `ArtifactGatherer` | Downloads previously uploaded Yocto build artifacts from cloud storage |
 | `AzureStorageBackend` | Azure Blob Storage backend (requires `azure-storage-blob`) |
 | `AwsStorageBackend` | AWS S3 backend (requires `boto3`) |
 | `LavaClient` | LAVA REST API wrapper — submit, poll, and fetch results for HIL test jobs |
@@ -1561,15 +1562,11 @@ python -m build
 | Class | Description |
 |-------|-------------|
 | `RegistryRoot` | Root registry container (specification, registry, containers, environments, deploy, lava) |
-
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
 | `Feature` | Optional BSP feature (slug, includes, compatibility constraints, release_overrides, vendor_overrides) |
-| `BspPreset` | Named preset combining device + release + features |
-| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
 | `BspPreset` | Named preset combining device + release + features + optional deploy and testing configs |
-
 | `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
 | `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
 | `Docker` | Docker image, build arg, privileged mode, and runtime_args configuration |
@@ -1577,6 +1574,7 @@ python -m build
 | `EnvironmentVariable` | Name/value pair with `$ENV{}` expansion support |
 | `DeployConfig` | Cloud deployment configuration (provider, container/bucket, prefix, patterns, artifact dirs) |
 | `DeployResult` | Result of a deployment run: list of uploaded artifacts with URLs and checksums |
+| `GatherResult` | Result of a gather run: list of local paths for downloaded artifacts |
 | `LavaServerConfig` | Registry-level LAVA server connection settings (server, token, timeouts) |
 | `LavaTestConfig` | Per-preset LAVA test settings (device_type, artifact_url, tags, job_template, robot) |
 | `RobotTestConfig` | Robot Framework suite list and variable dict embedded in a LAVA job |
