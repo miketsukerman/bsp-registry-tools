@@ -235,3 +235,20 @@ class TestBuildCommand:
         _, kwargs = mock_build.call_args
         assert kwargs.get("target") is None
         assert kwargs.get("task") is None
+
+    def test_main_build_with_path_override(self, registry_file, tmp_dir):
+        """--path argument is forwarded to build_bsp() as build_path_override."""
+        custom_path = str(tmp_dir / "my-custom-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "--checkout", "--path", custom_path, "test-bsp"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                mock_build_bsp.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_bsp.assert_called_once()
+        args, kwargs = mock_build_bsp.call_args
+        assert args[0] == "test-bsp"
+        assert kwargs.get("checkout_only") is True
+        assert kwargs.get("build_path_override") == custom_path
