@@ -19,6 +19,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
+- ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
 
 
@@ -230,31 +231,23 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,tree,export,shell,server} ...
-           {build,list,containers,tree,export,shell,deploy} ...
-           {build,list,containers,tree,export,shell,server,deploy} ...           {build,list,containers,tree,export,shell,test} ...
-           {build,list,containers,tree,export,shell,server,deploy,test} ...
-
+           {build,list,containers,tree,export,shell,server,deploy,gather,test} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server}
-  {build,list,containers,tree,export,shell,deploy}
-  {build,list,containers,tree,export,shell,server,deploy}  {build,list,containers,tree,export,shell,test}
-  {build,list,containers,tree,export,shell,server,deploy,test}
-
+  {build,list,containers,tree,export,shell,server,deploy,gather,test}
                         Command to execute
     build               Build an image for BSP
-    list                List available BSPs
+    list                List available BSPs and components
     containers          List available containers
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
     server              Start a GraphQL / REST HTTP server
     deploy              Deploy build artifacts to cloud storage
+    gather              Download BSP build artifacts from cloud storage
     test                Submit a LAVA HIL test job for a BSP
-
 
 options:
   -h, --help            show this help message and exit
@@ -387,7 +380,7 @@ BSP Registry
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
+bsp build <bsp_name> [--checkout] [--target TARGET] [--task TASK] [--path PATH]
 bsp build <bsp_name> [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build <bsp_name> [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
 bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
@@ -395,7 +388,6 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 
 | Option | Description |
 |--------|-------------|
-| `--clean` | Clean build directory before building |
 | `--checkout` | Validate configuration and checkout repos without building |
 | `--path PATH` | Override the output build directory path defined in the registry |
 | `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
@@ -500,6 +492,18 @@ bsp server [--host HOST] [--port PORT] [--reload]
 | `--host HOST` | `127.0.0.1` | Host address to bind to |
 | `--port PORT` | `8080` | Port to listen on |
 | `--reload` | — | Enable auto-reload on code changes (development mode) |
+
+Once started, the following interfaces are available:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
+| `http://localhost:8080/redoc` | ReDoc UI (REST) |
+| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
+| `http://localhost:8080/api/v1/…` | REST API endpoints |
+
+---
+
 #### `deploy` — Upload build artifacts to cloud storage
 
 Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
@@ -519,6 +523,46 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 | `--dry-run` | List what would be uploaded without uploading (no credentials required) |
+
+---
+
+#### `gather` — Download build artifacts from cloud storage
+
+Downloads Yocto build artifacts that were previously uploaded by `bsp deploy`
+from Azure Blob Storage or AWS S3 to a local directory.
+
+```bash
+bsp gather <bsp_name> [OPTIONS]
+bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`) |
+| `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
+| `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
+| `--dry-run` | List what would be downloaded without downloading (no credentials required) |
+
+**Examples:**
+
+```bash
+# Download artifacts for a preset build (uses today's date)
+bsp gather poky-qemuarm64-scarthgap
+
+# Download artifacts into a specific local directory
+bsp gather poky-qemuarm64-scarthgap --dest-dir /mnt/artifacts
+
+# Download artifacts produced on a specific date
+bsp gather poky-qemuarm64-scarthgap --date 2025-03-15
+
+# Preview what would be downloaded (dry-run)
+bsp gather poky-qemuarm64-scarthgap --dry-run
+
+# Component-based gather
+bsp gather --device qemuarm64 --release scarthgap --dest-dir /mnt/artifacts
+```
 
 ---
 
@@ -556,14 +600,6 @@ bsp test poky-qemuarm64-scarthgap --wait \
 # Component-based (no preset needed)
 bsp test --device qemuarm64 --release scarthgap --wait
 ```
-Once started, the following interfaces are available:
-
-| URL | Description |
-|-----|-------------|
-| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
-| `http://localhost:8080/redoc` | ReDoc UI (REST) |
-| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
-| `http://localhost:8080/api/v1/…` | REST API endpoints |
 
 ## HTTP Server (REST + GraphQL)
 
@@ -737,39 +773,6 @@ app = create_app(manager=manager)
 uvicorn.run(app, host="0.0.0.0", port=8080)
 ```
 
----
-
-```bash
-# Submit a LAVA job for a pre-built image and exit immediately
-bsp test poky-qemuarm64-scarthgap
-
-# Submit and wait for the job to complete
-bsp test poky-qemuarm64-scarthgap --wait
-
-# Override LAVA settings from the CLI
-bsp test poky-qemuarm64-scarthgap --wait \
-  --lava-server https://lava.ci.example.com \
-  --lava-token $LAVA_TOKEN \
-  --artifact-url http://minio.example.com/builds
-
-# Component-based (no preset needed)
-bsp test --device qemuarm64 --release scarthgap --wait
-```
-
-**Example output (`bsp test poky-qemuarm64-scarthgap --wait`):**
-
-```
-LAVA Job ID: 1042
-Job URL:     https://lava.example.com/scheduler/job/1042
-
-LAVA Job 1042 — Health: Complete
-
-Test Results:
-  ✓ Suite: smoke                           PASS  (3/3 passed)
-  ✓ Suite: boot                            PASS  (5/5 passed)
-  ✗ Suite: network                         FAIL  (2/3 passed)
-```
-
 ## HIL Testing with LAVA and Robot Framework
 
 `bsp-registry-tools` can submit Hardware-in-the-Loop (HIL) test jobs to a
@@ -898,40 +901,9 @@ bsp test --device qemuarm64 --release scarthgap \
 ```python
 from bsp import BspManager, LavaClient, LavaTestSuite, build_lava_job
 
-
 manager = BspManager("bsp-registry.yaml")
 manager.initialize()
 
-app = create_app(manager=manager)
-uvicorn.run(app, host="0.0.0.0", port=8080)
-```
-# Deploy using registry-configured settings (Azure by default)
-bsp deploy poky-qemuarm64-scarthgap
-
-# Preview what would be uploaded without uploading
-bsp deploy poky-qemuarm64-scarthgap --dry-run
-
-# Deploy to an explicit Azure container
-bsp deploy poky-qemuarm64-scarthgap --container bsp-artifacts
-
-# Deploy to AWS S3
-bsp deploy poky-qemuarm64-scarthgap --provider aws --bucket my-s3-bucket
-
-# Deploy by components with a custom prefix
-bsp deploy --device qemuarm64 --release scarthgap --prefix "builds/{vendor}/{device}/{date}"
-
-# Upload only compressed image files
-bsp deploy poky-qemuarm64-scarthgap --pattern "**/*.wic.gz"
-```
-
-**Authentication:**
-
-| Provider | Authentication |
-|----------|---------------|
-| Azure | `AZURE_STORAGE_CONNECTION_STRING` env var, or `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (supports `az login`, service principal env vars, Managed Identity) |
-| AWS | Standard boto3 credential chain: `~/.aws/credentials`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars, IAM role, instance profile |
-
-See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details, YAML configuration, and CI/CD integration examples.
 # Submit LAVA test and wait for results
 passed = manager.test_bsp(
     "poky-qemuarm64-scarthgap",
@@ -1297,11 +1269,12 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 
 | File | Description |
 |------|-------------|
-| `examples/kas/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
-| `examples/kas/styhead.yaml` | Yocto Styhead (5.1) base configuration |
-| `examples/kas/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
-| `examples/kas/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
-| `examples/kas/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/yocto/releases/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
+| `examples/kas/yocto/releases/styhead.yaml` | Yocto Styhead (5.1) base configuration |
+| `examples/kas/yocto/devices/qemuarm64.yaml` | QEMU ARM64 machine configuration |
+| `examples/kas/yocto/devices/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/devices/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
+| `examples/kas/isar/` | Isar build-system example configurations |
 
 ### KAS File Structure
 
@@ -1383,6 +1356,8 @@ from bsp.server import create_app
 # Create and run the server (requires bsp-registry-tools[server])
 app = create_app(registry_path="bsp-registry.yaml")
 uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
 ### Cloud Deployment API
 
 ```python
@@ -1436,7 +1411,7 @@ result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", r
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
-pip install -e ".[dev]"
+pip install -e .
 ```
 
 ### Running Tests
@@ -1469,17 +1444,19 @@ bsp-registry-tools/
 │   ├── path_resolver.py      # Path utilities
 │   ├── models.py             # Dataclass models (v2.0 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
+│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
 │   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
+│   ├── gatherer.py           # ArtifactGatherer: download build artifacts from cloud
+│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
 │   ├── utils.py              # YAML / Docker utilities
 │   ├── exceptions.py         # Custom exceptions
-│   └── server/               # Optional HTTP server (requires [server] extras)
-│       ├── __init__.py       # Exports create_app
-│       ├── app.py            # FastAPI application factory
-│       ├── rest.py           # REST router (/api/v1/*)
-│       ├── graphql_schema.py # Strawberry GraphQL schema
-│       └── types.py          # Pydantic response models
-│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
+│   ├── server/               # Optional HTTP server (requires [server] extras)
+│   │   ├── __init__.py       # Exports create_app
+│   │   ├── app.py            # FastAPI application factory
+│   │   ├── rest.py           # REST router (/api/v1/*)
+│   │   ├── graphql_schema.py # Strawberry GraphQL schema
+│   │   └── types.py          # Pydantic response models
 │   └── storage/              # Cloud storage backends
 │       ├── __init__.py       # Exports CloudStorageBackend and create_backend()
 │       ├── base.py           # Abstract CloudStorageBackend base class
@@ -1493,27 +1470,41 @@ bsp-registry-tools/
 │   ├── registry-v2.md        # Full v2.0 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── server.md             # HTTP server (REST + GraphQL) reference
 │   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
-│   ├── test_cli.py
+│   ├── test_cli_basic.py
+│   ├── test_cli_remote_flags.py
 │   ├── test_deploy.py        # Deployment tests
+│   ├── test_gatherer.py      # Gather (download) tests
 │   ├── test_lava_client.py   # LAVA client unit tests (HTTP mocked)
 │   ├── test_lava_job_builder.py # LAVA job template renderer tests
-
+│   ├── test_models.py
+│   ├── test_kas_manager.py
+│   ├── test_environment.py
+│   ├── test_path_resolver.py
 │   ├── test_registry_fetcher.py
-│   └── ...
+│   └── test_utils.py
 ├── examples/
 │   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
+│   ├── bsp-registry.devices.yaml # Devices include fragment example
 │   ├── lava/
 │   │   └── job-template.yaml.j2  # Annotated example LAVA job Jinja2 template
 │   └── kas/
-│       └── ...                # KAS configuration files
+│       ├── yocto/             # Yocto Project KAS configurations
+│       │   ├── releases/      # Per-release KAS files (scarthgap, styhead, …)
+│       │   ├── devices/       # Per-device KAS files (qemuarm64, qemuarm, …)
+│       │   ├── distro/        # Distro fragments (poky, harden)
+│       │   └── features/      # Feature KAS files (systemd, debug, ssh, …)
+│       ├── isar/              # Isar build system KAS configurations
+│       └── devices/           # Shared device configurations
 └── .github/
     └── workflows/
-        ├── tests.yaml         # CI: run tests on push/PR
-        └── publish.yaml       # CD: publish to PyPI on release
+        ├── tests.yml          # CI: run tests on push/PR
+        ├── cli-tests.yml      # CI: integration CLI tests
+        └── publish.yml        # CD: publish to PyPI on release
 ```
 
 ## Publishing to PyPI
