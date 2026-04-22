@@ -651,6 +651,19 @@ class BspManager:
                     if full:
                         _print_includes(item.includes, item_prefix)
 
+                        # Release overrides as a nested sub-tree
+                        has_release_overrides = bool(item.release_overrides)
+                        has_vendor_overrides = bool(item.vendor_overrides)
+                        for ro_idx, ro in enumerate(item.release_overrides):
+                            is_last_ro = ro_idx == len(item.release_overrides) - 1 and not has_vendor_overrides
+                            ro_conn   = LAST if is_last_ro else BRANCH
+                            ro_prefix = item_prefix + (BLANK if is_last_ro else PIPE)
+                            print(
+                                f"{item_prefix}{ro_conn}"
+                                f"{_dim('release override: ')}{_slug(ro.release)}"
+                            )
+                            _print_includes(ro.includes, ro_prefix)
+
                         # Vendor overrides as a nested sub-tree
                         for vo_idx, vo in enumerate(item.vendor_overrides):
                             is_last_vo = vo_idx == len(item.vendor_overrides) - 1
@@ -782,7 +795,9 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
-    def _copy_files(self, resolved: ResolvedConfig) -> None:
+    def _copy_files(
+        self, resolved: ResolvedConfig, build_path_override: Optional[str] = None
+    ) -> None:
         """
         Copy files into the build environment before the build starts.
 
@@ -800,6 +815,8 @@ class BspManager:
 
         Args:
             resolved: Resolved build configuration containing copy entries.
+            build_path_override: Optional build path to use instead of
+                                ``resolved.build_path``.
 
         Raises:
             SystemExit: If a source file does not exist.
@@ -812,7 +829,10 @@ class BspManager:
         # copied files land inside the build workspace for the current BSP.
         # When build_path is empty (no preset, direct resolve() call) fall back
         # to the registry directory to preserve backward-compatible behaviour.
-        raw_build_path = resolved.build_path or ""
+        if build_path_override is not None:
+            raw_build_path = build_path_override
+        else:
+            raw_build_path = resolved.build_path or ""
         if raw_build_path:
             build_abs = Path(raw_build_path)
             if not build_abs.is_absolute():
@@ -862,6 +882,7 @@ class BspManager:
         self,
         resolved: ResolvedConfig,
         use_container: bool = True,
+        build_path_override: Optional[str] = None,
     ) -> KasManager:
         """
         Create a KasManager for the given ResolvedConfig.
@@ -877,6 +898,8 @@ class BspManager:
         Args:
             resolved: Resolved device+release+features build config
             use_container: Whether to use containerized KAS
+            build_path_override: Optional build path to use instead of
+                                ``resolved.build_path``.
 
         Returns:
             Configured KasManager instance
@@ -940,10 +963,13 @@ class BspManager:
             if resolved.container and use_container
             else None
         )
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
 
         kas_mgr = KasManager(
             kas_files,
-            resolved.build_path,
+            effective_build_path,
             download_dir=downloads,
             sstate_dir=sstate,
             use_container=use_container,
@@ -982,6 +1008,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -996,6 +1023,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1015,11 +1043,16 @@ class BspManager:
             if checkout_only:
                 logging.info("Skipping Docker build in checkout mode")
 
-        self.prepare_build_directory(resolved.build_path)
-        self._copy_files(resolved)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
 
         kas_mgr = self._get_kas_manager_for_resolved(
-            resolved, use_container=not checkout_only
+            resolved,
+            use_container=not checkout_only,
+            build_path_override=build_path_override,
         )
 
         try:
@@ -1039,6 +1072,7 @@ class BspManager:
                         resolved,
                         preset=preset,
                         deploy_overrides=deploy_overrides or {},
+                        build_path_override=build_path_override,
                     )
         finally:
             self._cleanup_temp_kas_file()
@@ -1051,6 +1085,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1062,6 +1097,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1077,6 +1113,7 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             target=target,
             task=task,
+            build_path_override=build_path_override,
         )
 
     def build_by_components(
@@ -1089,6 +1126,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1102,6 +1140,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1120,6 +1159,7 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             target=target,
             task=task,
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------
@@ -1688,6 +1728,7 @@ class BspManager:
         preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
+        build_path_override: Optional[str] = None,
     ) -> DeployResult:
         """
         Deploy build artifacts for the given ResolvedConfig.
@@ -1699,6 +1740,7 @@ class BspManager:
                     top of the global deploy config before CLI overrides.
             deploy_overrides: CLI-level overrides for the deploy configuration.
             dry_run: When True log what would be uploaded without uploading.
+            build_path_override: Optional build path override for artifact lookup.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact.
@@ -1743,8 +1785,11 @@ class BspManager:
             sys.exit(1)
 
         deployer = ArtifactDeployer(deploy_cfg, backend)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
         result = deployer.deploy(
-            build_path=resolved.build_path,
+            build_path=effective_build_path,
             device=resolved.device.slug,
             release=resolved.release.slug,
             distro=resolved.effective_distro or "",
