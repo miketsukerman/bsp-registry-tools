@@ -1249,6 +1249,297 @@ class BspManager:
         )
 
     # ------------------------------------------------------------------
+    # Flash
+    # ------------------------------------------------------------------
+
+    def _get_deploy_dir(self, bsp_name: str) -> Path:
+        """Return the Yocto deploy/images directory for *bsp_name*.
+
+        Yocto places its output under::
+
+            <build_path>/build/tmp/deploy/images/
+
+        Args:
+            bsp_name: BSP preset name.
+
+        Returns:
+            Path to the deploy/images directory (may not exist yet).
+        """
+        resolved, _ = self.resolver.resolve_preset(bsp_name)
+        build_path = Path(resolved.build_path)
+        return build_path / "build" / "tmp" / "deploy" / "images"
+
+    def list_flash_images(self, bsp_name: str) -> List[Path]:
+        """Return a list of flashable image files for *bsp_name*.
+
+        Searches ``<build_path>/build/tmp/deploy/images/`` recursively for
+        ``.wic``, ``.wic.gz``, ``.wic.bz2``, ``.wic.xz``, ``.wic.zst``,
+        and ``.img`` files (excluding ``.bmap`` sidecars).
+
+        Compressed ``.wic.*`` variants are included because Yocto builds
+        commonly produce them when ``IMAGE_FSTYPES`` includes ``wic.gz``,
+        ``wic.bz2``, etc.  ``bmaptool`` can flash these directly; plain
+        ``dd`` will pipe them through the appropriate decompressor.
+
+        Args:
+            bsp_name: BSP preset name (must have been built first).
+
+        Returns:
+            List of :class:`pathlib.Path` objects for candidate images, sorted
+            with ``.wic`` / compressed-wic files first and then by descending
+            modification time.
+        """
+        deploy_dir = self._get_deploy_dir(bsp_name)
+        if not deploy_dir.exists():
+            return []
+
+        candidates: List[Path] = []
+        for pattern in (
+            "*.wic",
+            "*.wic.gz",
+            "*.wic.bz2",
+            "*.wic.xz",
+            "*.wic.zst",
+            "*.img",
+        ):
+            candidates.extend(deploy_dir.rglob(pattern))
+        # Filter out bmap sidecar files (e.g. *.wic.bmap, *.img.bmap)
+        candidates = [f for f in candidates if ".bmap" not in f.suffixes]
+        # Remove duplicates that may arise from overlapping glob patterns
+        seen: set[str] = set()
+        unique: List[Path] = []
+        for f in candidates:
+            key = str(f)
+            if key not in seen:
+                seen.add(key)
+                unique.append(f)
+        candidates = unique
+
+        # Sort: wic files (plain or compressed) first, then by descending
+        # modification time.  A file is considered a "wic" if .wic appears
+        # anywhere in its suffix chain (e.g. image.rootfs.wic.gz).
+        stat_cache = {f: f.stat() for f in candidates}
+        candidates.sort(
+            key=lambda f: (0 if ".wic" in f.suffixes else 1, -stat_cache[f].st_mtime)
+        )
+        return candidates
+
+    def flash_bsp(self, bsp_name: str, target: str, image_path: Optional[str] = None) -> None:
+        """
+        Flash a BSP image to a target block device (SD card or eMMC).
+
+        Resolves the BSP preset to locate its build output directory
+        (``<build_path>/build/tmp/deploy/images/``).  The caller must supply
+        the image to flash via *image_path*; use :meth:`list_flash_images` to
+        enumerate available candidates.
+
+        If the chosen image is a ``.wic`` or compressed ``.wic.*`` file
+        (e.g. ``.wic.gz``, ``.wic.bz2``, ``.wic.xz``, ``.wic.zst``) and
+        ``bmaptool`` is available, it is used for flashing (bmaptool handles
+        compressed images natively).  Otherwise ``dd`` is used, piping the
+        image through the appropriate decompressor when needed.
+
+        Args:
+            bsp_name: BSP preset name (must have been built first).
+            target: Target block device path (e.g. ``/dev/sda``,
+                    ``/dev/mmcblk0``).
+            image_path: Path to the image file to flash.  When *None* the most
+                recently produced ``.wic`` or ``.img`` image in the deploy
+                directory is selected automatically.
+
+        Raises:
+            SystemExit: If the preset is not found, no image file is present,
+                        or the flash tool exits with a non-zero status.
+        """
+        import shutil as _shutil
+        import subprocess as _sp
+
+        def _privilege_prefix() -> list:
+            """Return a privilege-escalation prefix for subprocess commands.
+
+            Prefers ``pkexec`` (shows a graphical Polkit password dialog, suitable
+            for GUI applications) and falls back to ``sudo`` (works in terminals).
+            Logs a warning and returns an empty list when neither is found.
+            """
+            for tool in ("pkexec", "sudo"):
+                if _shutil.which(tool):
+                    return [tool]
+            logging.warning(
+                "Neither 'pkexec' nor 'sudo' found; flash command will run without "
+                "elevated privileges and may fail on restricted devices."
+            )
+            print(
+                "Warning: Neither 'pkexec' nor 'sudo' is available. "
+                "The flash command will run without elevated privileges.",
+                file=sys.stderr,
+            )
+            return []
+
+        logging.info(f"Flashing BSP preset '{bsp_name}' to '{target}'")
+
+        if image_path:
+            selected_image = Path(image_path)
+            if not selected_image.exists():
+                print(
+                    f"Error: Image file '{image_path}' does not exist.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            # Fall back to auto-selection: most recently modified image
+            candidates = self.list_flash_images(bsp_name)
+            if not candidates:
+                deploy_dir = self._get_deploy_dir(bsp_name)
+                print(
+                    f"Error: No .wic, .wic.gz, .wic.bz2, .wic.xz, .wic.zst, or .img "
+                    f"image files found in {deploy_dir}.\n"
+                    f"Run 'bsp build {bsp_name}' first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            selected_image = candidates[0]
+
+        # Validate the target is a block device to prevent accidental overwrites
+        target_path = Path(target)
+        if target_path.exists():
+            import stat as _stat
+            if not _stat.S_ISBLK(target_path.stat().st_mode):
+                print(
+                    f"Error: '{target}' is not a block device. "
+                    "Specify a target such as /dev/sda or /dev/mmcblk0.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            print(
+                f"Error: Target device '{target}' does not exist. "
+                "Check the device path and ensure the storage medium is connected.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        bmaptool = _shutil.which("bmaptool")
+        # A file is a "wic" image if .wic appears in its suffix chain
+        # (handles both plain .wic and compressed variants like .wic.gz).
+        is_wic = ".wic" in selected_image.suffixes
+        priv = _privilege_prefix()
+
+        if is_wic and bmaptool:
+            # bmaptool handles both plain and compressed wic images natively.
+            # bmaptool expects image paths as file:// URIs, not bare filesystem paths.
+            # Resolve to an absolute path first so as_uri() doesn't raise on relative paths.
+            resolved_image = selected_image.resolve()
+            image_uri = resolved_image.as_uri()
+            # Yocto names the bmap file after the uncompressed image stem, e.g.
+            # "image.wic.bmap" for both "image.wic" and "image.wic.gz".
+            # Check that canonical name first, then fall back to "<image>.bmap".
+            wic_stem = resolved_image.name
+            for suffix in (".gz", ".bz2", ".xz", ".zst", ".lz4"):
+                if wic_stem.endswith(suffix):
+                    wic_stem = wic_stem[: -len(suffix)]
+                    break
+            bmap_path = resolved_image.parent / (wic_stem + ".bmap")
+            if not bmap_path.exists():
+                bmap_path = resolved_image.parent / (resolved_image.name + ".bmap")
+            if bmap_path.exists():
+                logging.info(f"Flashing {selected_image} → {target} using bmaptool (with bmap)")
+                print(f"Flashing {selected_image.name} → {target} (bmaptool)…")
+                proc = _sp.Popen(
+                    [*priv, "bmaptool", "copy", "--bmap", str(bmap_path), image_uri, target],
+                    stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True,
+                )
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                proc.wait()
+                result = proc
+            else:
+                logging.info(f"Flashing {selected_image} → {target} using bmaptool (no bmap)")
+                print(f"Flashing {selected_image.name} → {target} (bmaptool --nobmap)…")
+                proc = _sp.Popen(
+                    [*priv, "bmaptool", "copy", "--nobmap", image_uri, target],
+                    stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True,
+                )
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                proc.wait()
+                result = proc
+        elif is_wic and selected_image.suffix != ".wic":
+            # Compressed wic but no bmaptool — decompress then pipe into dd.
+            compression_ext = selected_image.suffix  # e.g. ".gz", ".bz2"
+            decomp_map = {
+                ".gz": ["gunzip", "--stdout"],
+                ".bz2": ["bunzip2", "--stdout"],
+                ".xz": ["xz", "--decompress", "--stdout"],
+                ".zst": ["zstd", "--decompress", "--stdout"],
+            }
+            decomp_cmd = decomp_map.get(compression_ext)
+            if decomp_cmd is None or _shutil.which(decomp_cmd[0]) is None:
+                print(
+                    f"Error: Cannot flash compressed image '{selected_image.name}': "
+                    f"install bmaptool or {decomp_cmd[0] if decomp_cmd else 'a suitable decompressor'}.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            logging.info(
+                f"Flashing {selected_image} → {target} via {decomp_cmd[0]} | dd"
+            )
+            print(
+                f"Flashing {selected_image.name} → {target} "
+                f"({decomp_cmd[0]} | dd)…"
+            )
+            print("⚠  This will overwrite all data on the target device!")
+            decomp = _sp.Popen(
+                [*decomp_cmd, str(selected_image)],
+                stdout=_sp.PIPE,
+            )
+            result = _sp.run(
+                [*priv, "dd", f"of={target}", "bs=4M", "conv=fsync", "status=progress"],
+                stdin=decomp.stdout,
+            )
+            if decomp.stdout:
+                decomp.stdout.close()
+            decomp.wait()
+            if result.returncode != 0:
+                print(
+                    f"Error: Flash failed with exit code {result.returncode}.\n"
+                    "Common causes: insufficient permissions (try with sudo), "
+                    "device busy, or incorrect target path.",
+                    file=sys.stderr,
+                )
+                sys.exit(result.returncode)
+            if decomp.returncode != 0:
+                print(
+                    f"Error: Decompression failed with exit code {decomp.returncode}.",
+                    file=sys.stderr,
+                )
+                sys.exit(decomp.returncode)
+            print(f"Successfully flashed {selected_image.name} to {target}")
+            return
+        else:
+            logging.info(f"Flashing {selected_image} → {target} using dd")
+            print(f"Flashing {selected_image.name} → {target} (dd)…")
+            print("⚠  This will overwrite all data on the target device!")
+            proc = _sp.Popen(
+                [*priv, "dd", f"if={selected_image}", f"of={target}", "bs=4M", "conv=fsync", "status=progress"],
+                stderr=_sp.PIPE, text=True,
+            )
+            for line in proc.stderr:
+                print(line, end="", flush=True)
+            proc.wait()
+            result = proc
+
+        if result.returncode != 0:
+            print(
+                f"Error: Flash failed with exit code {result.returncode}.\n"
+                "Common causes: insufficient permissions (try with sudo), "
+                "device busy, or incorrect target path.",
+                file=sys.stderr,
+            )
+            sys.exit(result.returncode)
+
+        print(f"Successfully flashed {selected_image.name} to {target}")
+
+    # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
