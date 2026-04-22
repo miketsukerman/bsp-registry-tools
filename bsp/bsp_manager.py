@@ -995,6 +995,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1009,6 +1010,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1028,7 +1030,11 @@ class BspManager:
             if checkout_only:
                 logging.info("Skipping Docker build in checkout mode")
 
-        self.prepare_build_directory(resolved.build_path)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        resolved.build_path = build_path
+        self.prepare_build_directory(build_path)
         self._copy_files(resolved)
 
         kas_mgr = self._get_kas_manager_for_resolved(
@@ -1064,6 +1070,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1075,6 +1082,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1090,6 +1098,7 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             target=target,
             task=task,
+            build_path_override=build_path_override,
         )
 
     def build_by_components(
@@ -1102,6 +1111,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1115,6 +1125,7 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1133,6 +1144,7 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             target=target,
             task=task,
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------

@@ -486,6 +486,19 @@ class TestBspManagerBuildByComponents:
             manager.build_by_components("imx8-board", "scarthgap", target="core-image-minimal")
         mock_build.assert_called_once_with(target="core-image-minimal", task=None)
 
+    def test_build_bsp_path_override(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        custom_path = "/tmp/custom-output-path"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch.object(manager, "prepare_build_directory") as mock_prepare:
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=custom_path)
+        mock_prepare.assert_called_once_with(custom_path)
+
 
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):

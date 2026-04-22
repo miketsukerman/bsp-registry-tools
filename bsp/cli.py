@@ -253,6 +253,13 @@ def main() -> int:
             metavar="TASK",
             help="Bitbake task to run (e.g. compile, configure) to pass to KAS"
         )
+        build_parser.add_argument(
+            '--path',
+            type=str,
+            dest='build_path',
+            metavar='PATH',
+            help='Override output build directory path'
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -699,6 +706,7 @@ def main() -> int:
             artifact_url = getattr(args, "artifact_url", None)
             target = getattr(args, "target", None)
             task = getattr(args, "task", None)
+            build_path = getattr(args, "build_path", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -710,6 +718,7 @@ def main() -> int:
                     deploy_overrides=deploy_overrides,
                     target=target,
                     task=task,
+                    build_path_override=build_path,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -729,6 +738,7 @@ def main() -> int:
                     deploy_overrides=deploy_overrides,
                     target=target,
                     task=task,
+                    build_path_override=build_path,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
