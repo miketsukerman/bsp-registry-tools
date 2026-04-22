@@ -387,11 +387,10 @@ BSP Registry
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout] [--target TARGET] [--task TASK]
+bsp build <bsp_name> [--clean] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
 bsp build <bsp_name> [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build <bsp_name> [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
-bsp build <bsp_name> [--path PATH]
-bsp build --device <device> --release <release> [--feature FEATURE...] [--target TARGET] [--task TASK] [--checkout] [--test ...] [--path PATH]
+bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
 ```
 
 | Option | Description |

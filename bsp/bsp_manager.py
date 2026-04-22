@@ -795,7 +795,9 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
-    def _copy_files(self, resolved: ResolvedConfig) -> None:
+    def _copy_files(
+        self, resolved: ResolvedConfig, build_path_override: Optional[str] = None
+    ) -> None:
         """
         Copy files into the build environment before the build starts.
 
@@ -813,6 +815,8 @@ class BspManager:
 
         Args:
             resolved: Resolved build configuration containing copy entries.
+            build_path_override: Optional build path to use instead of
+                                ``resolved.build_path``.
 
         Raises:
             SystemExit: If a source file does not exist.
@@ -825,7 +829,10 @@ class BspManager:
         # copied files land inside the build workspace for the current BSP.
         # When build_path is empty (no preset, direct resolve() call) fall back
         # to the registry directory to preserve backward-compatible behaviour.
-        raw_build_path = resolved.build_path or ""
+        if build_path_override is not None:
+            raw_build_path = build_path_override
+        else:
+            raw_build_path = resolved.build_path or ""
         if raw_build_path:
             build_abs = Path(raw_build_path)
             if not build_abs.is_absolute():
@@ -875,6 +882,7 @@ class BspManager:
         self,
         resolved: ResolvedConfig,
         use_container: bool = True,
+        build_path_override: Optional[str] = None,
     ) -> KasManager:
         """
         Create a KasManager for the given ResolvedConfig.
@@ -890,6 +898,8 @@ class BspManager:
         Args:
             resolved: Resolved device+release+features build config
             use_container: Whether to use containerized KAS
+            build_path_override: Optional build path to use instead of
+                                ``resolved.build_path``.
 
         Returns:
             Configured KasManager instance
@@ -953,10 +963,13 @@ class BspManager:
             if resolved.container and use_container
             else None
         )
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
 
         kas_mgr = KasManager(
             kas_files,
-            resolved.build_path,
+            effective_build_path,
             download_dir=downloads,
             sstate_dir=sstate,
             use_container=use_container,
@@ -1033,12 +1046,13 @@ class BspManager:
         if build_path_override is not None:
             logging.info(f"Overriding build path: {build_path_override}")
         build_path = build_path_override or resolved.build_path
-        resolved.build_path = build_path
         self.prepare_build_directory(build_path)
-        self._copy_files(resolved)
+        self._copy_files(resolved, build_path_override=build_path_override)
 
         kas_mgr = self._get_kas_manager_for_resolved(
-            resolved, use_container=not checkout_only
+            resolved,
+            use_container=not checkout_only,
+            build_path_override=build_path_override,
         )
 
         try:
@@ -1058,6 +1072,7 @@ class BspManager:
                         resolved,
                         preset=preset,
                         deploy_overrides=deploy_overrides or {},
+                        build_path_override=build_path_override,
                     )
         finally:
             self._cleanup_temp_kas_file()
@@ -1422,6 +1437,7 @@ class BspManager:
         preset: Optional[BspPreset] = None,
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
+        build_path_override: Optional[str] = None,
     ) -> DeployResult:
         """
         Deploy build artifacts for the given ResolvedConfig.
@@ -1433,6 +1449,7 @@ class BspManager:
                     top of the global deploy config before CLI overrides.
             deploy_overrides: CLI-level overrides for the deploy configuration.
             dry_run: When True log what would be uploaded without uploading.
+            build_path_override: Optional build path override for artifact lookup.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact.
@@ -1477,8 +1494,11 @@ class BspManager:
             sys.exit(1)
 
         deployer = ArtifactDeployer(deploy_cfg, backend)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
         result = deployer.deploy(
-            build_path=resolved.build_path,
+            build_path=effective_build_path,
             device=resolved.device.slug,
             release=resolved.release.slug,
             distro=resolved.effective_distro or "",
