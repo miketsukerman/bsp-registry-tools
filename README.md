@@ -1271,8 +1271,9 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 |------|-------------|
 | `examples/kas/yocto/releases/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
 | `examples/kas/yocto/releases/styhead.yaml` | Yocto Styhead (5.1) base configuration |
-| `examples/kas/yocto/devices/qemuarm64.yaml` | QEMU ARM64 machine configuration |
-| `examples/kas/yocto/devices/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/yocto/releases/walnascar.yaml` | Yocto Walnascar (5.2) base configuration |
+| `examples/kas/devices/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
+| `examples/kas/devices/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
 | `examples/kas/devices/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
 | `examples/kas/isar/` | Isar build-system example configurations |
 
@@ -1494,12 +1495,13 @@ bsp-registry-tools/
 │   │   └── job-template.yaml.j2  # Annotated example LAVA job Jinja2 template
 │   └── kas/
 │       ├── yocto/             # Yocto Project KAS configurations
-│       │   ├── releases/      # Per-release KAS files (scarthgap, styhead, …)
-│       │   ├── devices/       # Per-device KAS files (qemuarm64, qemuarm, …)
+│       │   ├── releases/      # Per-release KAS files (scarthgap, styhead, walnascar, …)
+│       │   ├── devices/       # Yocto-specific device KAS files (qemuarm64, qemuarm, …)
 │       │   ├── distro/        # Distro fragments (poky, harden)
 │       │   └── features/      # Feature KAS files (systemd, debug, ssh, …)
 │       ├── isar/              # Isar build system KAS configurations
-│       └── devices/           # Shared device configurations
+│       ├── devices/qemu/      # Shared QEMU device configurations (qemuarm64, qemux86-64, …)
+│       └── vendors/qemu/      # Vendor-level shared KAS fragments
 └── .github/
     └── workflows/
         ├── tests.yml          # CI: run tests on push/PR
