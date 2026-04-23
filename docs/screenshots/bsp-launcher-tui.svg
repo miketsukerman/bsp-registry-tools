@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" style="background:#1e1e2e;font-family:'Fira Code',Consolas,monospace;">
+  <defs>
+    <style>
+      text { font-family: 'Fira Code', Consolas, monospace; fill: #cdd6f4; }
+      .title { font-size:14px; font-weight:bold; fill:#cba6f7; }
+      .header { font-size:13px; fill:#89dceb; }
+      .key { font-size:11px; fill:#89b4fa; font-weight:bold; }
+      .val { font-size:11px; fill:#cdd6f4; }
+      .dim { font-size:11px; fill:#6c7086; }
+      .green { font-size:11px; fill:#a6e3a1; }
+      .yellow { font-size:11px; fill:#f9e2af; }
+      .border { fill:none; stroke:#313244; stroke-width:1; }
+      .primary-border { fill:none; stroke:#89b4fa; stroke-width:1; rx:3; }
+      .section-label { font-size:11px; fill:#89b4fa; font-weight:bold; }
+      .artifact-img { font-size:11px; fill:#cdd6f4; }
+      .action-btn { font-size:11px; fill:#a6e3a1; }
+      .action-btn-warn { font-size:11px; fill:#f9e2af; }
+      .action-btn-err { font-size:11px; fill:#f38ba8; }
+    </style>
+  </defs>
+
+  <!-- Header bar -->
+  <rect x="0" y="0" width="1200" height="32" fill="#313244"/>
+  <text x="600" y="20" text-anchor="middle" class="title">BSP Registry Explorer</text>
+  <text x="600" y="32" text-anchor="middle" class="dim" font-size="10">Advantech Board Support Package Manager</text>
+
+  <!-- Registry bar -->
+  <rect x="0" y="32" width="1200" height="28" fill="#181825"/>
+  <text x="10" y="50" class="dim" font-size="11">Registry: /home/user/.cache/bsp-registry  [https://github.com/example/bsp-registry @ main]</text>
+  <rect x="1110" y="35" width="80" height="22" rx="2" fill="#313244" stroke="#89b4fa" stroke-width="1"/>
+  <text x="1150" y="51" text-anchor="middle" class="header" font-size="11">⟳ Refresh</text>
+
+  <!-- Left panel border -->
+  <rect x="5" y="65" width="460" height="610" rx="3" class="primary-border"/>
+  <!-- Left panel label -->
+  <text x="15" y="83" class="section-label">BSP Presets</text>
+  <!-- Filter input -->
+  <rect x="10" y="88" width="450" height="22" rx="2" fill="#313244" stroke="#585b70" stroke-width="1"/>
+  <text x="15" y="104" class="dim">Filter by vendor, device or release…</text>
+  <!-- Tree contents -->
+  <text x="15" y="128" class="key">▼ Vendors</text>
+  <text x="25" y="144" class="key">  ▼ QEMU</text>
+  <text x="35" y="160" class="dim">    ▼ QEMU ARM64 (emulated)</text>
+  <text x="45" y="176" class="dim">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <!-- Selected item highlighted -->
+  <rect x="50" y="181" width="405" height="16" rx="1" fill="#313244"/>
+  <text x="55" y="193" class="green" font-weight="bold">          poky-qemuarm64-scarthgap</text>
+  <text x="45" y="209" class="dim">      ▼ Yocto 5.1 (Styhead)</text>
+  <text x="55" y="225" class="dim">          poky-qemuarm64-styhead</text>
+  <text x="35" y="241" class="dim">    ▼ QEMU x86-64 (emulated)</text>
+  <text x="45" y="257" class="dim">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="55" y="273" class="dim">          poky-qemux86-64-scarthgap</text>
+  <text x="45" y="289" class="dim">      ▼ Yocto 5.1 (Styhead)</text>
+  <text x="55" y="305" class="dim">          poky-qemux86-64-styhead</text>
+  <text x="35" y="321" class="dim">    ▼ QEMU ARM (32-bit, emulated)</text>
+  <text x="45" y="337" class="dim">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="55" y="353" class="dim">          poky-qemuarm-scarthgap</text>
+  <text x="25" y="369" class="key">  ▼ Advantech</text>
+  <text x="35" y="385" class="dim">    ▼ RSB-3720 (ARM Cortex-A55)</text>
+  <text x="45" y="401" class="dim">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="55" y="417" class="dim">          rsb3720-scarthgap</text>
+  <text x="35" y="433" class="dim">    ▼ AIR-030 (i.MX 8M Plus)</text>
+  <text x="45" y="449" class="dim">      ▼ Yocto 5.0 LTS (Scarthgap)</text>
+  <text x="55" y="465" class="dim">          air030-scarthgap</text>
+
+  <!-- Right panel border -->
+  <rect x="470" y="65" width="725" height="610" rx="3" class="primary-border"/>
+
+  <!-- RIGHT PANEL - top third: BSP Details -->
+  <text x="480" y="83" class="section-label">BSP Details</text>
+  <line x1="470" y1="88" x2="1195" y2="88" stroke="#313244" stroke-width="1"/>
+  <text x="480" y="105" font-size="11"><tspan class="key">Name:        </tspan><tspan class="val">poky-qemuarm64-scarthgap</tspan></text>
+  <text x="480" y="121" font-size="11"><tspan class="key">Description: </tspan><tspan class="val">Yocto Poky for QEMU ARM64 (Scarthgap)</tspan></text>
+  <text x="480" y="137" font-size="11"><tspan class="key">Device:      </tspan><tspan class="val">qemuarm64</tspan></text>
+  <text x="480" y="153" font-size="11"><tspan class="key">Release:     </tspan><tspan class="val">scarthgap</tspan></text>
+  <text x="480" y="169" font-size="11"><tspan class="key">Features:    </tspan><tspan class="val">poky, qemu, arm64</tspan></text>
+  <text x="480" y="185" font-size="11"><tspan class="key">Build Path:  </tspan><tspan class="val">/home/user/builds/poky-qemuarm64-scarthgap</tspan></text>
+  <!-- Divider between detail and env -->
+  <line x1="470" y1="265" x2="1195" y2="265" stroke="#313244" stroke-width="1"/>
+
+  <!-- RIGHT PANEL - middle third: Build Environment -->
+  <text x="480" y="282" class="section-label">Build Environment</text>
+  <text x="480" y="300" font-size="11"><tspan class="key">Container:   </tspan><tspan class="val">crops-poky  </tspan><tspan class="dim">(crops/poky:latest)</tspan></text>
+  <text x="480" y="316" font-size="11"><tspan class="key">Environment: </tspan><tspan class="val">default</tspan></text>
+  <text x="480" y="332" class="key">Variables:</text>
+  <text x="490" y="348" font-size="11"><tspan class="dim">MACHINE</tspan><tspan class="val"> = qemuarm64</tspan></text>
+  <text x="490" y="364" font-size="11"><tspan class="dim">DISTRO</tspan><tspan class="val"> = poky</tspan></text>
+  <text x="490" y="380" font-size="11"><tspan class="dim">KAS_BUILD_DIR</tspan><tspan class="val"> = /work/build</tspan></text>
+  <text x="490" y="396" class="dim">SSTATE_DIR = /work/sstate-cache</text>
+  <!-- Divider between env and artifacts -->
+  <line x1="470" y1="465" x2="1195" y2="465" stroke="#313244" stroke-width="1"/>
+
+  <!-- RIGHT PANEL - bottom third: Build Artifacts -->
+  <text x="480" y="482" class="section-label">Build Artifacts</text>
+  <text x="480" y="500" font-size="11">
+    <tspan>💾 </tspan><tspan font-weight="bold" fill="#cdd6f4">core-image-minimal-qemuarm64.rootfs.wic</tspan>
+    <tspan class="dim">  847.3 MB  2025-03-25 14:32</tspan>
+  </text>
+  <text x="480" y="518" font-size="11">
+    <tspan>💾 </tspan><tspan font-weight="bold" fill="#cdd6f4">core-image-minimal-qemuarm64.rootfs.wic.gz</tspan>
+    <tspan class="dim">  312.1 MB  2025-03-25 14:32</tspan>
+  </text>
+  <text x="480" y="536" font-size="11">
+    <tspan>🐧 </tspan><tspan font-weight="bold" fill="#cdd6f4">Image-5.15.72-yocto-standard</tspan>
+    <tspan class="dim">  18.4 MB  2025-03-25 14:28</tspan>
+  </text>
+  <text x="480" y="554" font-size="11">
+    <tspan>🐧 </tspan><tspan font-weight="bold" fill="#cdd6f4">fitImage-5.15.72+git0</tspan>
+    <tspan class="dim">  22.1 MB  2025-03-25 14:30</tspan>
+  </text>
+
+  <!-- Action bar -->
+  <rect x="0" y="678" width="1200" height="32" fill="#181825" stroke="#313244" stroke-width="1"/>
+  <rect x="8" y="683" width="72" height="22" rx="2" fill="#313244" stroke="#a6e3a1" stroke-width="1"/>
+  <text x="44" y="699" text-anchor="middle" class="action-btn">▶ Build</text>
+  <rect x="86" y="683" width="68" height="22" rx="2" fill="#313244" stroke="#585b70" stroke-width="1"/>
+  <text x="120" y="699" text-anchor="middle" class="dim">$ Shell</text>
+  <rect x="160" y="683" width="70" height="22" rx="2" fill="#313244" stroke="#585b70" stroke-width="1"/>
+  <text x="195" y="699" text-anchor="middle" class="dim">↑ Export</text>
+  <rect x="236" y="683" width="64" height="22" rx="2" fill="#313244" stroke="#f9e2af" stroke-width="1"/>
+  <text x="268" y="699" text-anchor="middle" class="action-btn-warn">⚡ Flash</text>
+  <rect x="306" y="683" width="72" height="22" rx="2" fill="#313244" stroke="#f38ba8" stroke-width="1"/>
+  <text x="342" y="699" text-anchor="middle" class="action-btn-err">✕ Cancel</text>
+
+  <!-- Log panel -->
+  <rect x="5" y="713" width="1190" height="72" rx="3" class="primary-border"/>
+  <text x="15" y="730" class="green">$ bsp build poky-qemuarm64-scarthgap</text>
+  <text x="15" y="746" class="dim">NOTE: Executing Tasks (123 of 1456)</text>
+  <text x="15" y="762" class="dim">NOTE: recipe do_compile: echo Building kernel...</text>
+  <text x="15" y="778" class="green">Command finished successfully</text>
+
+  <!-- Status bar -->
+  <rect x="0" y="788" width="1200" height="16" fill="#11111b"/>
+  <text x="10" y="800" class="dim" font-size="10">Done</text>
+
+  <!-- Footer -->
+  <rect x="0" y="785" width="1200" height="16" fill="#11111b"/>
+  <text x="10" y="797" class="dim" font-size="9">q Quit  r Refresh  b Build  s Shell  e Export  f Flash</text>
+</svg>

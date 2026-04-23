@@ -117,8 +117,18 @@ def main() -> int:
         parser.add_argument("--local", action="store_true",
                             help="Force local registry lookup only (do not use remote)")
 
+        # GUI shortcut: `bsp gui` launches the TUI launcher
+        parser.add_argument(
+            '--gui',
+            action='store_true',
+            help='Launch the interactive GUI (requires the [gui] extra)'
+        )
+
         # Create subparsers for different commands
-        subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=True)
+        subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
+
+        # GUI subcommand (alias for --gui flag)
+        subparsers.add_parser('gui', help='Launch the interactive GUI launcher')
 
         # ----------------------------------------------------------------
         # Build command
@@ -160,7 +170,7 @@ def main() -> int:
             help="Checkout and validate build configuration without building (fast)"
         )
         build_parser.add_argument(
-            "--deploy",
+"--deploy",
             action="store_true",
             dest="deploy_after_build",
             help="Deploy artifacts to cloud storage after a successful build"
@@ -393,7 +403,7 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
-        # Deploy command
+# Deploy command
         # ----------------------------------------------------------------
         deploy_parser = subparsers.add_parser(
             "deploy", help="Deploy build artifacts to cloud storage"
@@ -483,6 +493,34 @@ def main() -> int:
             action="store_true",
             dest="dry_run",
             help="List what would be uploaded without actually uploading"
+        )
+
+        # ----------------------------------------------------------------
+        # Flash command
+        # ----------------------------------------------------------------
+        flash_parser = subparsers.add_parser(
+            "flash",
+            help="Flash BSP image to a target device (SD card or eMMC)"
+        )
+        flash_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset name to flash"
+        )
+        flash_parser.add_argument(
+            "--target", "-t",
+            type=str,
+            required=True,
+            metavar="DEVICE",
+            help="Target block device (e.g. /dev/sda, /dev/mmcblk0)"
+        )
+        flash_parser.add_argument(
+            "--image", "-i",
+            type=str,
+            default=None,
+            metavar="IMAGE",
+            help="Path to the image file to flash (auto-selected if omitted)"
         )
 
         # ----------------------------------------------------------------
@@ -634,6 +672,20 @@ def main() -> int:
         )
 
         args = parser.parse_args()
+
+        # --gui flag or 'bsp gui' subcommand → launch TUI
+        if getattr(args, 'gui', False) or args.command == 'gui':
+            from .gui import launch_gui
+            return launch_gui(
+                registry_path=args.registry,
+                remote=args.remote if args.remote != DEFAULT_REMOTE_URL else None,
+                branch=args.branch if args.branch != DEFAULT_BRANCH else None,
+                no_update=not args.update,
+            )
+
+        if not args.command:
+            parser.print_help()
+            return 1
 
         # Setup logging based on verbosity
         log_level = logging.DEBUG if args.verbose else logging.WARNING
@@ -875,6 +927,16 @@ def main() -> int:
                 )
                 deploy_parser.print_help()
                 return 1
+
+        elif args.command == "flash":
+            bsp_name = getattr(args, "bsp_name", None)
+            target = getattr(args, "target", None)
+            image = getattr(args, "image", None)
+            if not bsp_name:
+                logging.error("Specify a BSP preset name.")
+                flash_parser.print_help()
+                return 1
+            bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target, image_path=image)
 
         elif args.command == "gather":
             device = getattr(args, "device", None)
