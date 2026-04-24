@@ -53,8 +53,8 @@ class KasManager:
             container_runtime_args: Extra arguments appended to the container engine run command
             container_privileged: Run container in privileged mode (enables --isar flag)
             container_volumes: List of host-to-container directory mappings; each entry is
-                               converted to a ``-v host:container[:ro]`` flag appended to
-                               ``KAS_RUNTIME_ARGS``. Host paths support ``$ENV{VAR}``
+                               converted to a ``-v host:container[:ro]`` flag passed via
+                               ``--runtime-args``. Host paths support ``$ENV{VAR}``
                                expansion.
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
@@ -131,17 +131,11 @@ class KasManager:
         variables required for KAS operation.
 
         When running inside a container (``use_container=True``) the method
-        ensures that:
-
-        * Volume mounts are always present in ``KAS_RUNTIME_ARGS``
-          regardless of any ``KAS_RUNTIME_ARGS`` value supplied via
-          ``env_manager``.
-        * All registry-configured environment variables are forwarded into
-          the container as ``-e VAR=VALUE`` flags inside
-          ``KAS_RUNTIME_ARGS``.  ``kas-container`` only passes a fixed
-          whitelist of host variables into the Docker/Podman container;
-          forwarding every registry variable explicitly guarantees they are
-          available inside the build environment.
+        sets ``KAS_CONTAINER_ENGINE`` and ``KAS_CONTAINER_IMAGE`` when
+        configured.  Volume mounts and registry environment variables are
+        forwarded to the container via the ``--runtime-args`` CLI option in
+        :meth:`_run_kas_command` rather than via the ``KAS_RUNTIME_ARGS``
+        environment variable.
 
         Returns:
             Environment dictionary with KAS-specific variables configured
@@ -163,10 +157,8 @@ class KasManager:
             if sstate_dir:
                 env['SSTATE_DIR'] = sstate_dir
 
-        # Apply environment manager configuration before constructing
-        # KAS_RUNTIME_ARGS so that env_manager variables (including any
-        # KAS_RUNTIME_ARGS entry) are visible during the merge step below
-        # and cannot accidentally overwrite the computed container flags.
+        # Apply environment manager so that env_manager variables are resolved
+        # and available for _build_runtime_args_str().
         env = self.env_manager.setup_environment(env)
 
         # Set container-specific environment variables
@@ -176,38 +168,56 @@ class KasManager:
             if self.container_image:
                 env['KAS_CONTAINER_IMAGE'] = self.container_image
 
-            # Build KAS_RUNTIME_ARGS by merging in order:
-            # 1. Any pre-existing value from env_manager or the host shell
-            # 2. Explicit container_runtime_args from registry config
-            # 3. Volume mounts as -v flags
-            # 4. Registry env_manager variables forwarded as -e VAR=VALUE so
-            #    they are visible inside the container (kas-container only
-            #    passes a fixed whitelist of host vars into the container).
-            kas_container_args_parts = []
-
-            existing_kas_args = env.get('KAS_RUNTIME_ARGS', '').strip()
-            if existing_kas_args:
-                kas_container_args_parts.append(existing_kas_args)
-
-            if self.container_runtime_args:
-                kas_container_args_parts.append(self.container_runtime_args)
-
-            for vol in self.container_volumes:
-                expanded_host = self._expand_env_vars(vol.host)
-                flag = f"-v {expanded_host}:{vol.container}"
-                if vol.read_only:
-                    flag += ":ro"
-                kas_container_args_parts.append(flag)
-
-            for env_var in self.env_manager.environment_vars:
-                value = env.get(env_var.name)
-                if value is not None:
-                    kas_container_args_parts.append(f"-e {env_var.name}={value}")
-
-            if kas_container_args_parts:
-                env['KAS_RUNTIME_ARGS'] = " ".join(kas_container_args_parts)
-
         return env
+
+    def _build_runtime_args_str(self, env: dict) -> Optional[str]:
+        """
+        Build the value to pass to ``kas-container --runtime-args``.
+
+        Collects all container runtime flags in order:
+
+        1. Any ``KAS_RUNTIME_ARGS`` already present in *env* (e.g. set by
+           ``env_manager`` or inherited from the host shell).
+        2. Explicit ``container_runtime_args`` from the registry config.
+        3. Volume mounts as ``-v host:container[:ro]`` flags.
+        4. Registry environment variables as ``-e NAME=VALUE`` flags so they
+           are visible inside the build container (``kas-container`` only
+           passes a fixed whitelist of host vars).
+
+        Args:
+            env: Resolved environment dictionary (from
+                 :meth:`_get_environment_with_container_vars`).
+
+        Returns:
+            Space-joined flags string, or ``None`` if there is nothing to
+            pass.
+        """
+        if not self.use_container:
+            return None
+
+        parts: List[str] = []
+
+        # Honor any KAS_RUNTIME_ARGS already set via env_manager or host shell
+        existing = env.get('KAS_RUNTIME_ARGS', '').strip()
+        if existing:
+            parts.append(existing)
+
+        if self.container_runtime_args:
+            parts.append(self.container_runtime_args)
+
+        for vol in self.container_volumes:
+            expanded_host = self._expand_env_vars(vol.host)
+            flag = f"-v {expanded_host}:{vol.container}"
+            if vol.read_only:
+                flag += ":ro"
+            parts.append(flag)
+
+        for env_var in self.env_manager.environment_vars:
+            value = env.get(env_var.name)
+            if value is not None:
+                parts.append(f"-e {env_var.name}={value}")
+
+        return " ".join(parts) if parts else None
 
     def _expand_env_vars(self, value: str) -> str:
         """
@@ -533,8 +543,18 @@ class KasManager:
         Raises:
             SystemExit: If command fails or is interrupted by user
         """
-        cmd = self._get_kas_command() + args
         env = self._get_environment_with_container_vars()
+
+        cmd = self._get_kas_command()
+        if self.use_container:
+            runtime_args = self._build_runtime_args_str(env)
+            # Remove KAS_RUNTIME_ARGS from the environment — all flags are
+            # now forwarded via --runtime-args on the command line instead.
+            env.pop('KAS_RUNTIME_ARGS', None)
+            if runtime_args:
+                cmd = cmd + ["--runtime-args", runtime_args]
+                logging.debug(f"--runtime-args: {runtime_args}")
+        cmd = cmd + args
 
         logging.info(f"Running: {' '.join(cmd)}")
         logging.info(f"Build directory: {self.build_dir}")
@@ -545,9 +565,6 @@ class KasManager:
         for var in important_vars:
             if var in env:
                 logging.info(f"Using {var}: {env[var]}")
-
-        if self.use_container and 'KAS_RUNTIME_ARGS' in env:
-            logging.debug(f"KAS_RUNTIME_ARGS: {env['KAS_RUNTIME_ARGS']}")
 
         try:
             if show_output:

@@ -945,25 +945,25 @@ class TestRuntimeArgs:
         assert container.runtime_args == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
 
     def test_runtime_args_propagated_to_kas_manager(self, registry_with_runtime_args_file):
-        """runtime_args from container is forwarded to KasManager as KAS_RUNTIME_ARGS."""
+        """runtime_args from container is forwarded to KasManager via --runtime-args."""
         manager = BspManager(config_path=str(registry_with_runtime_args_file))
         manager.initialize()
         resolved, _ = manager.resolver.resolve_preset("isar-qemu-v0.11")
         kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=True)
         env = kas_mgr._get_environment_with_container_vars()
-        assert env.get("KAS_RUNTIME_ARGS") == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
+        assert kas_mgr._build_runtime_args_str(env) == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
         manager._cleanup_temp_kas_file()
 
     def test_runtime_args_absent_for_container_without_them(
         self, registry_with_runtime_args_file
     ):
-        """KAS_RUNTIME_ARGS is absent when container has no runtime_args."""
+        """--runtime-args is absent when container has no runtime_args."""
         manager = BspManager(config_path=str(registry_with_runtime_args_file))
         manager.initialize()
         resolved = manager.resolver.resolve("plain-device", "isar-v0.11")
         kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=True)
         env = kas_mgr._get_environment_with_container_vars()
-        assert "KAS_RUNTIME_ARGS" not in env
+        assert kas_mgr._build_runtime_args_str(env) is None
         manager._cleanup_temp_kas_file()
 
 

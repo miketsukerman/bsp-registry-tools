@@ -239,7 +239,7 @@ class TestKasManager:
             container_runtime_args="-p 2222:2222 --device=/dev/net/tun"
         )
         env = manager._get_environment_with_container_vars()
-        assert env.get("KAS_RUNTIME_ARGS") == "-p 2222:2222 --device=/dev/net/tun"
+        assert manager._build_runtime_args_str(env) == "-p 2222:2222 --device=/dev/net/tun"
 
     def test_container_runtime_args_not_set_when_none(self, kas_config_file):
         manager = KasManager(
@@ -248,7 +248,7 @@ class TestKasManager:
             use_container=True,
         )
         env = manager._get_environment_with_container_vars()
-        assert "KAS_RUNTIME_ARGS" not in env
+        assert manager._build_runtime_args_str(env) is None
 
     def test_container_privileged_stored(self, kas_config_file):
         manager = KasManager(
@@ -285,7 +285,7 @@ class TestKasManager:
             container_volumes=vols,
         )
         env = manager._get_environment_with_container_vars()
-        assert env.get("KAS_RUNTIME_ARGS") == "-v /host/data:/data"
+        assert manager._build_runtime_args_str(env) == "-v /host/data:/data"
 
     def test_container_volumes_read_only_flag(self, kas_config_file):
         from bsp.models import DockerVolume
@@ -297,7 +297,7 @@ class TestKasManager:
             container_volumes=vols,
         )
         env = manager._get_environment_with_container_vars()
-        assert env.get("KAS_RUNTIME_ARGS") == "-v /host/ro:/ro:ro"
+        assert manager._build_runtime_args_str(env) == "-v /host/ro:/ro:ro"
 
     def test_container_volumes_combined_with_runtime_args(self, kas_config_file):
         from bsp.models import DockerVolume
@@ -310,7 +310,7 @@ class TestKasManager:
             container_volumes=vols,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+        kas_args = manager._build_runtime_args_str(env)
         assert "-p 2222:2222" in kas_args
         assert "-v /host/data:/data" in kas_args
 
@@ -327,7 +327,7 @@ class TestKasManager:
             container_volumes=vols,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+        kas_args = manager._build_runtime_args_str(env)
         assert "-v /host/a:/a" in kas_args
         assert "-v /host/b:/b:ro" in kas_args
 
@@ -342,7 +342,7 @@ class TestKasManager:
         )
         with patch.dict(os.environ, {"TEST_HOST_DIR": "/expanded/path"}):
             env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+            kas_args = manager._build_runtime_args_str(env)
         assert "-v /expanded/path:/data" in kas_args
 
     def test_container_volumes_not_set_without_container_mode(self, kas_config_file):
@@ -355,7 +355,7 @@ class TestKasManager:
             container_volumes=vols,
         )
         env = manager._get_environment_with_container_vars()
-        assert "KAS_RUNTIME_ARGS" not in env
+        assert manager._build_runtime_args_str(env) is None
 
     # ------------------------------------------------------------------
     # env_manager integration with container args
@@ -377,12 +377,12 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+        kas_args = manager._build_runtime_args_str(env)
         assert "--extra-flag" in kas_args
         assert "-v /host/data:/data" in kas_args
 
     def test_env_manager_vars_forwarded_as_e_flags_in_container_mode(self, kas_config_file):
-        """Registry env vars are forwarded as -e flags inside KAS_RUNTIME_ARGS."""
+        """Registry env vars are forwarded as -e flags inside --runtime-args."""
         from bsp.models import EnvironmentVariable
         from bsp.environment import EnvironmentManager
         env_mgr = EnvironmentManager([
@@ -396,7 +396,7 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+        kas_args = manager._build_runtime_args_str(env)
         assert "-e MY_CUSTOM_VAR=my_value" in kas_args
         assert "-e ANOTHER_VAR=another" in kas_args
 
@@ -414,7 +414,7 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        assert "KAS_RUNTIME_ARGS" not in env
+        assert manager._build_runtime_args_str(env) is None
         # The var is still set in the host environment
         assert env.get("MY_CUSTOM_VAR") == "my_value"
 
@@ -434,17 +434,17 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = env.get("KAS_RUNTIME_ARGS", "")
+        kas_args = manager._build_runtime_args_str(env)
         # Both the env_manager value AND the volume must survive.
         assert "--net=host" in kas_args
         assert "-v /host/src:/src" in kas_args
 
     # ------------------------------------------------------------------
-    # KAS_RUNTIME_ARGS debug logging in _run_kas_command
+    # --runtime-args in _run_kas_command
     # ------------------------------------------------------------------
 
     def test_kas_container_args_logged_at_debug_in_container_mode(self, kas_config_file, caplog):
-        """KAS_RUNTIME_ARGS is logged at DEBUG level when use_container=True."""
+        """--runtime-args is logged at DEBUG level when use_container=True."""
         import logging
         from bsp.models import DockerVolume
         from unittest.mock import patch as mock_patch
@@ -462,10 +462,10 @@ class TestKasManager:
                     manager._run_kas_command(["build", str(kas_config_file)])
                 except SystemExit:
                     pass
-        assert any("KAS_RUNTIME_ARGS" in record.message for record in caplog.records)
+        assert any("--runtime-args" in record.message for record in caplog.records)
 
     def test_kas_container_args_not_logged_in_native_mode(self, kas_config_file, caplog):
-        """KAS_RUNTIME_ARGS is NOT logged when use_container=False."""
+        """--runtime-args is NOT logged when use_container=False."""
         import logging
         from unittest.mock import patch as mock_patch
         manager = KasManager(
@@ -480,4 +480,65 @@ class TestKasManager:
                     manager._run_kas_command(["build", str(kas_config_file)])
                 except SystemExit:
                     pass
-        assert not any("KAS_RUNTIME_ARGS" in record.message for record in caplog.records)
+        assert not any("--runtime-args" in record.message for record in caplog.records)
+
+    def test_run_kas_command_passes_runtime_args_in_cmd(self, kas_config_file):
+        """_run_kas_command includes --runtime-args in the subprocess call."""
+        from bsp.models import DockerVolume
+        from unittest.mock import patch as mock_patch, call
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        with mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            try:
+                manager._run_kas_command(["build", str(kas_config_file)])
+            except SystemExit:
+                pass
+        called_cmd = mock_run.call_args[0][0]
+        assert "--runtime-args" in called_cmd
+        rt_idx = called_cmd.index("--runtime-args")
+        assert "-v /host/data:/data" in called_cmd[rt_idx + 1]
+
+    def test_run_kas_command_no_runtime_args_when_nothing_to_pass(self, kas_config_file):
+        """_run_kas_command does NOT include --runtime-args when nothing is configured."""
+        from unittest.mock import patch as mock_patch
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+        )
+        with mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            try:
+                manager._run_kas_command(["build", str(kas_config_file)])
+            except SystemExit:
+                pass
+        called_cmd = mock_run.call_args[0][0]
+        assert "--runtime-args" not in called_cmd
+
+    def test_run_kas_command_kas_runtime_args_not_in_env(self, kas_config_file):
+        """KAS_RUNTIME_ARGS is removed from the environment before the subprocess call."""
+        from bsp.models import DockerVolume
+        from unittest.mock import patch as mock_patch
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        with mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            try:
+                manager._run_kas_command(["build", str(kas_config_file)])
+            except SystemExit:
+                pass
+        called_env = mock_run.call_args[1].get("env") or mock_run.call_args[0][0]
+        # env is passed as a keyword arg
+        called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
+        assert "KAS_RUNTIME_ARGS" not in called_env

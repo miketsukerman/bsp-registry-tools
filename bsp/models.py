@@ -78,7 +78,7 @@ class Docker:
         runtime_args: Extra arguments appended to the container engine
                       ``run`` command (e.g. ``-p 2222:2222
                       --device=/dev/net/tun --cap-add=NET_ADMIN``).
-                      Passed to kas-container via ``KAS_RUNTIME_ARGS``.
+                      Passed to kas-container via ``--runtime-args``.
         privileged: Run container in privileged mode (enables --isar for kas-container)
         copy: List of ``{source: destination}`` file-copy entries executed
               before every build that uses this container.  Both paths are
@@ -89,8 +89,8 @@ class Docker:
                  specifies a ``host`` path, a ``container`` path, and an
                  optional ``read_only`` flag.  Host paths support
                  ``$ENV{VAR}`` expansion.  Entries are converted to
-                 ``-v host:container[:ro]`` flags appended to
-                 ``KAS_RUNTIME_ARGS``.
+                 ``-v host:container[:ro]`` flags passed via
+                 ``--runtime-args``.
     """
     image: Optional[str]
     file: Optional[str]
