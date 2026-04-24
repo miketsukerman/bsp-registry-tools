@@ -325,3 +325,85 @@ class TestKasManager:
         )
         env = manager._get_environment_with_container_vars()
         assert "KAS_CONTAINER_ARGS" not in env
+
+    # ------------------------------------------------------------------
+    # env_manager integration with container args
+    # ------------------------------------------------------------------
+
+    def test_env_manager_kas_container_args_merged_with_volumes(self, kas_config_file):
+        """KAS_CONTAINER_ARGS set via env_manager is preserved and volumes are appended."""
+        from bsp.models import DockerVolume, EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="KAS_CONTAINER_ARGS", value="--extra-flag"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        assert "--extra-flag" in kas_args
+        assert "-v /host/data:/data" in kas_args
+
+    def test_env_manager_vars_forwarded_as_e_flags_in_container_mode(self, kas_config_file):
+        """Registry env vars are forwarded as -e flags inside KAS_CONTAINER_ARGS."""
+        from bsp.models import EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="MY_CUSTOM_VAR", value="my_value"),
+            EnvironmentVariable(name="ANOTHER_VAR", value="another"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        assert "-e MY_CUSTOM_VAR=my_value" in kas_args
+        assert "-e ANOTHER_VAR=another" in kas_args
+
+    def test_env_manager_vars_not_forwarded_without_container_mode(self, kas_config_file):
+        """Registry env vars are NOT added as -e flags when not using container mode."""
+        from bsp.models import EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="MY_CUSTOM_VAR", value="my_value"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=False,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        assert "KAS_CONTAINER_ARGS" not in env
+        # The var is still set in the host environment
+        assert env.get("MY_CUSTOM_VAR") == "my_value"
+
+    def test_env_manager_kas_container_args_not_overwritten_by_env_manager(self, kas_config_file):
+        """env_manager KAS_CONTAINER_ARGS cannot overwrite volumes set via container_volumes."""
+        from bsp.models import DockerVolume, EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        vols = [DockerVolume(host="/host/src", container="/src")]
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="KAS_CONTAINER_ARGS", value="--net=host"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        # Both the env_manager value AND the volume must survive.
+        assert "--net=host" in kas_args
+        assert "-v /host/src:/src" in kas_args

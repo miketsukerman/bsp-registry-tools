@@ -124,6 +124,19 @@ class KasManager:
         Sets up cache directories and container-specific environment
         variables required for KAS operation.
 
+        When running inside a container (``use_container=True``) the method
+        ensures that:
+
+        * Volume mounts are always present in ``KAS_CONTAINER_ARGS``
+          regardless of any ``KAS_CONTAINER_ARGS`` value supplied via
+          ``env_manager``.
+        * All registry-configured environment variables are forwarded into
+          the container as ``-e VAR=VALUE`` flags inside
+          ``KAS_CONTAINER_ARGS``.  ``kas-container`` only passes a fixed
+          whitelist of host variables into the Docker/Podman container;
+          forwarding every registry variable explicitly guarantees they are
+          available inside the build environment.
+
         Returns:
             Environment dictionary with KAS-specific variables configured
         """
@@ -144,6 +157,12 @@ class KasManager:
             if sstate_dir:
                 env['SSTATE_DIR'] = sstate_dir
 
+        # Apply environment manager configuration before constructing
+        # KAS_CONTAINER_ARGS so that env_manager variables (including any
+        # KAS_CONTAINER_ARGS entry) are visible during the merge step below
+        # and cannot accidentally overwrite the computed container flags.
+        env = self.env_manager.setup_environment(env)
+
         # Set container-specific environment variables
         if self.use_container:
             if self.container_engine:
@@ -151,21 +170,36 @@ class KasManager:
             if self.container_image:
                 env['KAS_CONTAINER_IMAGE'] = self.container_image
 
-            # Build KAS_CONTAINER_ARGS from runtime_args + volume mounts
+            # Build KAS_CONTAINER_ARGS by merging in order:
+            # 1. Any pre-existing value from env_manager or the host shell
+            # 2. Explicit container_runtime_args from registry config
+            # 3. Volume mounts as -v flags
+            # 4. Registry env_manager variables forwarded as -e VAR=VALUE so
+            #    they are visible inside the container (kas-container only
+            #    passes a fixed whitelist of host vars into the container).
             kas_container_args_parts = []
+
+            existing_kas_args = env.get('KAS_CONTAINER_ARGS', '').strip()
+            if existing_kas_args:
+                kas_container_args_parts.append(existing_kas_args)
+
             if self.container_runtime_args:
                 kas_container_args_parts.append(self.container_runtime_args)
+
             for vol in self.container_volumes:
                 expanded_host = self._expand_env_vars(vol.host)
                 flag = f"-v {expanded_host}:{vol.container}"
                 if vol.read_only:
                     flag += ":ro"
                 kas_container_args_parts.append(flag)
+
+            for env_var in self.env_manager.environment_vars:
+                value = env.get(env_var.name)
+                if value is not None:
+                    kas_container_args_parts.append(f"-e {env_var.name}={value}")
+
             if kas_container_args_parts:
                 env['KAS_CONTAINER_ARGS'] = " ".join(kas_container_args_parts)
-
-        # Apply environment manager configuration (overrides any previous settings)
-        env = self.env_manager.setup_environment(env)
 
         return env
 
