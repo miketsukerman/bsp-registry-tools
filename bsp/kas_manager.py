@@ -4,6 +4,7 @@ KAS build system manager for Yocto-based BSP builds.
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ from typing import List, Optional, Dict, Any
 import yaml
 
 from .environment import EnvironmentManager
+from .models import DockerVolume
 from .path_resolver import resolver
 
 # =============================================================================
@@ -35,6 +37,7 @@ class KasManager:
                  container_engine: str = None, container_image: str = None,
                  container_runtime_args: str = None,
                  container_privileged: bool = False,
+                 container_volumes: List[DockerVolume] = None,
                  search_paths: List[str] = None, env_manager: EnvironmentManager = None):
         """
         Initialize KAS manager with configuration.
@@ -49,6 +52,10 @@ class KasManager:
             container_image: Custom container image for kas-container
             container_runtime_args: Extra arguments appended to the container engine run command
             container_privileged: Run container in privileged mode (enables --isar flag)
+            container_volumes: List of host-to-container directory mappings; each entry is
+                               converted to a ``-v host:container[:ro]`` flag appended to
+                               ``KAS_CONTAINER_ARGS``. Host paths support ``$ENV{VAR}``
+                               expansion.
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
 
@@ -66,6 +73,7 @@ class KasManager:
         self.container_image = container_image
         self.container_runtime_args = container_runtime_args
         self.container_privileged = container_privileged
+        self.container_volumes = container_volumes or []
         self.search_paths = search_paths or []
         self.download_dir = download_dir
         self.sstate_dir = sstate_dir
@@ -143,13 +151,54 @@ class KasManager:
                 env['KAS_CONTAINER_ENGINE'] = self.container_engine
             if self.container_image:
                 env['KAS_CONTAINER_IMAGE'] = self.container_image
+
+            # Build KAS_CONTAINER_ARGS from runtime_args + volume mounts
+            kas_container_args_parts = []
             if self.container_runtime_args:
-                env['KAS_CONTAINER_ARGS'] = self.container_runtime_args
+                kas_container_args_parts.append(self.container_runtime_args)
+            for vol in self.container_volumes:
+                expanded_host = self._expand_env_vars(vol.host)
+                flag = f"-v {expanded_host}:{vol.container}"
+                if vol.read_only:
+                    flag += ":ro"
+                kas_container_args_parts.append(flag)
+            if kas_container_args_parts:
+                env['KAS_CONTAINER_ARGS'] = " ".join(kas_container_args_parts)
 
         # Apply environment manager configuration (overrides any previous settings)
         env = self.env_manager.setup_environment(env)
 
         return env
+
+    # Pattern mirrors EnvironmentManager.ENV_VAR_PATTERN
+    _ENV_VAR_PATTERN = re.compile(r'\$ENV\{([^}]+)\}')
+
+    def _expand_env_vars(self, value: str) -> str:
+        """
+        Expand ``$ENV{VAR}`` patterns and standard ``$VAR`` / ``%VAR%`` patterns
+        in *value*, consistent with ``EnvironmentManager``.
+
+        A warning is logged for any ``$ENV{VAR}`` that is not set; the token is
+        replaced with an empty string so the volume flag is still produced.
+
+        Args:
+            value: String that may contain ``$ENV{VAR}`` tokens.
+
+        Returns:
+            Expanded string.
+        """
+        def _replace(match):
+            var_name = match.group(1)
+            if var_name in os.environ:
+                return os.environ[var_name]
+            logging.warning(
+                f"Environment variable '{var_name}' is not set; "
+                f"using empty string for expansion in volume host path: {value}"
+            )
+            return ""
+
+        expanded = self._ENV_VAR_PATTERN.sub(_replace, value)
+        return os.path.expandvars(expanded)
 
     def _resolve_kas_file(self, kas_file: str) -> str:
         """

@@ -963,6 +963,11 @@ class BspManager:
             if resolved.container and use_container
             else None
         )
+        container_volumes = (
+            resolved.container.volumes
+            if resolved.container and use_container
+            else []
+        )
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )
@@ -975,6 +980,7 @@ class BspManager:
             use_container=use_container,
             container_image=container_image,
             container_runtime_args=container_runtime_args,
+            container_volumes=container_volumes,
             container_privileged=(
                 resolved.container.privileged if resolved.container and use_container else False
             ),

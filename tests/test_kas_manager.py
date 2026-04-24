@@ -226,3 +226,102 @@ class TestKasManager:
             container_privileged=True
         )
         assert manager.container_privileged is True
+
+    def test_container_volumes_default_empty(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+        )
+        assert manager.container_volumes == []
+
+    def test_container_volumes_stored(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            container_volumes=vols,
+        )
+        assert manager.container_volumes == vols
+
+    def test_container_volumes_appended_to_kas_container_args(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        env = manager._get_environment_with_container_vars()
+        assert env.get("KAS_CONTAINER_ARGS") == "-v /host/data:/data"
+
+    def test_container_volumes_read_only_flag(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="/host/ro", container="/ro", read_only=True)]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        env = manager._get_environment_with_container_vars()
+        assert env.get("KAS_CONTAINER_ARGS") == "-v /host/ro:/ro:ro"
+
+    def test_container_volumes_combined_with_runtime_args(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_runtime_args="-p 2222:2222",
+            container_volumes=vols,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        assert "-p 2222:2222" in kas_args
+        assert "-v /host/data:/data" in kas_args
+
+    def test_container_volumes_multiple(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [
+            DockerVolume(host="/host/a", container="/a"),
+            DockerVolume(host="/host/b", container="/b", read_only=True),
+        ]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        assert "-v /host/a:/a" in kas_args
+        assert "-v /host/b:/b:ro" in kas_args
+
+    def test_container_volumes_env_expansion(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="$ENV{TEST_HOST_DIR}", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        with patch.dict(os.environ, {"TEST_HOST_DIR": "/expanded/path"}):
+            env = manager._get_environment_with_container_vars()
+        kas_args = env.get("KAS_CONTAINER_ARGS", "")
+        assert "-v /expanded/path:/data" in kas_args
+
+    def test_container_volumes_not_set_without_container_mode(self, kas_config_file):
+        from bsp.models import DockerVolume
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=False,
+            container_volumes=vols,
+        )
+        env = manager._get_environment_with_container_vars()
+        assert "KAS_CONTAINER_ARGS" not in env

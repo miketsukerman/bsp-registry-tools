@@ -51,6 +51,22 @@ class DockerArg:
 
 
 @dataclass
+class DockerVolume:
+    """
+    Represents a host-to-container directory mapping (volume mount).
+
+    Attributes:
+        host: Path on the host machine to mount (supports ``$ENV{VAR}`` expansion).
+        container: Absolute path inside the container where the host path is mounted.
+        read_only: When ``True`` the volume is mounted read-only (``:ro`` flag).
+                   Defaults to ``False``.
+    """
+    host: str
+    container: str
+    read_only: bool = False
+
+
+@dataclass
 class Docker:
     """
     Docker configuration for build environment.
@@ -69,6 +85,12 @@ class Docker:
               resolved relative to the registry file's parent directory.
               Entries are merged between named-environment copy and
               device-level copy entries.
+        volumes: List of host-to-container directory mappings.  Each entry
+                 specifies a ``host`` path, a ``container`` path, and an
+                 optional ``read_only`` flag.  Host paths support
+                 ``$ENV{VAR}`` expansion.  Entries are converted to
+                 ``-v host:container[:ro]`` flags appended to
+                 ``KAS_CONTAINER_ARGS``.
     """
     image: Optional[str]
     file: Optional[str]
@@ -76,6 +98,7 @@ class Docker:
     runtime_args: Optional[str] = None
     privileged: bool = False
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
+    volumes: List[DockerVolume] = field(default_factory=empty_list)
 
 
 @dataclass
