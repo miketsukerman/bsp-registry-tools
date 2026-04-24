@@ -37,7 +37,8 @@ class KasManager:
                  container_runtime_args: str = None,
                  container_privileged: bool = False,
                  container_volumes: List[DockerVolume] = None,
-                 search_paths: List[str] = None, env_manager: EnvironmentManager = None):
+                 search_paths: List[str] = None, env_manager: EnvironmentManager = None,
+                 verbose: bool = False):
         """
         Initialize KAS manager with configuration.
 
@@ -57,6 +58,7 @@ class KasManager:
                                expansion.
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
+            verbose: If True, pass ``-l debug`` to kas-container for detailed logging
 
         Raises:
             SystemExit: If initialization fails due to invalid parameters
@@ -77,6 +79,7 @@ class KasManager:
         self.download_dir = download_dir
         self.sstate_dir = sstate_dir
         self.env_manager = env_manager or EnvironmentManager()
+        self.verbose = verbose
 
         # Add common search paths for configuration files
         self.search_paths.extend([
@@ -113,6 +116,9 @@ class KasManager:
             # (granting all capabilities including SYS_ADMIN and MKNOD)
             if self.container_privileged:
                 cmd.append("--isar")
+            # Enable kas-container debug logging in verbose mode
+            if self.verbose:
+                cmd.extend(["-l", "debug"])
             return cmd
         else:
             return ["kas"]

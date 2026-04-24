@@ -986,6 +986,7 @@ class BspManager:
             ),
             search_paths=[str(self.config_path.parent)],
             env_manager=env_mgr,
+            verbose=self.verbose,
         )
         return kas_mgr
 

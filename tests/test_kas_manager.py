@@ -62,6 +62,37 @@ class TestKasManager:
         )
         assert manager._get_kas_command() == ["kas"]
 
+    def test_get_kas_command_container_verbose(self, kas_config_file):
+        """verbose=True adds -l debug to kas-container command."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            verbose=True,
+        )
+        assert manager._get_kas_command() == ["kas-container", "-l", "debug"]
+
+    def test_get_kas_command_container_verbose_with_privileged(self, kas_config_file):
+        """verbose=True with privileged adds --isar and -l debug."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_privileged=True,
+            verbose=True,
+        )
+        assert manager._get_kas_command() == ["kas-container", "--isar", "-l", "debug"]
+
+    def test_get_kas_command_native_verbose_no_debug_flag(self, kas_config_file):
+        """-l debug is NOT added for native (non-container) builds."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=False,
+            verbose=True,
+        )
+        assert manager._get_kas_command() == ["kas"]
+
     def test_resolve_kas_file_absolute(self, kas_config_file):
         manager = KasManager(
             kas_files=[str(kas_config_file)],
