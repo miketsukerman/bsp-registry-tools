@@ -946,7 +946,7 @@ class V2Resolver:
             sys.exit(1)
 
         # Merge preset features with any extra features supplied at call time.
-        preset_features = list(preset.features or [])
+        preset_features = list(preset.features)
         if extra_feature_slugs:
             for slug in extra_feature_slugs:
                 if slug not in preset_features:
