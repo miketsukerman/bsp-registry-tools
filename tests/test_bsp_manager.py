@@ -499,6 +499,39 @@ class TestBspManagerBuildByComponents:
             manager.build_bsp("imx8-scarthgap-ota", build_path_override=custom_path)
         mock_prepare.assert_called_once_with(custom_path)
 
+    def test_build_bsp_with_extra_features(self, registry_with_features_file):
+        """build_bsp() with feature_slugs merges extra features into the preset's features."""
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project") as mock_build, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp("imx8-scarthgap-ota", feature_slugs=["secure-boot"])
+        mock_build.assert_called_once()
+
+    def test_build_bsp_extra_features_included_in_resolved(self, registry_with_features_file):
+        """Extra features passed to build_bsp() appear in the resolved config."""
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset(
+            "imx8-scarthgap-ota", extra_feature_slugs=["secure-boot"]
+        )
+        feature_slugs = [f.slug for f in resolved.features]
+        assert "ota" in feature_slugs
+        assert "secure-boot" in feature_slugs
+
+    def test_build_bsp_duplicate_features_not_repeated(self, registry_with_features_file):
+        """Extra features that duplicate preset features are not added twice."""
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset(
+            "imx8-scarthgap-ota", extra_feature_slugs=["ota"]
+        )
+        feature_slugs = [f.slug for f in resolved.features]
+        assert feature_slugs.count("ota") == 1
+
 
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):

@@ -897,7 +897,11 @@ class V2Resolver:
             result.extend(self.expand_preset(preset))
         return result
 
-    def resolve_preset(self, preset_name: str) -> Tuple[ResolvedConfig, BspPreset]:
+    def resolve_preset(
+        self,
+        preset_name: str,
+        extra_feature_slugs: Optional[List[str]] = None,
+    ) -> Tuple[ResolvedConfig, BspPreset]:
         """
         Resolve a named BSP preset to a ResolvedConfig.
 
@@ -918,6 +922,8 @@ class V2Resolver:
 
         Args:
             preset_name: Name of the preset in registry.bsp
+            extra_feature_slugs: Additional feature slugs to enable on top of
+                those already listed in the preset definition.
 
         Returns:
             Tuple of (ResolvedConfig, BspPreset)
@@ -939,8 +945,15 @@ class V2Resolver:
             )
             sys.exit(1)
 
+        # Merge preset features with any extra features supplied at call time.
+        preset_features = list(preset.features or [])
+        if extra_feature_slugs:
+            for slug in extra_feature_slugs:
+                if slug not in preset_features:
+                    preset_features.append(slug)
+
         resolved = self.resolve(
-            preset.device, preset.release, preset.features,
+            preset.device, preset.release, preset_features,
             vendor_release_slug=preset.vendor_release,
             override_slug=preset.override,
         )
