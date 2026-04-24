@@ -1239,10 +1239,11 @@ bsp test poky-qemux86-64-walnascar --wait
 
 ### `bsp[*].build` fields
 
-| Field       | Type          | Description                                                                       |
-|-------------|---------------|-----------------------------------------------------------------------------------|
-| `container` | string (opt.) | Container name override (key in `containers` section). When absent the container is taken from the release's named environment (or `"default"`). |
-| `path`      | string (opt.) | Build output directory. When absent, the path is auto-composed as `build/<distro>-<device>-<release>[-<feature>…]` for single-release presets, or `build/<name>-<release_slug>[-<override_slug>]` for multi-release presets. When `releases` (plural) is used, this value is treated as a *base path stem*: the release slug (and the vendor override slug when `override` is set) is appended to it — e.g. `path: build/my-bsp` expands to `build/my-bsp-scarthgap` and `build/my-bsp-styhead`. |
+| Field         | Type          | Description                                                                       |
+|---------------|---------------|-----------------------------------------------------------------------------------|
+| `environment` | string (opt.) | Named environment to use for this preset (key in `environments` section). Overrides the named environment derived from the release. The environment's container, variables, and copy entries are all applied. When absent the release's own `environment` field (or the `"default"` fallback) is used. |
+| `container`   | string (opt.) | Container name override (key in `containers` section). Takes priority over any container from `build.environment` or the release's named environment. |
+| `path`        | string (opt.) | Build output directory. When absent, the path is auto-composed as `build/<distro>-<device>-<release>[-<feature>…]` for single-release presets, or `build/<name>-<release_slug>[-<override_slug>]` for multi-release presets. When `releases` (plural) is used, this value is treated as a *base path stem*: the release slug (and the vendor override slug when `override` is set) is appended to it — e.g. `path: build/my-bsp` expands to `build/my-bsp-scarthgap` and `build/my-bsp-styhead`. |
 
 ### `bsp[*].testing` fields
 

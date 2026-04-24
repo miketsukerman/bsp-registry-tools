@@ -2729,6 +2729,99 @@ class TestPresetContainerOverrideWithNamedEnvCopy:
 
 
 # =============================================================================
+# Tests for build.environment on BspPreset
+# =============================================================================
+
+class TestPresetBuildEnvironmentOverride:
+    """Verify that build.environment on a BSP preset selects a named environment."""
+
+    def test_build_env_selects_container(self, registry_with_preset_env_override_file):
+        """build.environment makes the preset use the specified env's container."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
+        assert resolved.container is not None
+        assert resolved.container.image == "test/debian-special:latest", (
+            "build.environment should select the named env's container."
+        )
+
+    def test_build_env_selects_variables(self, registry_with_preset_env_override_file):
+        """build.environment applies the env's variables to the resolved env list."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
+        env_names = [v.name for v in resolved.env]
+        assert "SPECIAL_VAR" in env_names, (
+            "build.environment should apply the named env's variables."
+        )
+        dl_values = [v.value for v in resolved.env if v.name == "DL_DIR"]
+        assert dl_values == ["/tmp/special-downloads"], (
+            "build.environment variables should override the default env's variables."
+        )
+
+    def test_build_env_selects_copy(self, registry_with_preset_env_override_file):
+        """build.environment copy entries appear in the resolved copy list."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
+        copy_sources = [list(e.keys())[0] for e in resolved.copy]
+        assert "special/setup.sh" in copy_sources, (
+            "build.environment copy entries must be present in resolved.copy."
+        )
+
+    def test_build_container_overrides_build_env_container(
+        self, registry_with_preset_env_override_file
+    ):
+        """build.container takes priority over the container from build.environment."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env-and-container")
+        assert resolved.container is not None
+        assert resolved.container.image == "test/custom:latest", (
+            "build.container must override the container from build.environment."
+        )
+
+    def test_build_container_with_build_env_keeps_env_variables(
+        self, registry_with_preset_env_override_file
+    ):
+        """When both build.environment and build.container are set, env variables still come from build.environment."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env-and-container")
+        env_names = [v.name for v in resolved.env]
+        assert "SPECIAL_VAR" in env_names, (
+            "Env variables from build.environment should be kept even when build.container overrides the container."
+        )
+
+    def test_build_env_does_not_affect_preset_without_it(
+        self, registry_with_preset_env_override_file
+    ):
+        """A preset without build.environment still uses the release/default env."""
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("preset-default-env")
+        assert resolved.container is not None
+        assert resolved.container.image == "test/debian:latest", (
+            "Without build.environment the default named env's container is used."
+        )
+
+    def test_unknown_build_environment_exits(self, registry_with_preset_env_override_file):
+        """resolve_preset() exits when build.environment names a non-existent environment."""
+        import yaml as _yaml
+        data = _yaml.safe_load(registry_with_preset_env_override_file.read_text())
+        for preset in data["registry"]["bsp"]:
+            if preset["name"] == "preset-with-build-env":
+                preset["build"]["environment"] = "does-not-exist"
+                break
+        registry_with_preset_env_override_file.write_text(_yaml.dump(data))
+
+        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
+        manager.initialize()
+        with pytest.raises(SystemExit):
+            manager.resolver.resolve_preset("preset-with-build-env")
+
+
+# =============================================================================
 # Tests for container-level copy field (Docker.copy)
 # =============================================================================
 

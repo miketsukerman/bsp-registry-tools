@@ -247,6 +247,82 @@ registry:
         path: build/isar-board
 """
 
+REGISTRY_WITH_PRESET_ENV_OVERRIDE_YAML = """
+specification:
+  version: "2.0"
+
+environments:
+  default:
+    container: "debian-bookworm"
+    variables:
+      - name: "DL_DIR"
+        value: "/tmp/downloads"
+  special-env:
+    container: "debian-bookworm-special"
+    variables:
+      - name: "DL_DIR"
+        value: "/tmp/special-downloads"
+      - name: "SPECIAL_VAR"
+        value: "hello"
+    copy:
+      - special/setup.sh: build/
+
+containers:
+  debian-bookworm:
+    image: "test/debian:latest"
+    file: null
+    args: []
+  debian-bookworm-special:
+    image: "test/debian-special:latest"
+    file: null
+    args: []
+  custom-override:
+    image: "test/custom:latest"
+    file: null
+    args: []
+
+registry:
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+  features: []
+  bsp:
+    - name: preset-with-build-env
+      description: "Preset overriding named env via build.environment"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        environment: special-env
+        path: build/preset-special
+    - name: preset-with-build-env-and-container
+      description: "Preset with build.environment + build.container override"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        environment: special-env
+        container: custom-override
+        path: build/preset-custom
+    - name: preset-default-env
+      description: "Preset using default named env (no build.environment)"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        path: build/preset-default
+"""
+
 REGISTRY_WITH_COPY_YAML = """
 specification:
   version: "2.0"
@@ -699,6 +775,14 @@ def registry_with_named_env_file(tmp_dir):
     """Create a registry YAML file with named environments."""
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML)
+    return registry_path
+
+
+@pytest.fixture
+def registry_with_preset_env_override_file(tmp_dir):
+    """Create a registry YAML file where a BSP preset overrides the named environment via build.environment."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_PRESET_ENV_OVERRIDE_YAML)
     return registry_path
 
 

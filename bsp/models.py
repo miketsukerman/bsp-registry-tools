@@ -204,20 +204,31 @@ class BspBuild:
     Build configuration for a BSP preset.
 
     When present on a ``BspPreset``, this section controls the container
-    used for the build and the output directory.  Both fields are optional:
+    used for the build and the output directory.  All fields are optional:
 
-    * If ``container`` is omitted the container is taken from the release's
-      named environment (or the ``"default"`` environment as a fallback).
+    * If ``environment`` is set, the named environment it references is used
+      for this preset instead of the one derived from the release.  The
+      environment's container, variables, and copy entries are applied.
+    * If ``container`` is set it takes priority over any container that
+      would otherwise come from the named environment (release-level or
+      preset-level ``environment``).
     * If ``path`` is omitted the resolver auto-composes a path from the
       distro slug, device slug, release slug, and any feature slugs under
       the top-level ``build/`` directory.
 
     Attributes:
-        container: Optional container name (references the top-level
-                   ``containers`` dict).
+        environment: Optional name of the named environment to use for this
+                     preset (references ``RegistryRoot.environments``).
+                     Overrides the named environment derived from the
+                     release.  When omitted the release's own environment
+                     field (or the ``"default"`` fallback) is used.
+        container: Optional container name override (references the
+                   top-level ``containers`` dict).  When set it takes
+                   priority over the container from the named environment.
         path: Optional build output directory.  When ``None`` the resolver
               derives the path automatically.
     """
+    environment: Optional[str] = None
     container: Optional[str] = None
     path: Optional[str] = None
 
