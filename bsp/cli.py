@@ -771,6 +771,7 @@ def main() -> int:
                     target=target,
                     task=task,
                     build_path_override=build_path,
+                    feature_slugs=features or None,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(

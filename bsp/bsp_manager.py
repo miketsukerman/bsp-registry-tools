@@ -1086,6 +1086,7 @@ class BspManager:
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
+        feature_slugs: Optional[List[str]] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1098,12 +1099,13 @@ class BspManager:
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
+            feature_slugs: Additional feature slugs to enable on top of those in the preset
 
         Raises:
             SystemExit: If preset not found or build fails
         """
         logging.info(f"{'Checking out' if checkout_only else 'Building'} BSP preset: {bsp_name}")
-        resolved, preset = self.resolver.resolve_preset(bsp_name)
+        resolved, preset = self.resolver.resolve_preset(bsp_name, extra_feature_slugs=feature_slugs)
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
