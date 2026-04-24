@@ -6,7 +6,7 @@ import logging
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from .environment import EnvironmentManager
 from .kas_manager import KasManager
@@ -199,13 +199,15 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
-    def _get_kas_manager_for_bsp(self, bsp: BSP, use_container: bool = True) -> KasManager:
+    def _get_kas_manager_for_bsp(self, bsp: BSP, use_container: bool = True,
+                                   features: Optional[List[str]] = None) -> KasManager:
         """
         Create and configure a KAS manager for the specified BSP.
 
         Args:
             bsp: BSP configuration object
             use_container: Whether to use containerized KAS (default: True)
+            features: Additional KAS feature configuration files to append
 
         Returns:
             Configured KasManager instance
@@ -227,9 +229,14 @@ class BspManager:
         if sstate:
             resolver.ensure_directory(sstate)
 
+        # Build the list of KAS files: base configuration + any extra feature files
+        kas_files = list(bsp.build.configuration)
+        if features:
+            kas_files.extend(features)
+
         # Initialize KAS manager with environment configuration
         kas_mgr = KasManager(
-            bsp.build.configuration,
+            kas_files,
             bsp.build.path,
             download_dir=downloads,
             sstate_dir=sstate,
@@ -242,7 +249,9 @@ class BspManager:
 
         return kas_mgr
 
-    def build_bsp(self, bsp_name: str, checkout_only: bool = False, build_path_override: Optional[str] = None) -> None:
+    def build_bsp(self, bsp_name: str, checkout_only: bool = False,
+                  build_path_override: Optional[str] = None,
+                  features: Optional[List[str]] = None) -> None:
         """
         Build a specific BSP including Docker image and Yocto build.
 
@@ -254,6 +263,7 @@ class BspManager:
             bsp_name: Name of the BSP to build
             checkout_only: If True, only checkout and validate configuration without building
             build_path_override: If provided, overrides the build output path from the registry
+            features: Optional list of additional KAS feature configuration files to enable
 
         Raises:
             SystemExit: If any step of the build process fails
@@ -295,7 +305,7 @@ class BspManager:
         self.prepare_build_directory(build_path)
 
         # Get KAS manager - use native KAS for checkout, container for builds
-        kas_mgr = self._get_kas_manager_for_bsp(bsp, use_container=not checkout_only)
+        kas_mgr = self._get_kas_manager_for_bsp(bsp, use_container=not checkout_only, features=features)
 
         # Dump configuration for verification (debugging)
         config_output = kas_mgr.dump_config(show_output=False)

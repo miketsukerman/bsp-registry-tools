@@ -357,3 +357,108 @@ containers:
             manager.build_bsp("test-bsp", build_path_override=custom_path)
 
         assert captured_paths == [custom_path]
+
+    def test_build_bsp_features_appended_to_kas_files(self, tmp_dir):
+        """build_bsp() with features passes them as extra KAS config files to KasManager."""
+        from unittest.mock import patch, call
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "registry"
+        registry_dir.mkdir()
+
+        registry_content = """
+specification:
+  version: "1.0"
+registry:
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      build:
+        path: build/test
+        environment:
+          container: "ubuntu-22.04"
+        configuration:
+          - base.yml
+containers:
+  - ubuntu-22.04:
+      image: "test/ubuntu-22.04:latest"
+      file: Dockerfile.ubuntu
+      args: []
+"""
+        registry_file = registry_dir / "bsp-registry.yml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        captured_kas_files = []
+
+        original_init = KasManager.__init__
+
+        def capture_kas_init(self_inner, kas_files, *args, **kwargs):
+            captured_kas_files.extend(kas_files)
+            original_init(self_inner, kas_files, *args, **kwargs)
+
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch.object(KasManager, "__init__", capture_kas_init), \
+             patch.object(KasManager, "build_project"), \
+             patch.object(KasManager, "dump_config", return_value=None), \
+             patch.object(manager, "prepare_build_directory"):
+            manager.build_bsp("test-bsp", features=["kas/feature-a.yml", "kas/feature-b.yml"])
+
+        assert "base.yml" in captured_kas_files
+        assert "kas/feature-a.yml" in captured_kas_files
+        assert "kas/feature-b.yml" in captured_kas_files
+        # Base config comes first, then features
+        assert captured_kas_files.index("base.yml") < captured_kas_files.index("kas/feature-a.yml")
+        assert captured_kas_files.index("kas/feature-a.yml") < captured_kas_files.index("kas/feature-b.yml")
+
+    def test_build_bsp_no_features_unchanged(self, tmp_dir):
+        """build_bsp() without features uses only the base KAS config files."""
+        from unittest.mock import patch
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "registry"
+        registry_dir.mkdir()
+
+        registry_content = """
+specification:
+  version: "1.0"
+registry:
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      build:
+        path: build/test
+        environment:
+          container: "ubuntu-22.04"
+        configuration:
+          - base.yml
+containers:
+  - ubuntu-22.04:
+      image: "test/ubuntu-22.04:latest"
+      file: Dockerfile.ubuntu
+      args: []
+"""
+        registry_file = registry_dir / "bsp-registry.yml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        captured_kas_files = []
+
+        original_init = KasManager.__init__
+
+        def capture_kas_init(self_inner, kas_files, *args, **kwargs):
+            captured_kas_files.extend(kas_files)
+            original_init(self_inner, kas_files, *args, **kwargs)
+
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch.object(KasManager, "__init__", capture_kas_init), \
+             patch.object(KasManager, "build_project"), \
+             patch.object(KasManager, "dump_config", return_value=None), \
+             patch.object(manager, "prepare_build_directory"):
+            manager.build_bsp("test-bsp")
+
+        assert captured_kas_files == ["base.yml"]
