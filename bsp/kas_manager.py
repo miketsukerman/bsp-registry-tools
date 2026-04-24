@@ -132,10 +132,11 @@ class KasManager:
 
         When running inside a container (``use_container=True``) the method
         sets ``KAS_CONTAINER_ENGINE`` and ``KAS_CONTAINER_IMAGE`` when
-        configured.  Volume mounts and registry environment variables are
-        forwarded to the container via the ``--runtime-args`` CLI option in
-        :meth:`_run_kas_command` rather than via the ``KAS_RUNTIME_ARGS``
-        environment variable.
+        configured.  All environment variables from ``env_manager`` and named
+        environment model sections are resolved and placed directly in the
+        process environment so that ``kas-container`` inherits them.  Volume
+        mounts and explicit ``container_runtime_args`` are forwarded via the
+        ``--runtime-args`` CLI option in :meth:`_run_kas_command`.
 
         Returns:
             Environment dictionary with KAS-specific variables configured
@@ -174,20 +175,18 @@ class KasManager:
         """
         Build the value to pass to ``kas-container --runtime-args``.
 
-        Collects all container runtime flags in order:
+        Collects container runtime flags in order:
 
         1. Any ``KAS_RUNTIME_ARGS`` already present in *env* (e.g. set by
            ``env_manager`` or inherited from the host shell).
         2. Explicit ``container_runtime_args`` from the registry config.
         3. Volume mounts as ``-v host:container[:ro]`` flags.
-        4. Registry environment variables as ``-e NAME=VALUE`` flags so they
-           are visible inside the build container (``kas-container`` only
-           passes a fixed whitelist of host vars).
 
-        ``GITCONFIG_FILE``, ``DL_DIR``, and ``SSTATE_DIR`` are intentionally
-        excluded from step 4: ``kas-container`` handles these natively by
-        reading them from the host environment, so they must remain as plain
-        environment variables (not ``--runtime-args`` flags).
+        All environment variables — whether they come from the registry's
+        ``environment`` sections, named environment model sections, or the
+        host shell — are passed to ``kas-container`` via the process
+        environment (see :meth:`_get_environment_with_container_vars`).
+        They are **not** duplicated as ``-e`` flags inside ``--runtime-args``.
 
         Args:
             env: Resolved environment dictionary (from
@@ -199,10 +198,6 @@ class KasManager:
         """
         if not self.use_container:
             return None
-
-        # kas-container natively picks up these vars from the host environment,
-        # so they must not be duplicated as -e flags inside --runtime-args.
-        _KAS_NATIVE_VARS = frozenset({"GITCONFIG_FILE", "DL_DIR", "SSTATE_DIR"})
 
         parts: List[str] = []
 
@@ -220,13 +215,6 @@ class KasManager:
             if vol.read_only:
                 flag += ":ro"
             parts.append(flag)
-
-        for env_var in self.env_manager.environment_vars:
-            if env_var.name in _KAS_NATIVE_VARS:
-                continue
-            value = env.get(env_var.name)
-            if value is not None:
-                parts.append(f"-e {env_var.name}={value}")
 
         return " ".join(parts) if parts else None
 

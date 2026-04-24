@@ -381,8 +381,8 @@ class TestKasManager:
         assert "--extra-flag" in kas_args
         assert "-v /host/data:/data" in kas_args
 
-    def test_env_manager_vars_forwarded_as_e_flags_in_container_mode(self, kas_config_file):
-        """Registry env vars are forwarded as -e flags inside --runtime-args."""
+    def test_env_manager_vars_in_process_env_in_container_mode(self, kas_config_file):
+        """Registry env vars are set in the process environment, not as -e flags."""
         from bsp.models import EnvironmentVariable
         from bsp.environment import EnvironmentManager
         env_mgr = EnvironmentManager([
@@ -396,33 +396,16 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        kas_args = manager._build_runtime_args_str(env)
-        assert "-e MY_CUSTOM_VAR=my_value" in kas_args
-        assert "-e ANOTHER_VAR=another" in kas_args
-
-    def test_kas_native_vars_excluded_from_runtime_args(self, kas_config_file):
-        """GITCONFIG_FILE, DL_DIR, SSTATE_DIR are never added as -e flags."""
-        from bsp.models import EnvironmentVariable
-        from bsp.environment import EnvironmentManager
-        env_mgr = EnvironmentManager([
-            EnvironmentVariable(name="DL_DIR", value="/downloads"),
-            EnvironmentVariable(name="SSTATE_DIR", value="/sstate"),
-            EnvironmentVariable(name="GITCONFIG_FILE", value="/home/user/.gitconfig"),
-            EnvironmentVariable(name="MY_CUSTOM_VAR", value="should_appear"),
-        ])
-        manager = KasManager(
-            kas_files=[str(kas_config_file)],
-            build_dir=str(kas_config_file.parent / "build"),
-            use_container=True,
-            env_manager=env_mgr,
-        )
-        env = manager._get_environment_with_container_vars()
+        # Vars are in the process environment
+        assert env.get("MY_CUSTOM_VAR") == "my_value"
+        assert env.get("ANOTHER_VAR") == "another"
+        # Vars are NOT duplicated as -e flags in --runtime-args
         kas_args = manager._build_runtime_args_str(env) or ""
-        assert "-e DL_DIR=" not in kas_args
-        assert "-e SSTATE_DIR=" not in kas_args
-        assert "-e GITCONFIG_FILE=" not in kas_args
-        assert "-e MY_CUSTOM_VAR=should_appear" in kas_args
-        """Registry env vars are NOT added as -e flags when not using container mode."""
+        assert "-e MY_CUSTOM_VAR" not in kas_args
+        assert "-e ANOTHER_VAR" not in kas_args
+
+    def test_env_manager_vars_in_process_env_without_container_mode(self, kas_config_file):
+        """Registry env vars are set in the process environment in both container and native mode."""
         from bsp.models import EnvironmentVariable
         from bsp.environment import EnvironmentManager
         env_mgr = EnvironmentManager([
@@ -435,9 +418,28 @@ class TestKasManager:
             env_manager=env_mgr,
         )
         env = manager._get_environment_with_container_vars()
-        assert manager._build_runtime_args_str(env) is None
-        # The var is still set in the host environment
         assert env.get("MY_CUSTOM_VAR") == "my_value"
+        assert manager._build_runtime_args_str(env) is None
+
+    def test_no_e_flags_in_runtime_args_for_any_env_var(self, kas_config_file):
+        """No env var — including DL_DIR, SSTATE_DIR, GITCONFIG_FILE — appears as -e flag."""
+        from bsp.models import EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="DL_DIR", value="/downloads"),
+            EnvironmentVariable(name="SSTATE_DIR", value="/sstate"),
+            EnvironmentVariable(name="GITCONFIG_FILE", value="/home/user/.gitconfig"),
+            EnvironmentVariable(name="MY_CUSTOM_VAR", value="value"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = manager._build_runtime_args_str(env) or ""
+        assert " -e " not in f" {kas_args} "
 
     def test_env_manager_kas_container_args_not_overwritten_by_env_manager(self, kas_config_file):
         """env_manager KAS_RUNTIME_ARGS cannot overwrite volumes set via container_volumes."""
