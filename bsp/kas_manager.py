@@ -4,7 +4,6 @@ KAS build system manager for Yocto-based BSP builds.
 
 import logging
 import os
-import re
 import subprocess
 import sys
 import time
@@ -170,16 +169,15 @@ class KasManager:
 
         return env
 
-    # Pattern mirrors EnvironmentManager.ENV_VAR_PATTERN
-    _ENV_VAR_PATTERN = re.compile(r'\$ENV\{([^}]+)\}')
-
     def _expand_env_vars(self, value: str) -> str:
         """
         Expand ``$ENV{VAR}`` patterns and standard ``$VAR`` / ``%VAR%`` patterns
         in *value*, consistent with ``EnvironmentManager``.
 
-        A warning is logged for any ``$ENV{VAR}`` that is not set; the token is
-        replaced with an empty string so the volume flag is still produced.
+        Reuses ``EnvironmentManager.ENV_VAR_PATTERN`` so the two implementations
+        cannot diverge.  A warning is logged for any ``$ENV{VAR}`` that is not
+        set; the token is replaced with an empty string so the volume flag is
+        still produced.
 
         Args:
             value: String that may contain ``$ENV{VAR}`` tokens.
@@ -197,7 +195,7 @@ class KasManager:
             )
             return ""
 
-        expanded = self._ENV_VAR_PATTERN.sub(_replace, value)
+        expanded = EnvironmentManager.ENV_VAR_PATTERN.sub(_replace, value)
         return os.path.expandvars(expanded)
 
     def _resolve_kas_file(self, kas_file: str) -> str:
