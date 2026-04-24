@@ -184,6 +184,11 @@ class KasManager:
            are visible inside the build container (``kas-container`` only
            passes a fixed whitelist of host vars).
 
+        ``GITCONFIG_FILE``, ``DL_DIR``, and ``SSTATE_DIR`` are intentionally
+        excluded from step 4: ``kas-container`` handles these natively by
+        reading them from the host environment, so they must remain as plain
+        environment variables (not ``--runtime-args`` flags).
+
         Args:
             env: Resolved environment dictionary (from
                  :meth:`_get_environment_with_container_vars`).
@@ -194,6 +199,10 @@ class KasManager:
         """
         if not self.use_container:
             return None
+
+        # kas-container natively picks up these vars from the host environment,
+        # so they must not be duplicated as -e flags inside --runtime-args.
+        _KAS_NATIVE_VARS = frozenset({"GITCONFIG_FILE", "DL_DIR", "SSTATE_DIR"})
 
         parts: List[str] = []
 
@@ -213,6 +222,8 @@ class KasManager:
             parts.append(flag)
 
         for env_var in self.env_manager.environment_vars:
+            if env_var.name in _KAS_NATIVE_VARS:
+                continue
             value = env.get(env_var.name)
             if value is not None:
                 parts.append(f"-e {env_var.name}={value}")

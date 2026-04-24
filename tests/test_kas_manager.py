@@ -400,7 +400,28 @@ class TestKasManager:
         assert "-e MY_CUSTOM_VAR=my_value" in kas_args
         assert "-e ANOTHER_VAR=another" in kas_args
 
-    def test_env_manager_vars_not_forwarded_without_container_mode(self, kas_config_file):
+    def test_kas_native_vars_excluded_from_runtime_args(self, kas_config_file):
+        """GITCONFIG_FILE, DL_DIR, SSTATE_DIR are never added as -e flags."""
+        from bsp.models import EnvironmentVariable
+        from bsp.environment import EnvironmentManager
+        env_mgr = EnvironmentManager([
+            EnvironmentVariable(name="DL_DIR", value="/downloads"),
+            EnvironmentVariable(name="SSTATE_DIR", value="/sstate"),
+            EnvironmentVariable(name="GITCONFIG_FILE", value="/home/user/.gitconfig"),
+            EnvironmentVariable(name="MY_CUSTOM_VAR", value="should_appear"),
+        ])
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            env_manager=env_mgr,
+        )
+        env = manager._get_environment_with_container_vars()
+        kas_args = manager._build_runtime_args_str(env) or ""
+        assert "-e DL_DIR=" not in kas_args
+        assert "-e SSTATE_DIR=" not in kas_args
+        assert "-e GITCONFIG_FILE=" not in kas_args
+        assert "-e MY_CUSTOM_VAR=should_appear" in kas_args
         """Registry env vars are NOT added as -e flags when not using container mode."""
         from bsp.models import EnvironmentVariable
         from bsp.environment import EnvironmentManager
