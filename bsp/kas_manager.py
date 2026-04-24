@@ -53,7 +53,7 @@ class KasManager:
             container_privileged: Run container in privileged mode (enables --isar flag)
             container_volumes: List of host-to-container directory mappings; each entry is
                                converted to a ``-v host:container[:ro]`` flag appended to
-                               ``KAS_CONTAINER_ARGS``. Host paths support ``$ENV{VAR}``
+                               ``KAS_RUNTIME_ARGS``. Host paths support ``$ENV{VAR}``
                                expansion.
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
@@ -127,12 +127,12 @@ class KasManager:
         When running inside a container (``use_container=True``) the method
         ensures that:
 
-        * Volume mounts are always present in ``KAS_CONTAINER_ARGS``
-          regardless of any ``KAS_CONTAINER_ARGS`` value supplied via
+        * Volume mounts are always present in ``KAS_RUNTIME_ARGS``
+          regardless of any ``KAS_RUNTIME_ARGS`` value supplied via
           ``env_manager``.
         * All registry-configured environment variables are forwarded into
           the container as ``-e VAR=VALUE`` flags inside
-          ``KAS_CONTAINER_ARGS``.  ``kas-container`` only passes a fixed
+          ``KAS_RUNTIME_ARGS``.  ``kas-container`` only passes a fixed
           whitelist of host variables into the Docker/Podman container;
           forwarding every registry variable explicitly guarantees they are
           available inside the build environment.
@@ -158,8 +158,8 @@ class KasManager:
                 env['SSTATE_DIR'] = sstate_dir
 
         # Apply environment manager configuration before constructing
-        # KAS_CONTAINER_ARGS so that env_manager variables (including any
-        # KAS_CONTAINER_ARGS entry) are visible during the merge step below
+        # KAS_RUNTIME_ARGS so that env_manager variables (including any
+        # KAS_RUNTIME_ARGS entry) are visible during the merge step below
         # and cannot accidentally overwrite the computed container flags.
         env = self.env_manager.setup_environment(env)
 
@@ -170,7 +170,7 @@ class KasManager:
             if self.container_image:
                 env['KAS_CONTAINER_IMAGE'] = self.container_image
 
-            # Build KAS_CONTAINER_ARGS by merging in order:
+            # Build KAS_RUNTIME_ARGS by merging in order:
             # 1. Any pre-existing value from env_manager or the host shell
             # 2. Explicit container_runtime_args from registry config
             # 3. Volume mounts as -v flags
@@ -179,7 +179,7 @@ class KasManager:
             #    passes a fixed whitelist of host vars into the container).
             kas_container_args_parts = []
 
-            existing_kas_args = env.get('KAS_CONTAINER_ARGS', '').strip()
+            existing_kas_args = env.get('KAS_RUNTIME_ARGS', '').strip()
             if existing_kas_args:
                 kas_container_args_parts.append(existing_kas_args)
 
@@ -199,7 +199,7 @@ class KasManager:
                     kas_container_args_parts.append(f"-e {env_var.name}={value}")
 
             if kas_container_args_parts:
-                env['KAS_CONTAINER_ARGS'] = " ".join(kas_container_args_parts)
+                env['KAS_RUNTIME_ARGS'] = " ".join(kas_container_args_parts)
 
         return env
 
@@ -540,8 +540,8 @@ class KasManager:
             if var in env:
                 logging.info(f"Using {var}: {env[var]}")
 
-        if self.use_container and 'KAS_CONTAINER_ARGS' in env:
-            logging.debug(f"KAS_CONTAINER_ARGS: {env['KAS_CONTAINER_ARGS']}")
+        if self.use_container and 'KAS_RUNTIME_ARGS' in env:
+            logging.debug(f"KAS_RUNTIME_ARGS: {env['KAS_RUNTIME_ARGS']}")
 
         try:
             if show_output:
