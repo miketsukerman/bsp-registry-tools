@@ -407,3 +407,46 @@ class TestKasManager:
         # Both the env_manager value AND the volume must survive.
         assert "--net=host" in kas_args
         assert "-v /host/src:/src" in kas_args
+
+    # ------------------------------------------------------------------
+    # KAS_CONTAINER_ARGS debug logging in _run_kas_command
+    # ------------------------------------------------------------------
+
+    def test_kas_container_args_logged_at_debug_in_container_mode(self, kas_config_file, caplog):
+        """KAS_CONTAINER_ARGS is logged at DEBUG level when use_container=True."""
+        import logging
+        from bsp.models import DockerVolume
+        from unittest.mock import patch as mock_patch
+        vols = [DockerVolume(host="/host/data", container="/data")]
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=True,
+            container_volumes=vols,
+        )
+        with caplog.at_level(logging.DEBUG, logger="root"):
+            with mock_patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                try:
+                    manager._run_kas_command(["build", str(kas_config_file)])
+                except SystemExit:
+                    pass
+        assert any("KAS_CONTAINER_ARGS" in record.message for record in caplog.records)
+
+    def test_kas_container_args_not_logged_in_native_mode(self, kas_config_file, caplog):
+        """KAS_CONTAINER_ARGS is NOT logged when use_container=False."""
+        import logging
+        from unittest.mock import patch as mock_patch
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=False,
+        )
+        with caplog.at_level(logging.DEBUG, logger="root"):
+            with mock_patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                try:
+                    manager._run_kas_command(["build", str(kas_config_file)])
+                except SystemExit:
+                    pass
+        assert not any("KAS_CONTAINER_ARGS" in record.message for record in caplog.records)

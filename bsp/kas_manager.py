@@ -540,6 +540,9 @@ class KasManager:
             if var in env:
                 logging.info(f"Using {var}: {env[var]}")
 
+        if self.use_container and 'KAS_CONTAINER_ARGS' in env:
+            logging.debug(f"KAS_CONTAINER_ARGS: {env['KAS_CONTAINER_ARGS']}")
+
         try:
             if show_output:
                 # Show live output to console for build progress
