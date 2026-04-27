@@ -3480,3 +3480,235 @@ class TestLavaEnvVarExpansion:
                 if mock_client_cls.called:
                     server_arg = mock_client_cls.call_args[1]["server"]
                     assert "$ENV{TEST_LAVA_SERVER}" in server_arg
+
+
+# =============================================================================
+# Multi-registry tests
+# =============================================================================
+
+REGISTRY_A_YAML = """
+specification:
+  version: "2.0"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+registry:
+  devices:
+    - slug: device-alpha
+      description: "Device Alpha"
+      vendor: vendor-a
+      soc_vendor: soc-a
+      includes:
+        - kas/device-alpha.yaml
+  releases:
+    - slug: release-alpha
+      description: "Release Alpha"
+      yocto_version: "5.0"
+      includes:
+        - kas/release-alpha.yaml
+  features: []
+  bsp:
+    - name: bsp-alpha
+      description: "BSP Alpha"
+      device: device-alpha
+      release: release-alpha
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/alpha
+"""
+
+REGISTRY_B_YAML = """
+specification:
+  version: "2.0"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+registry:
+  devices:
+    - slug: device-beta
+      description: "Device Beta"
+      vendor: vendor-b
+      soc_vendor: soc-b
+      includes:
+        - kas/device-beta.yaml
+  releases:
+    - slug: release-beta
+      description: "Release Beta"
+      yocto_version: "5.0"
+      includes:
+        - kas/release-beta.yaml
+  features: []
+  bsp:
+    - name: bsp-beta
+      description: "BSP Beta"
+      device: device-beta
+      release: release-beta
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/beta
+"""
+
+REGISTRY_SHARED_PRESET_YAML = """
+specification:
+  version: "2.0"
+registry:
+  devices:
+    - slug: device-shared
+      description: "Shared Device"
+      vendor: vendor-shared
+      soc_vendor: soc-shared
+      includes:
+        - kas/shared.yaml
+  releases:
+    - slug: release-shared
+      description: "Shared Release"
+      yocto_version: "5.0"
+      includes:
+        - kas/release-shared.yaml
+  features: []
+  bsp:
+    - name: shared-preset
+      description: "Shared Preset"
+      device: device-shared
+      release: release-shared
+      features: []
+      build:
+        path: build/shared
+"""
+
+
+def _write_registry(tmp_dir, name: str, content: str):
+    path = tmp_dir / name
+    path.write_text(content)
+    return path
+
+
+class TestMultiRegistry:
+    """Tests for BspManager multi-registry support (config_paths parameter)."""
+
+    def test_config_paths_loads_two_registries(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        assert len(mgr.registries) == 2
+        names = [n for n, _ in mgr.registries]
+        assert "a" in names
+        assert "b" in names
+
+    def test_model_property_points_to_first_registry(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        assert mgr.model is mgr.registries[0][1]
+
+    def test_list_bsp_shows_registry_prefix(self, tmp_dir, capsys):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        mgr.list_bsp(use_color=False)
+        out = capsys.readouterr().out
+        assert "[a]" in out
+        assert "[b]" in out
+        assert "bsp-alpha" in out
+        assert "bsp-beta" in out
+
+    def test_list_bsp_no_prefix_for_single_registry(self, tmp_dir, capsys):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a))])
+        mgr.initialize()
+        mgr.list_bsp(use_color=False)
+        out = capsys.readouterr().out
+        assert "[a]" not in out
+        assert "bsp-alpha" in out
+
+    def test_list_devices_shows_registry_prefix(self, tmp_dir, capsys):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        mgr.list_devices(use_color=False)
+        out = capsys.readouterr().out
+        assert "[a]" in out
+        assert "[b]" in out
+        assert "device-alpha" in out
+        assert "device-beta" in out
+
+    def test_get_bsp_by_name_registry_prefix_exact_match(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        preset = mgr.get_bsp_by_name("a:bsp-alpha")
+        assert preset.name == "bsp-alpha"
+
+    def test_get_bsp_by_name_wrong_registry_exits(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        with pytest.raises(SystemExit):
+            mgr.get_bsp_by_name("b:bsp-alpha")  # bsp-alpha is only in registry a
+
+    def test_get_bsp_by_name_plain_finds_in_first_matching(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        preset = mgr.get_bsp_by_name("bsp-alpha")
+        assert preset.name == "bsp-alpha"
+
+    def test_get_bsp_by_name_plain_not_found_exits(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_B_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        with pytest.raises(SystemExit):
+            mgr.get_bsp_by_name("nonexistent-preset")
+
+    def test_get_bsp_by_name_warns_on_ambiguity(self, tmp_dir, caplog):
+        import logging
+        # Build two registries that both have 'shared-preset'
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_SHARED_PRESET_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_SHARED_PRESET_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        with caplog.at_level(logging.WARNING):
+            preset = mgr.get_bsp_by_name("shared-preset")
+        assert preset.name == "shared-preset"
+        assert any("multiple" in r.message.lower() for r in caplog.records)
+
+    def test_get_bsp_by_name_registry_prefix_uses_correct_registry(self, tmp_dir):
+        # Both registries have 'shared-preset'; 'b:shared-preset' should use b's version
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_SHARED_PRESET_YAML)
+        path_b = _write_registry(tmp_dir, "registry-b.yaml", REGISTRY_SHARED_PRESET_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+        # Should not raise
+        preset_b = mgr.get_bsp_by_name("b:shared-preset")
+        assert preset_b.name == "shared-preset"
+
+    def test_parse_registry_preset_with_colon(self):
+        registry_name, preset_name = BspManager._parse_registry_preset("myregistry:my-preset")
+        assert registry_name == "myregistry"
+        assert preset_name == "my-preset"
+
+    def test_parse_registry_preset_plain(self):
+        registry_name, preset_name = BspManager._parse_registry_preset("my-preset")
+        assert registry_name is None
+        assert preset_name == "my-preset"
+
+    def test_unknown_registry_in_prefix_exits(self, tmp_dir):
+        path_a = _write_registry(tmp_dir, "registry-a.yaml", REGISTRY_A_YAML)
+        mgr = BspManager(config_paths=[("a", str(path_a))])
+        mgr.initialize()
+        with pytest.raises(SystemExit):
+            mgr.get_bsp_by_name("nonexistent-registry:bsp-alpha")

@@ -106,10 +106,22 @@ def main() -> int:
         parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
         parser.add_argument("--registry", "-r", default=None, help="BSP Registry file (local path)")
         parser.add_argument("--no-color", action="store_true", help="Disable colored output")
-        parser.add_argument("--remote", default=DEFAULT_REMOTE_URL,
-                            help="Remote registry git URL (default: %(default)s)")
+        parser.add_argument(
+            "--remote",
+            action="append",
+            dest="remote",
+            metavar="URL[@BRANCH][@name=NAME]",
+            default=None,
+            help=(
+                "Remote registry git URL.  May be specified multiple times for "
+                "multi-registry mode.  Each value may embed a branch and an "
+                "optional display name using the format "
+                "``URL@BRANCH@name=NAME``.  "
+                "(default: %(const)s)"
+            ),
+        )
         parser.add_argument("--branch", default=DEFAULT_BRANCH,
-                            help="Remote registry branch (default: %(default)s)")
+                            help="Remote registry branch for a single --remote (default: %(default)s)")
         parser.add_argument("--update", dest="update", action="store_true", default=True,
                             help="Update the cached registry clone before use (default)")
         parser.add_argument("--no-update", dest="update", action="store_false",
@@ -128,7 +140,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to build (mutually exclusive with --device/--release)"
+            help="BSP preset to build, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
         )
         build_parser.add_argument(
             "--device", "-d",
@@ -306,7 +318,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to export (mutually exclusive with --device/--release)"
+            help="BSP preset to export, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
         )
         export_parser.add_argument(
             "--device", "-d",
@@ -364,7 +376,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset (mutually exclusive with --device/--release)"
+            help="BSP preset, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
         )
         shell_parser.add_argument(
             "--device", "-d",
@@ -402,7 +414,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset whose artifacts to deploy"
+            help="BSP preset whose artifacts to deploy, optionally prefixed with registry name (registry:preset)."
         )
         deploy_parser.add_argument(
             "--device", "-d",
@@ -496,7 +508,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset whose artifacts to download (mutually exclusive with --device/--release)"
+            help="BSP preset whose artifacts to download, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
         )
         gather_parser.add_argument(
             "--device", "-d",
@@ -585,7 +597,7 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to test (mutually exclusive with --device/--release)"
+            help="BSP preset to test, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
         )
         test_parser.add_argument(
             "--device", "-d",
@@ -658,23 +670,51 @@ def main() -> int:
         if args.registry is not None:
             registry_path = args.registry
             logging.info("Using explicitly provided registry: %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         elif args.local:
             registry_path = local_registry or LOCAL_DEFAULTS[0]
             logging.info("Using local registry (--local): %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         elif local_registry is not None:
             registry_path = local_registry
             logging.info("Using local registry: %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         else:
+            from .registry_fetcher import RemoteRegistrySpec
             fetcher = RegistryFetcher()
-            registry_path = str(fetcher.fetch_registry(
-                repo_url=args.remote,
-                branch=args.branch,
-                update=args.update,
-            ))
-            logging.info("Using remote registry cached at: %s", registry_path)
+            remotes_raw = args.remote or [DEFAULT_REMOTE_URL]
 
-        # Initialize and run BSP manager
-        bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            if len(remotes_raw) == 1 and remotes_raw[0] == DEFAULT_REMOTE_URL and not args.remote:
+                # Single default remote — use the legacy single-registry path for backward compat
+                registry_path = str(fetcher.fetch_registry(
+                    repo_url=DEFAULT_REMOTE_URL,
+                    branch=args.branch,
+                    update=args.update,
+                ))
+                logging.info("Using remote registry cached at: %s", registry_path)
+                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            elif len(remotes_raw) == 1:
+                # Single explicit remote — backward-compat single-registry path
+                spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=args.branch)
+                registry_path = str(fetcher.fetch_registry(
+                    repo_url=spec.url,
+                    branch=spec.branch,
+                    update=args.update,
+                ))
+                logging.info("Using remote registry cached at: %s", registry_path)
+                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            else:
+                # Multiple remotes — multi-registry mode
+                specs = [RemoteRegistrySpec.parse(r, default_branch=args.branch) for r in remotes_raw]
+                registry_pairs = fetcher.fetch_multiple(specs, update=args.update)
+                logging.info(
+                    "Loaded %d remote registries: %s",
+                    len(registry_pairs),
+                    [name for name, _ in registry_pairs],
+                )
+                config_paths = [(name, str(path)) for name, path in registry_pairs]
+                bsp_mgr = BspManager(config_paths=config_paths, verbose=args.verbose)
+
         bsp_mgr.initialize()
 
         # ----------------------------------------------------------------
