@@ -3262,6 +3262,7 @@ class TestFeatureReleaseOverrides:
 
 
 
+class TestPresetLocalConfAndTargets:
     """Tests for BspPreset.local_conf (fragment) and BspPreset.targets support."""
 
     def test_preset_local_conf_merged_into_resolved(
@@ -3368,6 +3369,55 @@ class TestFeatureReleaseOverrides:
         combined = "".join(kas["local_conf_header"].values())
         assert 'DISTRO_FEATURES += "x11"' in combined
         assert 'BB_NUMBER_THREADS = "4"' in combined
+
+    def test_multi_release_preset_targets_propagated_to_each_expansion(self, tmp_dir):
+        """targets list in a multi-release preset is copied to every expanded preset."""
+        yaml_text = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  devices:
+    - slug: rsb3720
+      description: "RSB-3720 (i.MX8)"
+      vendor: advantech
+      soc_vendor: nxp
+      includes:
+        - kas/rsb3720.yaml
+  releases:
+    - slug: ros2-humble-scarthgap
+      description: "ROS 2 Humble on Scarthgap"
+      includes:
+        - kas/ros2-humble-scarthgap.yaml
+    - slug: ros2-jazzy-scarthgap
+      description: "ROS 2 Jazzy on Scarthgap"
+      includes:
+        - kas/ros2-jazzy-scarthgap.yaml
+  bsp:
+    - name: modular-ros-bsp-rsb3720
+      description: "Advantech RSB-3720 (i.MX8)"
+      device: rsb3720
+      releases: [ros2-humble-scarthgap, ros2-jazzy-scarthgap]
+      features: []
+      targets: [ros-image-core]
+      build:
+        path: build/modular-ros-bsp-rsb3720
+"""
+        registry_path = tmp_dir / "bsp-registry.yaml"
+        registry_path.write_text(yaml_text)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+        for release_slug in ("ros2-humble-scarthgap", "ros2-jazzy-scarthgap"):
+            resolved, _ = manager.resolver.resolve_preset(
+                f"modular-ros-bsp-rsb3720-{release_slug}"
+            )
+            assert resolved.targets == ["ros-image-core"], (
+                f"targets not propagated for release {release_slug}"
+            )
 
 
 class TestLavaEnvVarExpansion:
