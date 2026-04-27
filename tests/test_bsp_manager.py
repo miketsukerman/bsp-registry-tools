@@ -3469,6 +3469,50 @@ registry:
         # No CLI --target override: targets come from the composed KAS YAML, not build_project arg
         mock_build.assert_called_once_with(target=None, task=None)
 
+    def test_generate_kas_yaml_includes_are_relative_to_output_dir(
+        self, registry_with_preset_local_conf_and_targets_file, tmp_dir
+    ):
+        """generate_kas_yaml() writes relative include paths so kas-container can resolve them."""
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
+        # Write the composed YAML into the same directory as the registry (tmp_dir)
+        out = tmp_dir / "bsp_composed_test.yml"
+        manager.resolver.generate_kas_yaml(
+            resolved, str(out), base_dir=str(registry_with_preset_local_conf_and_targets_file.parent)
+        )
+        with open(out) as f:
+            kas = yaml.safe_load(f)
+        includes = kas["header"]["includes"]
+        # All includes whose sources live under the registry dir must be relative
+        for inc in includes:
+            assert not inc.startswith("/"), (
+                f"Include path must be relative so kas-container can find it: {inc}"
+            )
+
+    def test_get_kas_manager_creates_temp_file_in_registry_dir(
+        self, registry_with_preset_local_conf_and_targets_file
+    ):
+        """Composed KAS YAML is created next to the registry file, not in /tmp."""
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
+        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
+        try:
+            assert manager._temp_kas_file is not None
+            import os
+            temp_dir = os.path.dirname(manager._temp_kas_file)
+            registry_dir = str(registry_with_preset_local_conf_and_targets_file.parent)
+            assert temp_dir == registry_dir, (
+                f"Temp KAS file must be in registry dir {registry_dir}, got {temp_dir}"
+            )
+        finally:
+            manager._cleanup_temp_kas_file()
+
     def test_multi_release_preset_targets_propagated_to_each_expansion(self, tmp_dir):
         """targets list in a multi-release preset is copied to every expanded preset."""
         yaml_text = """
