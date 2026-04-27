@@ -1030,7 +1030,7 @@ containers:
 | `file` | string | — | Path to Dockerfile for building the image |
 | `args` | list | `[]` | Docker build arguments (`name`/`value` pairs) |
 | `privileged` | boolean | `false` | Run container with elevated privileges. Required for ISAR builds. |
-| `runtime_args` | string | — | Extra flags appended to the container engine `run` invocation (e.g. port-forwarding, `--device` access). Forwarded via `KAS_CONTAINER_ARGS`. |
+| `runtime_args` | string | — | Extra flags appended to the container engine `run` invocation (e.g. port-forwarding, `--device` access). Forwarded via `--runtime-args`. |
 
 ### `registry.devices`
 
