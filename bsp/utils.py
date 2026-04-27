@@ -12,7 +12,7 @@ import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
 
-from .models import Docker, DockerArg, RegistryRoot
+from .models import Docker, DockerArg, DockerVolume, RegistryRoot
 
 # =============================================================================
 # YAML Configuration Parser with Container Support
@@ -92,6 +92,17 @@ def convert_containers_list_to_dict(containers_list: List[Dict[str, Any]]) -> Di
     for container_item in containers_list:
         for container_name, container_config in container_item.items():
             if isinstance(container_config, dict):
+                # Parse volumes list (each entry is a dict with host/container/read_only)
+                raw_volumes = container_config.get('volumes', [])
+                volumes = [
+                    DockerVolume(
+                        host=v['host'],
+                        container=v['container'],
+                        read_only=v.get('read_only', False),
+                    )
+                    for v in raw_volumes
+                    if isinstance(v, dict) and 'host' in v and 'container' in v
+                ]
                 # Convert to Docker dataclass
                 containers_dict[container_name] = Docker(
                     image=container_config.get('image'),
@@ -101,6 +112,7 @@ def convert_containers_list_to_dict(containers_list: List[Dict[str, Any]]) -> Di
                     runtime_args=container_config.get('runtime_args'),
                     privileged=container_config.get('privileged', False),
                     copy=container_config.get('copy', []),
+                    volumes=volumes,
                 )
             else:
                 logging.warning(f"Invalid container configuration for {container_name}, skipping")
@@ -254,7 +266,11 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     try:
         # Use dacite to convert dictionary to strongly-typed dataclass
         # strict=False allows forward compatibility with new fields
-        cfg = dacite.Config(strict=False)
+        # The DockerVolume type hook converts raw dicts to DockerVolume objects.
+        cfg = dacite.Config(
+            strict=False,
+            type_hooks={DockerVolume: lambda d: DockerVolume(**d) if isinstance(d, dict) else d},
+        )
         ast = dacite.from_dict(data_class=RegistryRoot, data=yaml_dict, config=cfg)
         return ast
     except dacite.UnexpectedDataError as e:

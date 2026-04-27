@@ -51,6 +51,22 @@ class DockerArg:
 
 
 @dataclass
+class DockerVolume:
+    """
+    Represents a host-to-container directory mapping (volume mount).
+
+    Attributes:
+        host: Path on the host machine to mount (supports ``$ENV{VAR}`` expansion).
+        container: Absolute path inside the container where the host path is mounted.
+        read_only: When ``True`` the volume is mounted read-only (``:ro`` flag).
+                   Defaults to ``False``.
+    """
+    host: str
+    container: str
+    read_only: bool = False
+
+
+@dataclass
 class Docker:
     """
     Docker configuration for build environment.
@@ -62,13 +78,19 @@ class Docker:
         runtime_args: Extra arguments appended to the container engine
                       ``run`` command (e.g. ``-p 2222:2222
                       --device=/dev/net/tun --cap-add=NET_ADMIN``).
-                      Passed to kas-container via ``KAS_CONTAINER_ARGS``.
+                      Passed to kas-container via ``--runtime-args``.
         privileged: Run container in privileged mode (enables --isar for kas-container)
         copy: List of ``{source: destination}`` file-copy entries executed
               before every build that uses this container.  Both paths are
               resolved relative to the registry file's parent directory.
               Entries are merged between named-environment copy and
               device-level copy entries.
+        volumes: List of host-to-container directory mappings.  Each entry
+                 specifies a ``host`` path, a ``container`` path, and an
+                 optional ``read_only`` flag.  Host paths support
+                 ``$ENV{VAR}`` expansion.  Entries are converted to
+                 ``-v host:container[:ro]`` flags passed via
+                 ``--runtime-args``.
     """
     image: Optional[str]
     file: Optional[str]
@@ -76,6 +98,7 @@ class Docker:
     runtime_args: Optional[str] = None
     privileged: bool = False
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
+    volumes: List[DockerVolume] = field(default_factory=empty_list)
 
 
 @dataclass
@@ -181,20 +204,31 @@ class BspBuild:
     Build configuration for a BSP preset.
 
     When present on a ``BspPreset``, this section controls the container
-    used for the build and the output directory.  Both fields are optional:
+    used for the build and the output directory.  All fields are optional:
 
-    * If ``container`` is omitted the container is taken from the release's
-      named environment (or the ``"default"`` environment as a fallback).
+    * If ``environment`` is set, the named environment it references is used
+      for this preset instead of the one derived from the release.  The
+      environment's container, variables, and copy entries are applied.
+    * If ``container`` is set it takes priority over any container that
+      would otherwise come from the named environment (release-level or
+      preset-level ``environment``).
     * If ``path`` is omitted the resolver auto-composes a path from the
       distro slug, device slug, release slug, and any feature slugs under
       the top-level ``build/`` directory.
 
     Attributes:
-        container: Optional container name (references the top-level
-                   ``containers`` dict).
+        environment: Optional name of the named environment to use for this
+                     preset (references ``RegistryRoot.environments``).
+                     Overrides the named environment derived from the
+                     release.  When omitted the release's own environment
+                     field (or the ``"default"`` fallback) is used.
+        container: Optional container name override (references the
+                   top-level ``containers`` dict).  When set it takes
+                   priority over the container from the named environment.
         path: Optional build output directory.  When ``None`` the resolver
               derives the path automatically.
     """
+    environment: Optional[str] = None
     container: Optional[str] = None
     path: Optional[str] = None
 
