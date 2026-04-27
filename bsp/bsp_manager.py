@@ -928,8 +928,9 @@ class BspManager:
             resolver.ensure_directory(sstate)
 
         # Determine KAS file list: generate a composed YAML when we have
-        # local_conf additions so that everything is in a single entry-point.
-        if resolved.local_conf:
+        # local_conf additions or preset-level target overrides so that
+        # everything is in a single entry-point.
+        if resolved.local_conf or resolved.targets:
             temp_fd, temp_path = tempfile.mkstemp(
                 prefix="bsp_composed_", suffix=".yml"
             )
@@ -1576,7 +1577,7 @@ class BspManager:
 
         # Use a temporary build directory for export
         with tempfile.TemporaryDirectory(prefix="bsp_export_") as temp_dir:
-            if resolved.local_conf:
+            if resolved.local_conf or resolved.targets:
                 temp_fd, temp_path = tempfile.mkstemp(
                     prefix="bsp_composed_", suffix=".yml"
                 )
