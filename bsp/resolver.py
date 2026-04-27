@@ -1115,8 +1115,10 @@ class V2Resolver:
         Write a temporary KAS YAML file that combines all resolved includes
         and local_conf additions into a single entry-point file.
 
-        Include paths are converted to absolute paths so the temp file can
-        reside anywhere (e.g. /tmp).
+        Include paths are written relative to the output file's directory so
+        that kas-container (which mounts that directory as /repo) can resolve
+        them inside the container.  Includes whose absolute path cannot be
+        expressed relative to the output directory are kept as absolute paths.
 
         Args:
             resolved: Resolved build configuration
@@ -1125,20 +1127,25 @@ class V2Resolver:
                       (defaults to the current working directory)
         """
         base = Path(base_dir).resolve() if base_dir and base_dir.strip() else Path.cwd()
+        output_dir = Path(output_path).parent.resolve()
 
-        # Convert all include paths to absolute
-        abs_includes: List[str] = []
+        # Convert include paths to relative (relative to the output file dir)
+        # so that kas-container can find them when the output directory is
+        # mounted as /repo.  Fall back to absolute for out-of-tree includes.
+        includes: List[str] = []
         for inc in resolved.kas_files:
             inc_path = Path(inc)
-            if inc_path.is_absolute():
-                abs_includes.append(str(inc_path))
-            else:
-                abs_includes.append(str((base / inc_path).resolve()))
+            abs_inc = inc_path if inc_path.is_absolute() else (base / inc_path).resolve()
+            try:
+                includes.append(str(abs_inc.relative_to(output_dir)))
+            except ValueError:
+                # Include lives outside the output directory — keep absolute.
+                includes.append(str(abs_inc))
 
         kas_config: dict = {
             "header": {
                 "version": 14,
-                "includes": abs_includes,
+                "includes": includes,
             }
         }
 

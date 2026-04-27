@@ -932,7 +932,8 @@ class BspManager:
         # everything is in a single entry-point.
         if resolved.local_conf or resolved.targets:
             temp_fd, temp_path = tempfile.mkstemp(
-                prefix="bsp_composed_", suffix=".yml"
+                prefix="bsp_composed_", suffix=".yml",
+                dir=str(self.config_path.parent),
             )
             os.close(temp_fd)
             self.resolver.generate_kas_yaml(
@@ -1288,7 +1289,8 @@ class BspManager:
         with tempfile.TemporaryDirectory(prefix="bsp_export_") as temp_dir:
             if resolved.local_conf or resolved.targets:
                 temp_fd, temp_path = tempfile.mkstemp(
-                    prefix="bsp_composed_", suffix=".yml"
+                    prefix="bsp_composed_", suffix=".yml",
+                    dir=str(self.config_path.parent),
                 )
                 os.close(temp_fd)
                 self.resolver.generate_kas_yaml(
