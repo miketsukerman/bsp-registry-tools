@@ -5,7 +5,6 @@ Tests for configuration data classes and factory functions (v2.0 schema).
 from bsp import (
     EnvironmentVariable,
     DockerArg,
-    DockerVolume,
     Docker,
     Specification,
     GlobalEnvironment,
@@ -106,56 +105,9 @@ class TestSharedDataClasses:
         )
         assert docker.runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
 
-    def test_docker_volumes_default_empty(self):
-        docker = Docker(image="my-image:latest", file=None)
-        assert docker.volumes == []
-
-    def test_docker_volumes_can_be_set(self):
-        vol = DockerVolume(host="/host/path", container="/container/path")
-        docker = Docker(image="my-image:latest", file=None, volumes=[vol])
-        assert len(docker.volumes) == 1
-        assert docker.volumes[0].host == "/host/path"
-        assert docker.volumes[0].container == "/container/path"
-
     def test_specification(self):
         spec = Specification(version="2.0")
         assert spec.version == "2.0"
-
-
-# =============================================================================
-# Tests for DockerVolume
-# =============================================================================
-
-class TestDockerVolume:
-    def test_defaults(self):
-        vol = DockerVolume(host="/host/path", container="/container/path")
-        assert vol.host == "/host/path"
-        assert vol.container == "/container/path"
-        assert vol.read_only is False
-
-    def test_read_only_true(self):
-        vol = DockerVolume(host="/host/data", container="/data", read_only=True)
-        assert vol.read_only is True
-
-    def test_read_only_false_explicit(self):
-        vol = DockerVolume(host="/host/data", container="/data", read_only=False)
-        assert vol.read_only is False
-
-    def test_dacite_conversion(self):
-        import dacite
-        from bsp.models import DockerVolume as DV
-        data = {"host": "/my/host", "container": "/my/container", "read_only": True}
-        vol = dacite.from_dict(data_class=DV, data=data)
-        assert vol.host == "/my/host"
-        assert vol.container == "/my/container"
-        assert vol.read_only is True
-
-    def test_dacite_conversion_default_read_only(self):
-        import dacite
-        from bsp.models import DockerVolume as DV
-        data = {"host": "/my/host", "container": "/my/container"}
-        vol = dacite.from_dict(data_class=DV, data=data)
-        assert vol.read_only is False
 
 
 # =============================================================================

@@ -499,39 +499,6 @@ class TestBspManagerBuildByComponents:
             manager.build_bsp("imx8-scarthgap-ota", build_path_override=custom_path)
         mock_prepare.assert_called_once_with(custom_path)
 
-    def test_build_bsp_with_extra_features(self, registry_with_features_file):
-        """build_bsp() with feature_slugs merges extra features into the preset's features."""
-        manager = BspManager(config_path=str(registry_with_features_file))
-        manager.initialize()
-        with patch("bsp.bsp_manager.build_docker"), \
-             patch("bsp.kas_manager.KasManager.build_project") as mock_build, \
-             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
-             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
-             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
-            manager.build_bsp("imx8-scarthgap-ota", feature_slugs=["secure-boot"])
-        mock_build.assert_called_once()
-
-    def test_build_bsp_extra_features_included_in_resolved(self, registry_with_features_file):
-        """Extra features passed to build_bsp() appear in the resolved config."""
-        manager = BspManager(config_path=str(registry_with_features_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset(
-            "imx8-scarthgap-ota", extra_feature_slugs=["secure-boot"]
-        )
-        feature_slugs = [f.slug for f in resolved.features]
-        assert "ota" in feature_slugs
-        assert "secure-boot" in feature_slugs
-
-    def test_build_bsp_duplicate_features_not_repeated(self, registry_with_features_file):
-        """Extra features that duplicate preset features are not added twice."""
-        manager = BspManager(config_path=str(registry_with_features_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset(
-            "imx8-scarthgap-ota", extra_feature_slugs=["ota"]
-        )
-        feature_slugs = [f.slug for f in resolved.features]
-        assert feature_slugs.count("ota") == 1
-
 
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):
@@ -945,25 +912,25 @@ class TestRuntimeArgs:
         assert container.runtime_args == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
 
     def test_runtime_args_propagated_to_kas_manager(self, registry_with_runtime_args_file):
-        """runtime_args from container is forwarded to KasManager via --runtime-args."""
+        """runtime_args from container is forwarded to KasManager as KAS_CONTAINER_ARGS."""
         manager = BspManager(config_path=str(registry_with_runtime_args_file))
         manager.initialize()
         resolved, _ = manager.resolver.resolve_preset("isar-qemu-v0.11")
         kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=True)
         env = kas_mgr._get_environment_with_container_vars()
-        assert kas_mgr._build_runtime_args_str(env) == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
+        assert env.get("KAS_CONTAINER_ARGS") == "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
         manager._cleanup_temp_kas_file()
 
     def test_runtime_args_absent_for_container_without_them(
         self, registry_with_runtime_args_file
     ):
-        """--runtime-args is absent when container has no runtime_args."""
+        """KAS_CONTAINER_ARGS is absent when container has no runtime_args."""
         manager = BspManager(config_path=str(registry_with_runtime_args_file))
         manager.initialize()
         resolved = manager.resolver.resolve("plain-device", "isar-v0.11")
         kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=True)
         env = kas_mgr._get_environment_with_container_vars()
-        assert kas_mgr._build_runtime_args_str(env) is None
+        assert "KAS_CONTAINER_ARGS" not in env
         manager._cleanup_temp_kas_file()
 
 
@@ -2729,99 +2696,6 @@ class TestPresetContainerOverrideWithNamedEnvCopy:
 
 
 # =============================================================================
-# Tests for build.environment on BspPreset
-# =============================================================================
-
-class TestPresetBuildEnvironmentOverride:
-    """Verify that build.environment on a BSP preset selects a named environment."""
-
-    def test_build_env_selects_container(self, registry_with_preset_env_override_file):
-        """build.environment makes the preset use the specified env's container."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
-        assert resolved.container is not None
-        assert resolved.container.image == "test/debian-special:latest", (
-            "build.environment should select the named env's container."
-        )
-
-    def test_build_env_selects_variables(self, registry_with_preset_env_override_file):
-        """build.environment applies the env's variables to the resolved env list."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
-        env_names = [v.name for v in resolved.env]
-        assert "SPECIAL_VAR" in env_names, (
-            "build.environment should apply the named env's variables."
-        )
-        dl_values = [v.value for v in resolved.env if v.name == "DL_DIR"]
-        assert dl_values == ["/tmp/special-downloads"], (
-            "build.environment variables should override the default env's variables."
-        )
-
-    def test_build_env_selects_copy(self, registry_with_preset_env_override_file):
-        """build.environment copy entries appear in the resolved copy list."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env")
-        copy_sources = [list(e.keys())[0] for e in resolved.copy]
-        assert "special/setup.sh" in copy_sources, (
-            "build.environment copy entries must be present in resolved.copy."
-        )
-
-    def test_build_container_overrides_build_env_container(
-        self, registry_with_preset_env_override_file
-    ):
-        """build.container takes priority over the container from build.environment."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env-and-container")
-        assert resolved.container is not None
-        assert resolved.container.image == "test/custom:latest", (
-            "build.container must override the container from build.environment."
-        )
-
-    def test_build_container_with_build_env_keeps_env_variables(
-        self, registry_with_preset_env_override_file
-    ):
-        """When both build.environment and build.container are set, env variables still come from build.environment."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-with-build-env-and-container")
-        env_names = [v.name for v in resolved.env]
-        assert "SPECIAL_VAR" in env_names, (
-            "Env variables from build.environment should be kept even when build.container overrides the container."
-        )
-
-    def test_build_env_does_not_affect_preset_without_it(
-        self, registry_with_preset_env_override_file
-    ):
-        """A preset without build.environment still uses the release/default env."""
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("preset-default-env")
-        assert resolved.container is not None
-        assert resolved.container.image == "test/debian:latest", (
-            "Without build.environment the default named env's container is used."
-        )
-
-    def test_unknown_build_environment_exits(self, registry_with_preset_env_override_file):
-        """resolve_preset() exits when build.environment names a non-existent environment."""
-        import yaml as _yaml
-        data = _yaml.safe_load(registry_with_preset_env_override_file.read_text())
-        for preset in data["registry"]["bsp"]:
-            if preset["name"] == "preset-with-build-env":
-                preset["build"]["environment"] = "does-not-exist"
-                break
-        registry_with_preset_env_override_file.write_text(_yaml.dump(data))
-
-        manager = BspManager(config_path=str(registry_with_preset_env_override_file))
-        manager.initialize()
-        with pytest.raises(SystemExit):
-            manager.resolver.resolve_preset("preset-with-build-env")
-
-
-# =============================================================================
 # Tests for container-level copy field (Docker.copy)
 # =============================================================================
 
@@ -3262,7 +3136,6 @@ class TestFeatureReleaseOverrides:
 
 
 
-class TestPresetLocalConfAndTargets:
     """Tests for BspPreset.local_conf (fragment) and BspPreset.targets support."""
 
     def test_preset_local_conf_merged_into_resolved(
@@ -3369,198 +3242,6 @@ class TestPresetLocalConfAndTargets:
         combined = "".join(kas["local_conf_header"].values())
         assert 'DISTRO_FEATURES += "x11"' in combined
         assert 'BB_NUMBER_THREADS = "4"' in combined
-
-    def test_targets_only_preset_generates_composed_kas_yaml(
-        self, registry_with_preset_local_conf_and_targets_file, tmp_dir
-    ):
-        """A preset with targets but no local_conf still produces a composed KAS YAML."""
-        manager = BspManager(
-            config_path=str(registry_with_preset_local_conf_and_targets_file)
-        )
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
-        # Verify the resolved config really has targets and no local_conf
-        assert resolved.targets == ["ros-image-core"]
-        assert resolved.local_conf  # this preset also has local_conf - skip straight to a
-        # targets-only preset by temporarily clearing local_conf
-        resolved.local_conf = []
-        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
-        try:
-            # A temp KAS file must have been generated because targets is non-empty
-            assert manager._temp_kas_file is not None
-            import yaml as _yaml
-            with open(manager._temp_kas_file) as f:
-                kas = _yaml.safe_load(f)
-            assert "target" in kas
-            assert kas["target"] == ["ros-image-core"]
-        finally:
-            manager._cleanup_temp_kas_file()
-
-    def test_targets_only_no_local_conf_preset_composed_yaml(self, tmp_dir):
-        """A preset with only targets (no local_conf) triggers composed KAS YAML generation."""
-        yaml_text = """
-specification:
-  version: "2.0"
-containers:
-  debian-bookworm:
-    image: "test/debian:bookworm"
-    file: null
-    args: []
-registry:
-  devices:
-    - slug: rsb3720
-      description: "RSB-3720 (i.MX8)"
-      vendor: advantech
-      soc_vendor: nxp
-      includes:
-        - kas/rsb3720.yaml
-  releases:
-    - slug: ros2-humble-scarthgap
-      description: "ROS 2 Humble on Scarthgap"
-      includes:
-        - kas/ros2-humble-scarthgap.yaml
-  bsp:
-    - name: modular-ros-bsp-rsb3720
-      description: "Advantech RSB-3720 (i.MX8)"
-      device: rsb3720
-      release: ros2-humble-scarthgap
-      features: []
-      targets: [ros-image-core]
-      build:
-        container: "debian-bookworm"
-        path: build/modular-ros-bsp-rsb3720
-"""
-        registry_path = tmp_dir / "bsp-registry.yaml"
-        registry_path.write_text(yaml_text)
-        manager = BspManager(config_path=str(registry_path))
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
-        # Confirm no local_conf lines, only targets
-        assert resolved.local_conf == []
-        assert resolved.targets == ["ros-image-core"]
-
-        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
-        try:
-            assert manager._temp_kas_file is not None, (
-                "A composed KAS YAML must be generated when targets is non-empty"
-            )
-            import yaml as _yaml
-            with open(manager._temp_kas_file) as f:
-                kas = _yaml.safe_load(f)
-            assert "target" in kas
-            assert kas["target"] == ["ros-image-core"]
-        finally:
-            manager._cleanup_temp_kas_file()
-
-    def test_build_bsp_with_preset_targets_uses_composed_yaml(
-        self, registry_with_preset_local_conf_and_targets_file
-    ):
-        """build_bsp() passes no explicit --target when preset already embeds targets in KAS YAML."""
-        manager = BspManager(
-            config_path=str(registry_with_preset_local_conf_and_targets_file)
-        )
-        manager.initialize()
-        with patch("bsp.bsp_manager.build_docker"), \
-             patch("bsp.kas_manager.KasManager.build_project") as mock_build, \
-             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
-             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
-             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
-            manager.build_bsp("modular-ros-bsp-rsb3720")
-        # No CLI --target override: targets come from the composed KAS YAML, not build_project arg
-        mock_build.assert_called_once_with(target=None, task=None)
-
-    def test_generate_kas_yaml_includes_are_relative_to_output_dir(
-        self, registry_with_preset_local_conf_and_targets_file, tmp_dir
-    ):
-        """generate_kas_yaml() writes relative include paths so kas-container can resolve them."""
-        manager = BspManager(
-            config_path=str(registry_with_preset_local_conf_and_targets_file)
-        )
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
-        # Write the composed YAML into the same directory as the registry (tmp_dir)
-        out = tmp_dir / "bsp_composed_test.yml"
-        manager.resolver.generate_kas_yaml(
-            resolved, str(out), base_dir=str(registry_with_preset_local_conf_and_targets_file.parent)
-        )
-        with open(out) as f:
-            kas = yaml.safe_load(f)
-        includes = kas["header"]["includes"]
-        # All includes whose sources live under the registry dir must be relative
-        for inc in includes:
-            assert not inc.startswith("/"), (
-                f"Include path must be relative so kas-container can find it: {inc}"
-            )
-
-    def test_get_kas_manager_creates_temp_file_in_registry_dir(
-        self, registry_with_preset_local_conf_and_targets_file
-    ):
-        """Composed KAS YAML is created next to the registry file, not in /tmp."""
-        manager = BspManager(
-            config_path=str(registry_with_preset_local_conf_and_targets_file)
-        )
-        manager.initialize()
-        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
-        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
-        try:
-            assert manager._temp_kas_file is not None
-            import os
-            temp_dir = os.path.dirname(manager._temp_kas_file)
-            registry_dir = str(registry_with_preset_local_conf_and_targets_file.parent)
-            assert temp_dir == registry_dir, (
-                f"Temp KAS file must be in registry dir {registry_dir}, got {temp_dir}"
-            )
-        finally:
-            manager._cleanup_temp_kas_file()
-
-    def test_multi_release_preset_targets_propagated_to_each_expansion(self, tmp_dir):
-        """targets list in a multi-release preset is copied to every expanded preset."""
-        yaml_text = """
-specification:
-  version: "2.0"
-containers:
-  debian-bookworm:
-    image: "test/debian:bookworm"
-    file: null
-    args: []
-registry:
-  devices:
-    - slug: rsb3720
-      description: "RSB-3720 (i.MX8)"
-      vendor: advantech
-      soc_vendor: nxp
-      includes:
-        - kas/rsb3720.yaml
-  releases:
-    - slug: ros2-humble-scarthgap
-      description: "ROS 2 Humble on Scarthgap"
-      includes:
-        - kas/ros2-humble-scarthgap.yaml
-    - slug: ros2-jazzy-scarthgap
-      description: "ROS 2 Jazzy on Scarthgap"
-      includes:
-        - kas/ros2-jazzy-scarthgap.yaml
-  bsp:
-    - name: modular-ros-bsp-rsb3720
-      description: "Advantech RSB-3720 (i.MX8)"
-      device: rsb3720
-      releases: [ros2-humble-scarthgap, ros2-jazzy-scarthgap]
-      features: []
-      targets: [ros-image-core]
-      build:
-        path: build/modular-ros-bsp-rsb3720
-"""
-        registry_path = tmp_dir / "bsp-registry.yaml"
-        registry_path.write_text(yaml_text)
-        manager = BspManager(config_path=str(registry_path))
-        manager.initialize()
-        for release_slug in ("ros2-humble-scarthgap", "ros2-jazzy-scarthgap"):
-            resolved, _ = manager.resolver.resolve_preset(
-                f"modular-ros-bsp-rsb3720-{release_slug}"
-            )
-            assert resolved.targets == ["ros-image-core"], (
-                f"targets not propagated for release {release_slug}"
-            )
 
 
 class TestLavaEnvVarExpansion:

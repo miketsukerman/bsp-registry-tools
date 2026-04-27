@@ -8,7 +8,6 @@ from unittest.mock import patch, MagicMock
 
 from bsp import (
     Docker,
-    DockerVolume,
     RegistryRoot,
     read_yaml_file,
     parse_yaml_file,
@@ -219,89 +218,6 @@ class TestConvertContainersListToDict:
         ]
         result = convert_containers_list_to_dict(containers_list)
         assert result["net-container"].runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
-
-    def test_container_volumes_default_empty(self):
-        containers_list = [
-            {"my-container": {"image": "my-image:latest", "file": "Dockerfile", "args": []}},
-        ]
-        result = convert_containers_list_to_dict(containers_list)
-        assert result["my-container"].volumes == []
-
-    def test_container_volumes_parsed(self):
-        containers_list = [
-            {
-                "vol-container": {
-                    "image": "vol:latest",
-                    "args": [],
-                    "volumes": [
-                        {"host": "/host/data", "container": "/data"},
-                        {"host": "/host/cache", "container": "/cache", "read_only": True},
-                    ],
-                }
-            },
-        ]
-        result = convert_containers_list_to_dict(containers_list)
-        vols = result["vol-container"].volumes
-        assert len(vols) == 2
-        assert isinstance(vols[0], DockerVolume)
-        assert vols[0].host == "/host/data"
-        assert vols[0].container == "/data"
-        assert vols[0].read_only is False
-        assert vols[1].host == "/host/cache"
-        assert vols[1].container == "/cache"
-        assert vols[1].read_only is True
-
-    def test_container_volumes_invalid_entries_skipped(self):
-        """Volume entries missing required keys are silently skipped."""
-        containers_list = [
-            {
-                "vol-container": {
-                    "image": "vol:latest",
-                    "args": [],
-                    "volumes": [
-                        {"host": "/host/data", "container": "/data"},  # valid
-                        {"host": "/missing-container-key"},             # invalid: no 'container'
-                        "not-a-dict",                                   # invalid: not a dict
-                    ],
-                }
-            },
-        ]
-        result = convert_containers_list_to_dict(containers_list)
-        vols = result["vol-container"].volumes
-        assert len(vols) == 1
-        assert vols[0].host == "/host/data"
-
-    def test_get_registry_dict_format_volumes(self, tmp_dir):
-        """Dict-format containers (parsed via dacite) should yield DockerVolume objects."""
-        yaml_content = """
-specification:
-  version: "2.0"
-containers:
-  my-container:
-    image: "my:latest"
-    volumes:
-      - host: "/host/path"
-        container: "/container/path"
-      - host: "/host/ro"
-        container: "/ro"
-        read_only: true
-registry:
-  devices: []
-  releases: []
-  features: []
-  bsp: []
-"""
-        reg_file = tmp_dir / "registry.yaml"
-        reg_file.write_text(yaml_content)
-        result = get_registry_from_yaml_file(reg_file)
-        vols = result.containers["my-container"].volumes
-        assert len(vols) == 2
-        assert isinstance(vols[0], DockerVolume)
-        assert vols[0].host == "/host/path"
-        assert vols[0].container == "/container/path"
-        assert vols[0].read_only is False
-        assert vols[1].host == "/host/ro"
-        assert vols[1].read_only is True
 
     def test_get_registry_distro_section(self, registry_with_distro_file):
         result = get_registry_from_yaml_file(registry_with_distro_file)

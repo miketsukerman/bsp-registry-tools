@@ -928,12 +928,10 @@ class BspManager:
             resolver.ensure_directory(sstate)
 
         # Determine KAS file list: generate a composed YAML when we have
-        # local_conf additions or preset-level target overrides so that
-        # everything is in a single entry-point.
-        if resolved.local_conf or resolved.targets:
+        # local_conf additions so that everything is in a single entry-point.
+        if resolved.local_conf:
             temp_fd, temp_path = tempfile.mkstemp(
-                prefix="bsp_composed_", suffix=".yml",
-                dir=str(self.config_path.parent),
+                prefix="bsp_composed_", suffix=".yml"
             )
             os.close(temp_fd)
             self.resolver.generate_kas_yaml(
@@ -965,11 +963,6 @@ class BspManager:
             if resolved.container and use_container
             else None
         )
-        container_volumes = (
-            resolved.container.volumes
-            if resolved.container and use_container
-            else []
-        )
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )
@@ -982,13 +975,11 @@ class BspManager:
             use_container=use_container,
             container_image=container_image,
             container_runtime_args=container_runtime_args,
-            container_volumes=container_volumes,
             container_privileged=(
                 resolved.container.privileged if resolved.container and use_container else False
             ),
             search_paths=[str(self.config_path.parent)],
             env_manager=env_mgr,
-            verbose=self.verbose,
         )
         return kas_mgr
 
@@ -1095,7 +1086,6 @@ class BspManager:
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
-        feature_slugs: Optional[List[str]] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1108,13 +1098,12 @@ class BspManager:
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
-            feature_slugs: Additional feature slugs to enable on top of those in the preset
 
         Raises:
             SystemExit: If preset not found or build fails
         """
         logging.info(f"{'Checking out' if checkout_only else 'Building'} BSP preset: {bsp_name}")
-        resolved, preset = self.resolver.resolve_preset(bsp_name, extra_feature_slugs=feature_slugs)
+        resolved, preset = self.resolver.resolve_preset(bsp_name)
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
@@ -1578,10 +1567,9 @@ class BspManager:
 
         # Use a temporary build directory for export
         with tempfile.TemporaryDirectory(prefix="bsp_export_") as temp_dir:
-            if resolved.local_conf or resolved.targets:
+            if resolved.local_conf:
                 temp_fd, temp_path = tempfile.mkstemp(
-                    prefix="bsp_composed_", suffix=".yml",
-                    dir=str(self.config_path.parent),
+                    prefix="bsp_composed_", suffix=".yml"
                 )
                 os.close(temp_fd)
                 self.resolver.generate_kas_yaml(

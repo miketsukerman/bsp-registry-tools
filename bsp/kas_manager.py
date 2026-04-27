@@ -13,7 +13,6 @@ from typing import List, Optional, Dict, Any
 import yaml
 
 from .environment import EnvironmentManager
-from .models import DockerVolume
 from .path_resolver import resolver
 
 # =============================================================================
@@ -36,9 +35,7 @@ class KasManager:
                  container_engine: str = None, container_image: str = None,
                  container_runtime_args: str = None,
                  container_privileged: bool = False,
-                 container_volumes: List[DockerVolume] = None,
-                 search_paths: List[str] = None, env_manager: EnvironmentManager = None,
-                 verbose: bool = False):
+                 search_paths: List[str] = None, env_manager: EnvironmentManager = None):
         """
         Initialize KAS manager with configuration.
 
@@ -52,13 +49,8 @@ class KasManager:
             container_image: Custom container image for kas-container
             container_runtime_args: Extra arguments appended to the container engine run command
             container_privileged: Run container in privileged mode (enables --isar flag)
-            container_volumes: List of host-to-container directory mappings; each entry is
-                               converted to a ``-v host:container[:ro]`` flag passed via
-                               ``--runtime-args``. Host paths support ``$ENV{VAR}``
-                               expansion.
             search_paths: Additional paths to search for configuration files
             env_manager: Environment configuration manager
-            verbose: If True, pass ``-l debug`` to kas-container for detailed logging
 
         Raises:
             SystemExit: If initialization fails due to invalid parameters
@@ -74,12 +66,10 @@ class KasManager:
         self.container_image = container_image
         self.container_runtime_args = container_runtime_args
         self.container_privileged = container_privileged
-        self.container_volumes = container_volumes or []
         self.search_paths = search_paths or []
         self.download_dir = download_dir
         self.sstate_dir = sstate_dir
         self.env_manager = env_manager or EnvironmentManager()
-        self.verbose = verbose
 
         # Add common search paths for configuration files
         self.search_paths.extend([
@@ -116,9 +106,6 @@ class KasManager:
             # (granting all capabilities including SYS_ADMIN and MKNOD)
             if self.container_privileged:
                 cmd.append("--isar")
-            # Enable kas-container debug logging in verbose mode
-            if self.verbose:
-                cmd.extend(["-l", "debug"])
             return cmd
         else:
             return ["kas"]
@@ -129,14 +116,6 @@ class KasManager:
 
         Sets up cache directories and container-specific environment
         variables required for KAS operation.
-
-        When running inside a container (``use_container=True``) the method
-        sets ``KAS_CONTAINER_ENGINE`` and ``KAS_CONTAINER_IMAGE`` when
-        configured.  All environment variables from ``env_manager`` and named
-        environment model sections are resolved and placed directly in the
-        process environment so that ``kas-container`` inherits them.  Volume
-        mounts and explicit ``container_runtime_args`` are forwarded via the
-        ``--runtime-args`` CLI option in :meth:`_run_kas_command`.
 
         Returns:
             Environment dictionary with KAS-specific variables configured
@@ -158,94 +137,19 @@ class KasManager:
             if sstate_dir:
                 env['SSTATE_DIR'] = sstate_dir
 
-        # Apply environment manager so that env_manager variables are resolved
-        # and available for _build_runtime_args_str().
-        env = self.env_manager.setup_environment(env)
-
         # Set container-specific environment variables
         if self.use_container:
             if self.container_engine:
                 env['KAS_CONTAINER_ENGINE'] = self.container_engine
             if self.container_image:
                 env['KAS_CONTAINER_IMAGE'] = self.container_image
+            if self.container_runtime_args:
+                env['KAS_CONTAINER_ARGS'] = self.container_runtime_args
+
+        # Apply environment manager configuration (overrides any previous settings)
+        env = self.env_manager.setup_environment(env)
 
         return env
-
-    def _build_runtime_args_str(self, env: dict) -> Optional[str]:
-        """
-        Build the value to pass to ``kas-container --runtime-args``.
-
-        Collects container runtime flags in order:
-
-        1. Any ``KAS_RUNTIME_ARGS`` already present in *env* (e.g. set by
-           ``env_manager`` or inherited from the host shell).
-        2. Explicit ``container_runtime_args`` from the registry config.
-        3. Volume mounts as ``-v host:container[:ro]`` flags.
-
-        All environment variables — whether they come from the registry's
-        ``environment`` sections, named environment model sections, or the
-        host shell — are passed to ``kas-container`` via the process
-        environment (see :meth:`_get_environment_with_container_vars`).
-        They are **not** duplicated as ``-e`` flags inside ``--runtime-args``.
-
-        Args:
-            env: Resolved environment dictionary (from
-                 :meth:`_get_environment_with_container_vars`).
-
-        Returns:
-            Space-joined flags string, or ``None`` if there is nothing to
-            pass.
-        """
-        if not self.use_container:
-            return None
-
-        parts: List[str] = []
-
-        # Honor any KAS_RUNTIME_ARGS already set via env_manager or host shell
-        existing = env.get('KAS_RUNTIME_ARGS', '').strip()
-        if existing:
-            parts.append(existing)
-
-        if self.container_runtime_args:
-            parts.append(self.container_runtime_args)
-
-        for vol in self.container_volumes:
-            expanded_host = self._expand_env_vars(vol.host)
-            flag = f"-v {expanded_host}:{vol.container}"
-            if vol.read_only:
-                flag += ":ro"
-            parts.append(flag)
-
-        return " ".join(parts) if parts else None
-
-    def _expand_env_vars(self, value: str) -> str:
-        """
-        Expand ``$ENV{VAR}`` patterns and standard ``$VAR`` / ``%VAR%`` patterns
-        in *value*, consistent with ``EnvironmentManager``.
-
-        Reuses ``EnvironmentManager.ENV_VAR_PATTERN`` so the two implementations
-        cannot diverge.  A warning is logged for any ``$ENV{VAR}`` that is not
-        set; the token is replaced with an empty string so the volume flag is
-        still produced.
-
-        Args:
-            value: String that may contain ``$ENV{VAR}`` tokens.
-
-        Returns:
-            Expanded string.
-        """
-        def _replace(match):
-            var_name = match.group(1)
-            if var_name in os.environ:
-                return os.environ[var_name]
-            logging.warning(
-                f"Environment variable '{var_name}' is not set; "
-                f"using empty string for expansion in volume host path: {value}"
-            )
-            return ""
-
-        expanded = EnvironmentManager.ENV_VAR_PATTERN.sub(_replace, value)
-        return os.path.expandvars(expanded)
 
     def _resolve_kas_file(self, kas_file: str) -> str:
         """
@@ -542,18 +446,8 @@ class KasManager:
         Raises:
             SystemExit: If command fails or is interrupted by user
         """
+        cmd = self._get_kas_command() + args
         env = self._get_environment_with_container_vars()
-
-        cmd = self._get_kas_command()
-        if self.use_container:
-            runtime_args = self._build_runtime_args_str(env)
-            # Remove KAS_RUNTIME_ARGS from the environment — all flags are
-            # now forwarded via --runtime-args on the command line instead.
-            env.pop('KAS_RUNTIME_ARGS', None)
-            if runtime_args:
-                cmd = cmd + ["--runtime-args", runtime_args]
-                logging.debug(f"--runtime-args: {runtime_args}")
-        cmd = cmd + args
 
         logging.info(f"Running: {' '.join(cmd)}")
         logging.info(f"Build directory: {self.build_dir}")

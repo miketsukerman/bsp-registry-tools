@@ -209,15 +209,8 @@ containers:
     file: null
     args: []
     # Optional: extra arguments appended to the container engine `run` command.
-    # Passed to kas-container via --runtime-args.
+    # Passed to kas-container via the KAS_CONTAINER_ARGS environment variable.
     runtime_args: "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
-    # Optional: host-to-container directory mounts. Host paths support $ENV{} expansion.
-    volumes:
-      - host: "$ENV{HOME}/sstate-cache"
-        container: "/sstate-cache"
-      - host: "/opt/downloads"
-        container: "/downloads"
-        read_only: true
 ```
 
 ### `containers[*]` fields
@@ -227,16 +220,7 @@ containers:
 | `image`         | string (opt.) | Docker image to use at runtime                                 |
 | `file`          | string (opt.) | Path to Dockerfile for `docker build`                          |
 | `args`          | list          | Docker build arguments (`name`/`value` pairs)                  |
-| `runtime_args`  | string (opt.) | Extra flags appended to the container engine `run` invocation. Forwarded to `kas-container` via `--runtime-args`. Useful for port-forwarding, device access (`--device`), or capability grants (`--cap-add`). |
-| `volumes`       | list (opt.)   | List of host-to-container directory mappings. Each entry is converted to a `-v host:container[:ro]` flag passed via `--runtime-args`. Host paths support `$ENV{VAR}` expansion. |
-
-### `containers[*].volumes[*]` fields
-
-| Field        | Type           | Description                                                                              |
-|--------------|----------------|------------------------------------------------------------------------------------------|
-| `host`       | string         | Path on the host machine to mount. Supports `$ENV{VAR}` expansion.                      |
-| `container`  | string         | Absolute path inside the container where the host directory is mounted.                  |
-| `read_only`  | bool (opt.)    | When `true`, the volume is mounted read-only (`:ro` flag). Defaults to `false`.          |
+| `runtime_args`  | string (opt.) | Extra flags appended to the container engine `run` invocation. Forwarded to `kas-container` via `KAS_CONTAINER_ARGS`. Useful for port-forwarding, device access (`--device`), or capability grants (`--cap-add`). |
 
 > The legacy **list** format (`- debian-bookworm: {…}`) is still accepted for
 > backward compatibility in the containers section.
@@ -1239,11 +1223,10 @@ bsp test poky-qemux86-64-walnascar --wait
 
 ### `bsp[*].build` fields
 
-| Field         | Type          | Description                                                                       |
-|---------------|---------------|-----------------------------------------------------------------------------------|
-| `environment` | string (opt.) | Named environment to use for this preset (key in `environments` section). Overrides the named environment derived from the release. The environment's container, variables, and copy entries are all applied. When absent the release's own `environment` field (or the `"default"` fallback) is used. |
-| `container`   | string (opt.) | Container name override (key in `containers` section). Takes priority over any container from `build.environment` or the release's named environment. |
-| `path`        | string (opt.) | Build output directory. When absent, the path is auto-composed as `build/<distro>-<device>-<release>[-<feature>…]` for single-release presets, or `build/<name>-<release_slug>[-<override_slug>]` for multi-release presets. When `releases` (plural) is used, this value is treated as a *base path stem*: the release slug (and the vendor override slug when `override` is set) is appended to it — e.g. `path: build/my-bsp` expands to `build/my-bsp-scarthgap` and `build/my-bsp-styhead`. |
+| Field       | Type          | Description                                                                       |
+|-------------|---------------|-----------------------------------------------------------------------------------|
+| `container` | string (opt.) | Container name override (key in `containers` section). When absent the container is taken from the release's named environment (or `"default"`). |
+| `path`      | string (opt.) | Build output directory. When absent, the path is auto-composed as `build/<distro>-<device>-<release>[-<feature>…]` for single-release presets, or `build/<name>-<release_slug>[-<override_slug>]` for multi-release presets. When `releases` (plural) is used, this value is treated as a *base path stem*: the release slug (and the vendor override slug when `override` is set) is appended to it — e.g. `path: build/my-bsp` expands to `build/my-bsp-scarthgap` and `build/my-bsp-styhead`. |
 
 ### `bsp[*].testing` fields
 
@@ -1386,12 +1369,6 @@ containers:
         value: "debian-bookworm"
       - name: "KAS_VERSION"
         value: "5.1"
-    volumes:
-      - host: "$ENV{HOME}/sstate-cache"
-        container: "/sstate-cache"
-      - host: "$ENV{HOME}/downloads"
-        container: "/downloads"
-        read_only: true
   debian-bookworm-isar:
     image: "bsp/registry/debian/isar-kas:1.2"
     file: Dockerfile.isar
