@@ -561,7 +561,6 @@ class TestKasManager:
                 manager._run_kas_command(["build", str(kas_config_file)])
             except SystemExit:
                 pass
-        called_env = mock_run.call_args[1].get("env") or mock_run.call_args[0][0]
         # env is passed as a keyword arg
         called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
