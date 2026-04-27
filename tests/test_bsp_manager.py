@@ -3370,6 +3370,105 @@ class TestPresetLocalConfAndTargets:
         assert 'DISTRO_FEATURES += "x11"' in combined
         assert 'BB_NUMBER_THREADS = "4"' in combined
 
+    def test_targets_only_preset_generates_composed_kas_yaml(
+        self, registry_with_preset_local_conf_and_targets_file, tmp_dir
+    ):
+        """A preset with targets but no local_conf still produces a composed KAS YAML."""
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
+        # Verify the resolved config really has targets and no local_conf
+        assert resolved.targets == ["ros-image-core"]
+        assert resolved.local_conf  # this preset also has local_conf - skip straight to a
+        # targets-only preset by temporarily clearing local_conf
+        resolved.local_conf = []
+        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
+        try:
+            # A temp KAS file must have been generated because targets is non-empty
+            assert manager._temp_kas_file is not None
+            import yaml as _yaml
+            with open(manager._temp_kas_file) as f:
+                kas = _yaml.safe_load(f)
+            assert "target" in kas
+            assert kas["target"] == ["ros-image-core"]
+        finally:
+            manager._cleanup_temp_kas_file()
+
+    def test_targets_only_no_local_conf_preset_composed_yaml(self, tmp_dir):
+        """A preset with only targets (no local_conf) triggers composed KAS YAML generation."""
+        yaml_text = """
+specification:
+  version: "2.0"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  devices:
+    - slug: rsb3720
+      description: "RSB-3720 (i.MX8)"
+      vendor: advantech
+      soc_vendor: nxp
+      includes:
+        - kas/rsb3720.yaml
+  releases:
+    - slug: ros2-humble-scarthgap
+      description: "ROS 2 Humble on Scarthgap"
+      includes:
+        - kas/ros2-humble-scarthgap.yaml
+  bsp:
+    - name: modular-ros-bsp-rsb3720
+      description: "Advantech RSB-3720 (i.MX8)"
+      device: rsb3720
+      release: ros2-humble-scarthgap
+      features: []
+      targets: [ros-image-core]
+      build:
+        container: "debian-bookworm"
+        path: build/modular-ros-bsp-rsb3720
+"""
+        registry_path = tmp_dir / "bsp-registry.yaml"
+        registry_path.write_text(yaml_text)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("modular-ros-bsp-rsb3720")
+        # Confirm no local_conf lines, only targets
+        assert resolved.local_conf == []
+        assert resolved.targets == ["ros-image-core"]
+
+        kas_mgr = manager._get_kas_manager_for_resolved(resolved, use_container=False)
+        try:
+            assert manager._temp_kas_file is not None, (
+                "A composed KAS YAML must be generated when targets is non-empty"
+            )
+            import yaml as _yaml
+            with open(manager._temp_kas_file) as f:
+                kas = _yaml.safe_load(f)
+            assert "target" in kas
+            assert kas["target"] == ["ros-image-core"]
+        finally:
+            manager._cleanup_temp_kas_file()
+
+    def test_build_bsp_with_preset_targets_uses_composed_yaml(
+        self, registry_with_preset_local_conf_and_targets_file
+    ):
+        """build_bsp() passes no explicit --target when preset already embeds targets in KAS YAML."""
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project") as mock_build, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp("modular-ros-bsp-rsb3720")
+        # No CLI --target override: targets come from the composed KAS YAML, not build_project arg
+        mock_build.assert_called_once_with(target=None, task=None)
+
     def test_multi_release_preset_targets_propagated_to_each_expansion(self, tmp_dir):
         """targets list in a multi-release preset is copied to every expanded preset."""
         yaml_text = """
