@@ -51,6 +51,7 @@ from .models import (
     empty_dict,
     EnvironmentVariable,
     DockerArg,
+    DockerVolume,
     Docker,
     Specification,
     GlobalEnvironment,
@@ -117,6 +118,7 @@ __all__ = [
     # Shared data classes
     "EnvironmentVariable",
     "DockerArg",
+    "DockerVolume",
     "Docker",
     "Specification",
     # v2.0 data classes

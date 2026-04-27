@@ -137,6 +137,33 @@ class V2Resolver:
         # Fall back to "default" named environment if present
         return envs.get("default")
 
+    def get_named_environment_by_name(
+        self, env_name: str, context: str
+    ) -> NamedEnvironment:
+        """
+        Look up a named environment by explicit name.
+
+        Args:
+            env_name: The environment name to look up.
+            context: Human-readable description of the caller (for error messages).
+
+        Returns:
+            The matching NamedEnvironment.
+
+        Raises:
+            SystemExit: If the named environment is not found.
+        """
+        envs = self.model.environments or {}
+        if env_name in envs:
+            return envs[env_name]
+        self.logger.error(
+            f"Named environment '{env_name}' referenced by {context} "
+            f"not found in registry environments"
+        )
+        available = ", ".join(envs.keys()) or "(none)"
+        self.logger.info(f"Available environments: {available}")
+        sys.exit(1)
+
     # ------------------------------------------------------------------
     # Lookup helpers
     # ------------------------------------------------------------------
@@ -859,6 +886,7 @@ class V2Resolver:
             expanded_path = "-".join(path_parts)
 
             expanded_build = BspBuild(
+                environment=preset.build.environment if preset.build else None,
                 container=preset.build.container if preset.build else None,
                 path=expanded_path,
             )
@@ -908,8 +936,11 @@ class V2Resolver:
         After resolving the underlying device + release + features the
         preset's ``build`` section (if present) is applied:
 
-        * ``build.container`` overrides the container resolved from the
-          named environment.
+        * ``build.environment`` selects a named environment for this preset,
+          overriding the one derived from the release.  The environment's
+          container, env variables, and copy entries are applied.
+        * ``build.container`` overrides the container; takes priority over
+          any container from ``build.environment`` or the release environment.
         * ``build.path`` sets the output directory; if absent the path is
           auto-composed via :meth:`_compose_build_path`.
 
@@ -961,7 +992,56 @@ class V2Resolver:
         # Apply preset build overrides
         preset_build: Optional[BspBuild] = preset.build
         if preset_build:
-            # Container override from the preset build section
+            # Named environment override from preset.build.environment.
+            # When set it replaces the release-derived named environment for
+            # this preset's container, env variables, and copy entries.
+            if preset_build.environment:
+                preset_named_env = self.get_named_environment_by_name(
+                    preset_build.environment,
+                    f"preset '{preset_name}' build.environment",
+                )
+                # Re-apply env variables: global root vars first, then this env's vars.
+                global_env_vars = (
+                    list(self.model.environment.variables)
+                    if self.model.environment and self.model.environment.variables
+                    else []
+                )
+                resolved.env = global_env_vars + list(preset_named_env.variables)
+                # Rebuild copy list with the preset-selected named env's copy.
+                global_copy = (
+                    list(self.model.environment.copy)
+                    if self.model.environment and self.model.environment.copy
+                    else []
+                )
+                preset_named_env_copy = list(preset_named_env.copy) if preset_named_env.copy else []
+                # Container will be set below; determine copy based on it.
+                # Temporarily use the preset env's container (may be overridden by
+                # preset_build.container below).
+                env_container_name = preset_named_env.container
+                env_container_copy: list = []
+                if env_container_name and env_container_name in self.containers:
+                    env_container_copy = list(self.containers[env_container_name].copy or [])
+                device = resolved.device
+                device_copy = device.copy if device.copy else (
+                    device.build.copy if device.build else []
+                )
+                resolved.copy = global_copy + preset_named_env_copy + env_container_copy + list(device_copy)
+                # Use the named env's container unless overridden below.
+                if env_container_name:
+                    if env_container_name in self.containers:
+                        resolved.container = self.containers[env_container_name]
+                    else:
+                        self.logger.error(
+                            f"Container '{env_container_name}' not found in registry "
+                            f"containers (referenced by named environment "
+                            f"'{preset_build.environment}')"
+                        )
+                        sys.exit(1)
+                else:
+                    resolved.container = None
+
+            # Container override from the preset build section (highest priority –
+            # overrides both the release-derived and preset-environment container).
             if preset_build.container:
                 container_name = preset_build.container
                 if container_name in self.containers:
@@ -970,7 +1050,14 @@ class V2Resolver:
                     # Rebuild the copy list: the container has changed so the
                     # container-level copy entries must be updated to reflect
                     # the overriding container.
-                    named_env = self.get_named_environment(resolved.release)
+                    named_env = (
+                        self.get_named_environment_by_name(
+                            preset_build.environment,
+                            f"preset '{preset_name}' build.environment",
+                        )
+                        if preset_build.environment
+                        else self.get_named_environment(resolved.release)
+                    )
                     global_copy = (
                         list(self.model.environment.copy)
                         if self.model.environment and self.model.environment.copy
