@@ -378,6 +378,7 @@ register-python-argcomplete bsp | sudo tee /etc/bash_completion.d/bsp > /dev/nul
 BSP name completion honours the same registry resolution priority as normal commands (explicit `--registry`, `--local`, local auto-detect, cached remote). The cached remote is used offline (`--no-update`) so completion is always fast.
 
 
+## Registry Configuration Reference
 
 The BSP registry is a YAML file with the following top-level sections:
 
