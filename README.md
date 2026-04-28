@@ -120,7 +120,21 @@ bsp remotes show myorg
 # Now use it — the stored remote is picked up automatically
 bsp list
 bsp build my-preset
+
+# With multiple remotes configured, list/tree show all remotes annotated with [remote-name]
+bsp list
+bsp tree
+
+# Scope listing to a single named remote
+bsp list --remote myorg
+bsp tree --remote myorg
 ```
+
+When **multiple remotes** are registered, `bsp list` and `bsp tree` display
+entries from all of them, each annotated with `[remote-name]`.  Registries are
+kept strictly separate — definitions from different remotes are never merged.
+Use `--remote NAME` with `list` or `tree` to restrict output to a single named
+remote.
 
 ### Manual Registry Usage
 
@@ -317,7 +331,30 @@ The tool determines which registry file to use in the following order:
 ```bash
 bsp list
 bsp --registry my-registry.yaml list
+
+# Filter by component type
+bsp list devices
+bsp list releases
+bsp list features
+bsp list distros
+
+# Filter releases to those compatible with a specific device
+bsp list releases --device imx8qm
+
+# When multiple remotes are configured, scope output to a single named remote
+bsp list --remote myorg
+bsp list devices --remote myorg
+bsp list releases --remote myorg
 ```
+
+When multiple remotes are loaded, every entry is annotated with `[registry-name]`
+so the source is always visible.  Registries from different remotes are kept
+separate — their definitions are never merged together.
+
+| Option | Description |
+|--------|-------------|
+| `--remote NAME` | Show only entries from the named remote registry |
+| `--device DEVICE`, `-d DEVICE` | Filter releases by device slug (only used with `releases`) |
 
 #### `containers` — List available container definitions
 
@@ -333,6 +370,10 @@ bsp tree --full
 bsp tree --compact
 bsp --no-color tree
 bsp --registry my-registry.yaml tree
+
+# When multiple remotes are configured, scope the tree to a single named remote
+bsp tree --remote myorg
+bsp tree --full --remote myorg
 ```
 
 Renders the full registry as a colored ASCII tree, grouped into sections:
@@ -340,10 +381,16 @@ Renders the full registry as a colored ASCII tree, grouped into sections:
 **Features** (with release and vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
 Use `--no-color` to disable colors (e.g. for scripts or log files).
 
+When multiple remotes are loaded, items are grouped under `[registry-name]`
+sub-nodes.  Registries from different remotes are kept separate — their
+definitions are never merged together.  Use `--remote NAME` to restrict the
+tree to a single named remote.
+
 | Option | Description |
 |--------|-------------|
 | `--full` | Show full details including includes lists, release overrides and vendor overrides for features, vendor overrides for releases, and override slugs for presets |
 | `--compact` | Show compact output with names/slugs only (no sub-items) |
+| `--remote NAME` | Show only entries from the named remote registry |
 
 **Example output (`bsp tree`):**
 
