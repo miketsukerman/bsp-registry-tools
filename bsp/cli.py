@@ -12,6 +12,7 @@ from .bsp_manager import BspManager
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION
 
 # =============================================================================
@@ -72,6 +73,67 @@ def _collect_gather_overrides(args) -> dict:
     if prefix is not None:
         overrides["prefix"] = prefix
     return overrides
+
+
+# =============================================================================
+# Remotes sub-command dispatcher (no registry loading required)
+# =============================================================================
+
+
+def _dispatch_remotes(args) -> int:
+    """Handle all ``bsp remotes`` sub-commands.
+
+    Returns an integer exit code (0 = success).
+    """
+    mgr = RemotesManager()
+    subcmd = getattr(args, "remotes_command", None)
+
+    if subcmd is None:
+        # Plain ``bsp remotes`` — list all remotes
+        remotes = mgr.load()
+        if not remotes:
+            print("(no remotes configured)")
+            print(f"Use 'bsp remotes add <name> <url>' to register a remote.")
+            return 0
+        verbose = getattr(args, "remotes_verbose", False)
+        for r in remotes:
+            if verbose:
+                print(f"{r.name}\t{r.url} (branch: {r.branch})")
+            else:
+                print(r.name)
+        return 0
+
+    if subcmd == "add":
+        entry = mgr.add(name=args.name, url=args.url, branch=args.branch)
+        print(f"Added remote '{entry.name}' -> {entry.url} (branch: {entry.branch})")
+        return 0
+
+    if subcmd in ("remove", "rm"):
+        mgr.remove(args.name)
+        print(f"Removed remote '{args.name}'")
+        return 0
+
+    if subcmd == "rename":
+        updated = mgr.rename(args.old_name, args.new_name)
+        print(f"Renamed remote '{args.old_name}' -> '{updated.name}'")
+        return 0
+
+    if subcmd == "set-url":
+        updated = mgr.set_url(args.name, args.url)
+        if args.branch:
+            updated = mgr.set_branch(args.name, args.branch)
+        print(f"Updated remote '{updated.name}': {updated.url} (branch: {updated.branch})")
+        return 0
+
+    if subcmd == "show":
+        r = mgr.get(args.name)
+        print(f"name:   {r.name}")
+        print(f"url:    {r.url}")
+        print(f"branch: {r.branch}")
+        return 0
+
+    logging.error("Unknown remotes sub-command: %s", subcmd)
+    return 1
 
 
 # =============================================================================
@@ -645,6 +707,74 @@ def main() -> int:
             help="Base URL where build artifacts are served to the LAVA lab"
         )
 
+        # ----------------------------------------------------------------
+        # Remotes command  (git-remote-style management of named remote
+        # registries persisted in ~/.config/bsp/remotes.yaml)
+        # ----------------------------------------------------------------
+        remotes_parser = subparsers.add_parser(
+            "remotes",
+            help="Manage named remote BSP registry sources (like git remote)",
+        )
+        remotes_parser.add_argument(
+            "-v", "--verbose-list",
+            dest="remotes_verbose",
+            action="store_true",
+            help="Show URL and branch alongside each remote name when listing",
+        )
+        remotes_subparsers = remotes_parser.add_subparsers(
+            dest="remotes_command",
+            help="Remotes sub-command",
+        )
+
+        # bsp remotes add <name> <url> [--branch BRANCH]
+        remotes_add = remotes_subparsers.add_parser(
+            "add",
+            help="Register a new named remote registry",
+        )
+        remotes_add.add_argument("name", help="Unique name for the remote (e.g. 'advantech')")
+        remotes_add.add_argument("url", help="Git repository URL of the remote registry")
+        remotes_add.add_argument(
+            "--branch", "-b",
+            default=DEFAULT_BRANCH,
+            help="Branch to fetch from (default: %(default)s)",
+        )
+
+        # bsp remotes remove <name>
+        remotes_remove = remotes_subparsers.add_parser(
+            "remove",
+            aliases=["rm"],
+            help="Remove a named remote",
+        )
+        remotes_remove.add_argument("name", help="Name of the remote to remove")
+
+        # bsp remotes rename <old> <new>
+        remotes_rename = remotes_subparsers.add_parser(
+            "rename",
+            help="Rename a remote",
+        )
+        remotes_rename.add_argument("old_name", metavar="old-name", help="Current name of the remote")
+        remotes_rename.add_argument("new_name", metavar="new-name", help="New name for the remote")
+
+        # bsp remotes set-url <name> <url>
+        remotes_set_url = remotes_subparsers.add_parser(
+            "set-url",
+            help="Change the URL of an existing remote",
+        )
+        remotes_set_url.add_argument("name", help="Name of the remote to update")
+        remotes_set_url.add_argument("url", help="New Git repository URL")
+        remotes_set_url.add_argument(
+            "--branch", "-b",
+            default=None,
+            help="Also update the branch",
+        )
+
+        # bsp remotes show <name>
+        remotes_show = remotes_subparsers.add_parser(
+            "show",
+            help="Show details about a named remote",
+        )
+        remotes_show.add_argument("name", help="Name of the remote to show")
+
         args = parser.parse_args()
 
         # Setup logging based on verbosity
@@ -664,6 +794,12 @@ def main() -> int:
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             ))
 
+        # ----------------------------------------------------------------
+        # Dispatch remotes commands — these do NOT need a loaded registry.
+        # ----------------------------------------------------------------
+        if args.command == "remotes":
+            return _dispatch_remotes(args)
+
         # Resolve registry file path
         LOCAL_DEFAULTS = ["bsp-registry.yaml", "bsp-registry.yml"]
         local_registry = next((name for name in LOCAL_DEFAULTS if Path(name).is_file()), None)
@@ -682,7 +818,25 @@ def main() -> int:
         else:
             from .registry_fetcher import RemoteRegistrySpec
             fetcher = RegistryFetcher()
-            remotes_raw = args.remote or [DEFAULT_REMOTE_URL]
+
+            # If no --remote flags given on the CLI, fall back to configured remotes
+            if args.remote:
+                remotes_raw = args.remote
+            else:
+                stored = RemotesManager().load()
+                if stored:
+                    # Encode stored remotes as URL@BRANCH@name=NAME strings so the
+                    # existing parse / fetch_multiple path handles them uniformly.
+                    remotes_raw = [
+                        f"{r.url}@{r.branch}@name={r.name}" for r in stored
+                    ]
+                    logging.info(
+                        "Using %d configured remote(s): %s",
+                        len(stored),
+                        [r.name for r in stored],
+                    )
+                else:
+                    remotes_raw = [DEFAULT_REMOTE_URL]
 
             if len(remotes_raw) == 1 and remotes_raw[0] == DEFAULT_REMOTE_URL and not args.remote:
                 # Single default remote — use the legacy single-registry path for backward compat

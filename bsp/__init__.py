@@ -97,6 +97,7 @@ from .cli import main
 from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
 from .gatherer import ArtifactGatherer, GatherResult
 from .storage import CloudStorageBackend, create_backend
+from .remotes_manager import RemotesManager, RemoteEntry
 
 __all__ = [
     # Exceptions
