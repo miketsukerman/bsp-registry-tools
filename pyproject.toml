@@ -55,6 +55,9 @@ deploy = [
     "azure-identity>=1.0",
     "boto3>=1.20",
 ]
+completions = [
+    "argcomplete>=3.0",
+]
 
 [project.scripts]
 bsp = "bsp.cli:main"
