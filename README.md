@@ -10,6 +10,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 - 📋 **BSP registry management** via YAML configuration files
 - 🌐 **Automatic remote registry fetching** — clone/update a remote registry with no manual setup
+- 🔗 **Named remote management** — `bsp remotes add/remove/rename/set-url/show` for persistent, git-style remote configuration
 - 🐳 **Docker container support** for reproducible build environments
 - 🔧 **KAS integration** for Yocto-based builds (`kas`, `kas-container`)
 - 🖥️ **Interactive shell** access to build environments
@@ -96,8 +97,29 @@ bsp list
 # Skip the network update (useful offline or in CI)
 bsp --no-update list
 
-# Use a different remote or branch
+# Use a different remote or branch (one-off override)
 bsp --remote https://github.com/my-org/bsp-registry.git --branch dev list
+```
+
+### Persistent Named Remotes
+
+For a more permanent setup, register one or more named remotes (similar to
+`git remote`).  Once added, these are used automatically whenever `bsp` falls
+back to remote registry fetching — no `--remote` flag required:
+
+```bash
+# Register a named remote
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch dev
+
+# List configured remotes
+bsp remotes
+
+# Show full details
+bsp remotes show myorg
+
+# Now use it — the stored remote is picked up automatically
+bsp list
+bsp build my-preset
 ```
 
 ### Manual Registry Usage
@@ -231,12 +253,12 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,tree,export,shell,server,deploy,gather,test} ...
+           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server,deploy,gather,test}
+  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs and components
@@ -248,6 +270,7 @@ positional arguments:
     deploy              Deploy build artifacts to cloud storage
     gather              Download BSP build artifacts from cloud storage
     test                Submit a LAVA HIL test job for a BSP
+    remotes             Manage named remote BSP registry sources
 
 options:
   -h, --help            show this help message and exit
@@ -271,7 +294,9 @@ The tool determines which registry file to use in the following order:
 2. **`--local`** — use `./bsp-registry.yaml` or `./bsp-registry.yml` in the current directory; no network access.
 3. **`bsp-registry.yaml` exists in the current directory** — auto-detect (preferred extension).
 4. **`bsp-registry.yml` exists in the current directory** — auto-detect (alternate extension).
-5. **Otherwise** — clone/update the remote registry into `~/.cache/bsp/registry` via `RegistryFetcher`.
+5. **`--remote URL` flag(s) provided** — fetch the specified remote(s) on-the-fly (no persistence).
+6. **Named remotes configured** — if `bsp remotes add` has registered remotes in `~/.config/bsp/remotes.yaml`, those are fetched automatically.
+7. **Otherwise** — fall back to the default Advantech BSP registry at `~/.cache/bsp/registry`.
 
 ### Global Options
 
@@ -607,6 +632,104 @@ bsp test poky-qemuarm64-scarthgap --wait \
 # Component-based (no preset needed)
 bsp test --device qemuarm64 --release scarthgap --wait
 ```
+
+#### `remotes` — Manage named remote registries
+
+`bsp remotes` manages a persistent list of named remote BSP registry sources,
+stored in `~/.config/bsp/remotes.yaml` (overridable via the
+`BSP_REMOTES_CONFIG` environment variable).  This is modelled after
+`git remote` and integrates with the registry resolution fallback: when no
+`--remote` flag is passed and no local registry file exists, configured remotes
+are used automatically.
+
+**List remotes**
+
+```bash
+# Short listing — one name per line
+bsp remotes
+
+# Verbose — include URL and branch
+bsp remotes -v
+```
+
+Example output:
+
+```
+advantech
+myorg
+```
+
+```
+advantech  https://github.com/Advantech-EECC/bsp-registry.git (branch: main)
+myorg      https://github.com/my-org/bsp-registry.git (branch: develop)
+```
+
+**Add a remote**
+
+```bash
+bsp remotes add <name> <url> [--branch BRANCH]
+```
+
+```bash
+# Add the default Advantech registry under a friendly name
+bsp remotes add advantech https://github.com/Advantech-EECC/bsp-registry.git
+
+# Add a private registry on a non-default branch
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch develop
+```
+
+**Remove a remote**
+
+```bash
+bsp remotes remove <name>
+# or: bsp remotes rm <name>
+```
+
+**Rename a remote**
+
+```bash
+bsp remotes rename <old-name> <new-name>
+```
+
+**Change a remote's URL**
+
+```bash
+bsp remotes set-url <name> <new-url>
+
+# Also update the branch at the same time
+bsp remotes set-url <name> <new-url> --branch <branch>
+```
+
+**Show details of a remote**
+
+```bash
+bsp remotes show <name>
+```
+
+Example output:
+
+```
+name:   myorg
+url:    https://github.com/my-org/bsp-registry.git
+branch: develop
+```
+
+**`remotes` options summary**
+
+| Sub-command | Arguments | Description |
+|-------------|-----------|-------------|
+| *(none)* | | List configured remote names |
+| `-v` / `--verbose-list` | | Show URL and branch alongside each name |
+| `add` | `<name> <url> [--branch BRANCH]` | Register a new named remote |
+| `remove` / `rm` | `<name>` | Remove a named remote |
+| `rename` | `<old-name> <new-name>` | Rename a remote |
+| `set-url` | `<name> <url> [--branch BRANCH]` | Update URL (and optionally branch) |
+| `show` | `<name>` | Print name, URL and branch for a remote |
+
+> **Config file location** — `~/.config/bsp/remotes.yaml`  (override with
+> `BSP_REMOTES_CONFIG=/path/to/remotes.yaml bsp remotes ...`)
+
+
 
 ## HTTP Server (REST + GraphQL)
 
@@ -1447,6 +1570,7 @@ bsp-registry-tools/
 │   ├── cli.py                # CLI entry point
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
+│   ├── remotes_manager.py    # Persistent named-remote CRUD (bsp remotes)
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
@@ -1558,6 +1682,7 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `RemotesManager` | Reads/writes `~/.config/bsp/remotes.yaml` — CRUD for named remote registry sources |
 | `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
 | `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
 | `ArtifactGatherer` | Downloads previously uploaded Yocto build artifacts from cloud storage |
