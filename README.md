@@ -134,18 +134,21 @@ bsp shell poky-qemuarm64-scarthgap
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,export,shell} ...
+           {build,list,containers,export,shell,test,gather,completions} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,export,shell}
+  {build,list,containers,export,shell,test,gather,completions}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs
     containers          List available containers
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
+    test                Run tests for a BSP
+    gather              Download BSP artifacts from cloud storage
+    completions         Print shell completion script
 
 options:
   -h, --help            show this help message and exit
@@ -263,7 +266,118 @@ bsp export poky-qemuarm64-scarthgap
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
 
-## Registry Configuration Reference
+#### `test` — Run BSP tests
+
+```bash
+bsp test <bsp_name> [--suite SUITE]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--suite SUITE`, `-s SUITE` | Name of the test suite to run (default: run all suites) |
+
+**Examples:**
+
+```bash
+# Run all test suites
+bsp test poky-qemuarm64-scarthgap
+
+# Run a specific test suite
+bsp test poky-qemuarm64-scarthgap --suite smoke
+```
+
+#### `gather` — Download BSP artifacts from cloud storage
+
+```bash
+bsp gather <bsp_name> [--output DIR]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--output DIR`, `-o DIR` | Destination directory for downloaded artifacts (default: current directory) |
+
+**Examples:**
+
+```bash
+# Gather artifacts into the current directory
+bsp gather poky-qemuarm64-scarthgap
+
+# Gather artifacts into a specific directory
+bsp gather poky-qemuarm64-scarthgap --output /mnt/artifacts
+```
+
+#### `completions` — Print shell completion script
+
+```bash
+bsp completions {bash,zsh,fish,tcsh}
+```
+
+Prints the shell-specific eval snippet for enabling tab completion.
+
+**Examples:**
+
+```bash
+# One-time activation in the current session
+eval "$(bsp completions bash)"
+
+# Permanent activation — add to ~/.bashrc
+echo 'eval "$(bsp completions bash)"' >> ~/.bashrc
+
+# Permanent activation for zsh — add to ~/.zshrc
+echo 'eval "$(bsp completions zsh)"' >> ~/.zshrc
+
+# System-wide activation (requires root)
+bsp completions bash | sudo tee /etc/bash_completion.d/bsp
+```
+
+## Shell Completion
+
+`bsp` supports tab-completion for BSP names and subcommands in **bash**, **zsh**, **fish**, and **tcsh** via [argcomplete](https://kislyuk.github.io/argcomplete/).
+
+### Quick Setup
+
+Add the following line to your shell configuration file:
+
+**Bash** (`~/.bashrc`):
+```bash
+eval "$(bsp completions bash)"
+```
+
+**Zsh** (`~/.zshrc`):
+```zsh
+eval "$(bsp completions zsh)"
+```
+
+**Fish** (`~/.config/fish/config.fish`):
+```fish
+bsp completions fish | source
+```
+
+### System-wide Activation (bash)
+
+```bash
+# Install for all users (requires root)
+bsp completions bash | sudo tee /etc/bash_completion.d/bsp > /dev/null
+
+# Alternative using register-python-argcomplete (from the argcomplete package)
+register-python-argcomplete bsp | sudo tee /etc/bash_completion.d/bsp > /dev/null
+```
+
+### What Gets Completed
+
+| Argument | Completions |
+|----------|-------------|
+| `bsp build <TAB>` | BSP names from the active registry |
+| `bsp export <TAB>` | BSP names from the active registry |
+| `bsp test <TAB>` | BSP names from the active registry |
+| `bsp gather <TAB>` | BSP names from the active registry |
+| `bsp gather --output <TAB>` | Directories |
+| `bsp <TAB>` | Subcommand names |
+| `bsp --registry <TAB>` | Files |
+
+BSP name completion honours the same registry resolution priority as normal commands (explicit `--registry`, `--local`, local auto-detect, cached remote). The cached remote is used offline (`--no-update`) so completion is always fast.
+
+
 
 The BSP registry is a YAML file with the following top-level sections:
 

@@ -420,6 +420,32 @@ class BspManager:
 
         logging.info(f"BSP {bsp_name} configuration exported successfully!")
 
+    def test_bsp(self, bsp_name: str, suite: Optional[str] = None) -> None:
+        """
+        Run tests for the specified BSP.
+
+        Args:
+            bsp_name: Name of the BSP to test
+            suite: Optional test suite name to run (runs all suites if not specified)
+
+        Raises:
+            NotImplementedError: This method is not yet implemented
+        """
+        raise NotImplementedError("test_bsp is not yet implemented")
+
+    def gather_bsp(self, bsp_name: str, output_dir: Optional[str] = None) -> None:
+        """
+        Download / gather BSP artifacts from cloud storage.
+
+        Args:
+            bsp_name: Name of the BSP whose artifacts should be gathered
+            output_dir: Destination directory for downloaded artifacts (default: current directory)
+
+        Raises:
+            NotImplementedError: This method is not yet implemented
+        """
+        raise NotImplementedError("gather_bsp is not yet implemented")
+
     def cleanup(self) -> None:
         """Cleanup resources and perform any necessary finalization."""
         logging.debug("Cleaning up resources...")

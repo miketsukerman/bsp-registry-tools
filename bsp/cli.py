@@ -7,7 +7,10 @@ import logging
 import sys
 from pathlib import Path
 
+import argcomplete
+
 from .bsp_manager import BspManager
+from .completers import BspNameCompleter
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
 
@@ -48,11 +51,12 @@ def main() -> int:
 
         # Build command
         build_parser = subparsers.add_parser('build', help='Build an image for BSP')
-        build_parser.add_argument(
+        build_bsp_name = build_parser.add_argument(
             'bsp_name',
             type=str,
             help='Name of the BSP to build'
         )
+        build_bsp_name.completer = BspNameCompleter()
         build_parser.add_argument(
             '--clean',
             action='store_true',
@@ -79,11 +83,12 @@ def main() -> int:
 
         # Export command
         export_parser = subparsers.add_parser('export', help='Export BSP configuration')
-        export_parser.add_argument(
+        export_bsp_name = export_parser.add_argument(
             'bsp_name',
             type=str,
             help='Name of the BSP'
         )
+        export_bsp_name.completer = BspNameCompleter()
         export_parser.add_argument(
             '--output', '-o',
             type=str,
@@ -104,7 +109,58 @@ def main() -> int:
             help='Command to execute in shell (optional, if not provided starts interactive shell)'
         )
 
+        # Test command
+        test_parser = subparsers.add_parser('test', help='Run tests for a BSP')
+        test_bsp_name = test_parser.add_argument(
+            'bsp_name',
+            type=str,
+            help='Name of the BSP to test'
+        )
+        test_bsp_name.completer = BspNameCompleter()
+        test_parser.add_argument(
+            '--suite', '-s',
+            type=str,
+            dest='suite',
+            help='Name of the test suite to run (default: run all suites)'
+        )
+
+        # Gather command
+        gather_parser = subparsers.add_parser('gather', help='Download BSP artifacts from cloud storage')
+        gather_bsp_name = gather_parser.add_argument(
+            'bsp_name',
+            type=str,
+            help='Name of the BSP to gather artifacts for'
+        )
+        gather_bsp_name.completer = BspNameCompleter()
+        gather_output = gather_parser.add_argument(
+            '--output', '-o',
+            type=str,
+            dest='output_dir',
+            help='Destination directory for downloaded artifacts (default: current directory)'
+        )
+        gather_output.completer = argcomplete.completers.DirectoriesCompleter()
+
+        # Completions command
+        completions_parser = subparsers.add_parser(  # noqa: F841
+            'completions',
+            help='Print shell completion script (source with: eval "$(bsp completions bash)")'
+        )
+        completions_parser.add_argument(
+            'shell',
+            choices=['bash', 'zsh', 'fish', 'tcsh'],
+            help='Shell to generate completion script for'
+        )
+
+        # Wire up argcomplete (no-op when not in a completion context)
+        argcomplete.autocomplete(parser)
+
         args = parser.parse_args()
+
+        # Handle completions before any registry access
+        if args.command == 'completions':
+            script = argcomplete.shellcode(['bsp'], shell=args.shell)
+            print(script)
+            return 0
 
         # Setup logging based on verbosity
         log_level = logging.DEBUG if args.verbose else logging.WARNING
@@ -175,6 +231,12 @@ def main() -> int:
                 bsp_name=args.bsp_name,
                 command=shell_command
             )
+        elif args.command == 'test':
+            suite = getattr(args, 'suite', None)
+            bsp_mgr.test_bsp(bsp_name=args.bsp_name, suite=suite)
+        elif args.command == 'gather':
+            output_dir = getattr(args, 'output_dir', None)
+            bsp_mgr.gather_bsp(bsp_name=args.bsp_name, output_dir=output_dir)
         else:
             # This should not happen since subparsers are required=True
             logging.error(f"Unknown command: {args.command}")
