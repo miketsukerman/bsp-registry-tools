@@ -45,8 +45,8 @@ jobs:
           grep -q "poky-qemuarm64-scarthgap" list-output.txt
           grep -q "poky-qemux86-64-scarthgap" list-output.txt
           grep -q "poky-qemuarm-scarthgap" list-output.txt
-          grep -q "isar-debian-qemux86-64" list-output.txt
-          grep -q "isar-ubuntu-qemux86-64" list-output.txt
+          grep -q "isar-qemuamd64-debian-trixie" list-output.txt
+          grep -q "isar-qemuamd64-ubuntu-noble" list-output.txt
 
       - name: bsp containers (example registry)
         working-directory: examples
@@ -58,7 +58,7 @@ jobs:
       - name: bsp export (example registry)
         working-directory: examples
         run: |
-          bsp --verbose --registry bsp-registry.yaml export poky-qemux86-scarthgap 2>&1 | tee export-output.txt
+          bsp --verbose --registry bsp-registry.yaml export poky-qemux86-64-scarthgap 2>&1 | tee export-output.txt
           grep -q "poky-qemux86-64-scarthgap" export-output.txt
 
       - name: bsp build --checkout (example registry)

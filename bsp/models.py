@@ -1,5 +1,5 @@
 """
-Configuration data classes for BSP registry definitions.
+Configuration data classes for BSP registry definitions (schema v2.0).
 """
 
 from dataclasses import dataclass, field
@@ -21,7 +21,7 @@ def empty_dict():
 
 
 # =============================================================================
-# Configuration Data Classes
+# Shared Data Classes (used across v1 and v2)
 # =============================================================================
 
 @dataclass
@@ -51,6 +51,22 @@ class DockerArg:
 
 
 @dataclass
+class DockerVolume:
+    """
+    Represents a host-to-container directory mapping (volume mount).
+
+    Attributes:
+        host: Path on the host machine to mount (supports ``$ENV{VAR}`` expansion).
+        container: Absolute path inside the container where the host path is mounted.
+        read_only: When ``True`` the volume is mounted read-only (``:ro`` flag).
+                   Defaults to ``False``.
+    """
+    host: str
+    container: str
+    read_only: bool = False
+
+
+@dataclass
 class Docker:
     """
     Docker configuration for build environment.
@@ -59,55 +75,30 @@ class Docker:
         image: Docker image name/tag for the build environment
         file: Path to Dockerfile for building custom images
         args: List of Docker build arguments (name=value pairs)
+        runtime_args: Extra arguments appended to the container engine
+                      ``run`` command (e.g. ``-p 2222:2222
+                      --device=/dev/net/tun --cap-add=NET_ADMIN``).
+                      Passed to kas-container via ``--runtime-args``.
         privileged: Run container in privileged mode (enables --isar for kas-container)
+        copy: List of ``{source: destination}`` file-copy entries executed
+              before every build that uses this container.  Both paths are
+              resolved relative to the registry file's parent directory.
+              Entries are merged between named-environment copy and
+              device-level copy entries.
+        volumes: List of host-to-container directory mappings.  Each entry
+                 specifies a ``host`` path, a ``container`` path, and an
+                 optional ``read_only`` flag.  Host paths support
+                 ``$ENV{VAR}`` expansion.  Entries are converted to
+                 ``-v host:container[:ro]`` flags passed via
+                 ``--runtime-args``.
     """
     image: Optional[str]
     file: Optional[str]
     args: List[DockerArg] = field(default_factory=empty_list)
+    runtime_args: Optional[str] = None
     privileged: bool = False
-
-
-@dataclass
-class ContainerDefinition:
-    """
-    Container definition with name and Docker configuration.
-
-    Attributes:
-        name: Container name/identifier (e.g., 'ubuntu-20.04')
-        docker: Docker configuration for this container
-    """
-    name: str
-    docker: Docker
-
-
-@dataclass
-class BuildEnvironment:
-    """
-    Build environment configuration including Docker settings.
-
-    Attributes:
-        container: Name of the container to use (references containers in registry)
-        docker: Direct Docker configuration (alternative to container reference)
-    """
-    container: Optional[str] = None
-    docker: Optional[Docker] = None
-
-
-@dataclass
-class BuildSetup:
-    """
-    Complete build setup configuration.
-
-    Attributes:
-        path: Build directory path for output artifacts
-        environment: Build environment settings (Docker, container reference)
-        docker: Docker runtime to use (docker, podman, etc.)
-        configuration: List of KAS configuration files for the build
-    """
-    path: str
-    environment: BuildEnvironment
-    docker: Optional[str]
-    configuration: List[str]
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
+    volumes: List[DockerVolume] = field(default_factory=empty_list)
 
 
 @dataclass
@@ -116,66 +107,867 @@ class Specification:
     Registry specification version.
 
     Attributes:
-        version: Specification version string (e.g., '1.0')
+        version: Specification version string (e.g., '2.0')
     """
     version: str
 
 
-@dataclass
-class OperatingSystem:
-    """
-    Operating system configuration for the BSP.
-
-    Attributes:
-        name: OS name (e.g., 'linux')
-        build_system: Build system (e.g., 'yocto')
-        version: OS version string
-    """
-    name: str
-    build_system: str
-    version: str
-
+# =============================================================================
+# v2.0 Data Classes
+# =============================================================================
 
 @dataclass
-class BSP:
+class GlobalEnvironment:
     """
-    Board Support Package definition.
+    Global build environment applied to every build in the registry.
+
+    Groups the global environment variables and global file-copy entries
+    under a single ``environment:`` key in the registry YAML, keeping the
+    schema symmetric with ``NamedEnvironment``.
 
     Attributes:
-        name: Unique BSP identifier
+        variables: Environment variables applied to every build (supports
+                   ``$ENV{}`` expansion).
+        copy: List of ``{source: destination}`` file-copy entries executed
+              inside the build environment before every build.  Both paths are
+              resolved relative to the registry file's parent directory (the
+              project root mounted inside the container).  These entries run
+              first, before named-environment and device-level entries.
+    """
+    variables: List[EnvironmentVariable] = field(default_factory=empty_list)
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
+
+
+@dataclass
+class NamedEnvironment:
+    """
+    A named build environment bundling a container reference and environment
+    variables.
+
+    Named environments allow different builds (especially different releases)
+    to use distinct container images and variable sets without repeating the
+    configuration on every device or release entry.
+
+    A special name ``"default"`` is used as the fallback environment for any
+    release that does not explicitly specify one.
+
+    Attributes:
+        container: Optional container name (references the top-level
+                   ``containers`` dict).  When ``None`` the device's own
+                   ``build.container`` must be set.
+        variables: Environment variables provided by this environment
+                   (merged on top of the root-level ``environment.variables``
+                   list).
+        copy: List of ``{source: destination}`` file-copy entries executed
+              before every build that uses this environment.  Both paths are
+              resolved relative to the registry file's parent directory.
+              Entries are prepended before any device-level copy entries.
+    """
+    container: Optional[str] = None
+    variables: List[EnvironmentVariable] = field(default_factory=empty_list)
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
+
+
+@dataclass
+class DeviceBuild:
+    """
+    Build configuration for a hardware device (legacy – kept for backward
+    compatibility with older registry files that still use the nested
+    ``build:`` block inside a device entry).
+
+    New registries should place device-level KAS includes directly on the
+    ``Device`` and use ``BspPreset.build`` for the container and output
+    path.
+
+    Attributes:
+        path: Build output directory for Yocto artifacts
+        container: Optional container name override (references containers
+                   section).  When ``None`` the active named environment's
+                   container is used instead.
+        includes: List of device-specific KAS configuration files
+        local_conf: List of local.conf lines to append for this device
+        copy: List of ``{source: destination}`` file-copy entries.  Each
+              entry copies a single file (source) to a directory or path
+              (destination) before the build starts.  Both paths are
+              resolved relative to the registry file's parent directory.
+    """
+    path: str = ""
+    container: Optional[str] = None
+    includes: List[str] = field(default_factory=empty_list)
+    local_conf: List[str] = field(default_factory=empty_list)
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
+
+
+@dataclass
+class BspBuild:
+    """
+    Build configuration for a BSP preset.
+
+    When present on a ``BspPreset``, this section controls the container
+    used for the build and the output directory.  All fields are optional:
+
+    * If ``environment`` is set, the named environment it references is used
+      for this preset instead of the one derived from the release.  The
+      environment's container, variables, and copy entries are applied.
+    * If ``container`` is set it takes priority over any container that
+      would otherwise come from the named environment (release-level or
+      preset-level ``environment``).
+    * If ``path`` is omitted the resolver auto-composes a path from the
+      distro slug, device slug, release slug, and any feature slugs under
+      the top-level ``build/`` directory.
+
+    Attributes:
+        environment: Optional name of the named environment to use for this
+                     preset (references ``RegistryRoot.environments``).
+                     Overrides the named environment derived from the
+                     release.  When omitted the release's own environment
+                     field (or the ``"default"`` fallback) is used.
+        container: Optional container name override (references the
+                   top-level ``containers`` dict).  When set it takes
+                   priority over the container from the named environment.
+        path: Optional build output directory.  When ``None`` the resolver
+              derives the path automatically.
+    """
+    environment: Optional[str] = None
+    container: Optional[str] = None
+    path: Optional[str] = None
+
+
+@dataclass
+class Device:
+    """
+    Hardware device/board definition.
+
+    Attributes:
+        slug: Unique identifier for the device
         description: Human-readable description
-        os: Operating system configuration
-        build: Build configuration and setup
+        vendor: Board vendor name (e.g., 'advantech', 'qemu')
+        soc_vendor: Silicon vendor name (e.g., 'nxp', 'intel', 'arm')
+        includes: List of device-specific KAS configuration files
+        local_conf: List of local.conf lines to append for this device
+        copy: List of ``{source: destination}`` file-copy entries executed
+              before the build.  Both paths resolve relative to the
+              registry file's parent directory.
+        soc_family: Optional SoC family identifier (e.g., 'imx8', 'cortex-a57')
+        architecture: Optional target CPU architecture string (e.g. ``"amd64"``,
+                      ``"arm64"``, ``"arm"``).  Used as the default value for
+                      the LAVA job context ``arch`` field when no explicit
+                      ``testing.lava.context.arch`` is provided in the preset.
+        build: Deprecated – legacy nested build block.  Use ``includes`` /
+               ``local_conf`` / ``copy`` directly and ``BspPreset.build``
+               for container and path.
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              only when the active build-system framework
+                              matches that key (i.e. the effective distro's
+                              ``framework`` field equals the key).
+    """
+    slug: str
+    description: str
+    vendor: str
+    soc_vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+    local_conf: List[str] = field(default_factory=empty_list)
+    copy: List[Dict[str, str]] = field(default_factory=empty_list)
+    soc_family: Optional[str] = None
+    architecture: Optional[str] = None
+    build: Optional[DeviceBuild] = None
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
+
+
+@dataclass
+class VendorRelease:
+    """
+    A vendor-specific sub-release (e.g. a specific BSP kernel version for a board vendor).
+
+    ``VendorRelease`` entries live inside ``VendorOverride.releases`` and let a
+    single top-level release (e.g. ``scarthgap``) expose multiple BSP versions
+    for the same vendor (e.g. ``imx-6.6.53``, ``imx-6.12.0``).  The resolver
+    adds the matching ``VendorRelease.includes`` after the parent
+    ``VendorOverride.includes`` when the caller specifies a ``vendor_release``.
+
+    Attributes:
+        slug: Unique identifier for this vendor sub-release (e.g. 'imx-6.6.53')
+        description: Human-readable description
+        includes: KAS configuration files specific to this vendor sub-release
+    """
+    slug: str
+    description: str
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
+class SocVendorOverride:
+    """
+    SoC-vendor-specific KAS configuration overrides within a board-vendor override.
+
+    ``SocVendorOverride`` entries live inside ``VendorOverride.soc_vendors`` and
+    allow a single board-vendor override (e.g. Advantech) to carry separate
+    include sets and sub-releases for each underlying SoC vendor (e.g. NXP,
+    MediaTek, Qualcomm).  The resolver matches the entry whose ``vendor`` field
+    equals ``Device.soc_vendor``.
+
+    Include ordering when a ``SocVendorOverride`` is active::
+
+        VendorOverride.includes          (common to all SoC families)
+        → SocVendorOverride.includes     (common to this SoC family)
+        → VendorRelease.includes         (specific sub-release, if requested)
+
+    Attributes:
+        vendor: SoC vendor slug this entry applies to (e.g. 'nxp', 'mediatek').
+                Must match ``Device.soc_vendor`` for the entry to be selected.
+        includes: KAS configuration files common to all sub-releases for this
+                  SoC vendor (e.g. a shared NXP BSP fragment).
+        releases: Optional list of vendor sub-releases specific to this SoC
+                  vendor (e.g. different NXP i.MX kernel versions).
+        distro: Optional distro slug that overrides both the parent
+                ``VendorOverride.distro`` and the release's own ``distro``
+                field when this SoC vendor override is active.
+    """
+    vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+    releases: List[VendorRelease] = field(default_factory=empty_list)
+    distro: Optional[str] = None
+
+
+@dataclass
+class VendorOverride:
+    """
+    Vendor-specific KAS configuration overrides for a release.
+
+    Each ``VendorOverride`` entry groups, for a single board vendor:
+
+    * ``includes`` — KAS files added for **every** build targeting that vendor
+      (e.g. a common Advantech BSP meta-layer fragment).
+    * ``releases`` — Optional list of vendor sub-releases (e.g. different NXP
+      i.MX kernel versions).  When the resolver is given a ``vendor_release``
+      slug it looks up the matching ``VendorRelease`` entry and appends its
+      includes after the common ``includes``.
+    * ``soc_vendors`` — Optional list of :class:`SocVendorOverride` entries,
+      one per SoC vendor family (e.g. NXP, MediaTek, Qualcomm).  When
+      present the resolver selects the entry whose ``vendor`` field matches
+      ``Device.soc_vendor`` and applies its ``includes`` and ``releases``
+      **after** the board-vendor-level ``includes``.  Use this instead of
+      (or in addition to) ``releases`` when a single board vendor ships
+      products based on multiple SoC families.
+    * ``slug`` — Optional unique identifier that allows a BSP preset to
+      reference this exact override entry via the preset's ``override`` field,
+      independently of the ``vendor`` matching logic.  Multiple overrides for
+      the same vendor can coexist when they each carry a distinct slug.
+    * ``distro`` — Optional distro slug that overrides the release's own
+      ``distro`` field when this vendor override is active.  Allows a specific
+      vendor/BSP combination to be built against a different distro than the
+      parent release normally uses.  A ``SocVendorOverride.distro`` takes
+      precedence over this field when both are set.
+
+    Attributes:
+        vendor: Board vendor name this override applies to
+        includes: KAS files common to all sub-releases for this vendor
+        releases: Optional list of vendor-specific sub-releases (used when
+                  all boards from this vendor share the same SoC family)
+        soc_vendors: Optional list of per-SoC-vendor override entries (used
+                     when the board vendor ships products with multiple SoC
+                     families)
+        slug: Optional unique identifier for this override entry
+        distro: Optional distro slug that overrides the release distro for
+                this vendor override
+    """
+    vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+    releases: List[VendorRelease] = field(default_factory=empty_list)
+    soc_vendors: List[SocVendorOverride] = field(default_factory=empty_list)
+    slug: Optional[str] = None
+    distro: Optional[str] = None
+
+
+@dataclass
+class Vendor:
+    """
+    Board vendor definition.
+
+    A ``Vendor`` entry in ``Registry.vendors`` describes a hardware board
+    vendor (e.g. Advantech, QEMU).  The resolver matches the vendor ``slug``
+    against ``Device.vendor`` and, when a match is found, prepends the
+    vendor's ``includes`` in the KAS file list after the distro includes.
+
+    Attributes:
+        slug: Unique identifier for the vendor (e.g., 'advantech', 'qemu').
+              Must match the ``vendor`` field of the device definitions that
+              belong to this vendor.
+        name: Human-readable display name (e.g., 'Advantech')
+        description: Optional longer description of the vendor
+        website: Optional vendor website URL
+        includes: KAS configuration files common to all boards from this vendor
+        frameworks_overrides: Optional mapping from framework slug to a
+                              :class:`FrameworkOverride`.  Includes listed
+                              under a key are appended to the KAS file list
+                              (after ``includes``) only when the active
+                              build-system framework matches that key.
+    """
+    slug: str
+    name: str
+    description: str = ""
+    website: str = ""
+    includes: List[str] = field(default_factory=empty_list)
+    frameworks_overrides: Dict[str, "FrameworkOverride"] = field(default_factory=empty_dict)
+
+
+@dataclass
+class FrameworkOverride:
+    """
+    Framework-specific KAS configuration override for a device or vendor.
+
+    A ``FrameworkOverride`` entry inside ``Device.frameworks_overrides`` or
+    ``Vendor.frameworks_overrides`` allows a device or vendor to contribute
+    additional KAS include files that are **only** added when the active
+    build-system framework matches the override's key.
+
+    The key in the containing ``frameworks_overrides`` dict is the framework
+    slug (e.g. ``"yocto"``, ``"isar"``).
+
+    Example (device)::
+
+        devices:
+          - slug: qemuarm64
+            vendor: qemu
+            soc_vendor: arm
+            includes:
+              - kas/devices/qemu/qemuarm64.yaml
+            frameworks_overrides:
+              yocto:
+                includes:
+                  - kas/yocto/devices/qemu/qemuarm64.yaml
+
+    Attributes:
+        includes: KAS configuration files to add when this framework is active.
+    """
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
+class Framework:
+    """
+    Build-system framework definition (e.g. Yocto, Isar).
+
+    A ``Framework`` describes a top-level build system that one or more
+    distros are built on.  Distros reference a framework by its ``slug``
+    via the ``Distro.framework`` field.  Features can restrict themselves
+    to specific frameworks via ``Feature.compatible_with``.
+
+    Attributes:
+        slug: Unique identifier for the framework (e.g., 'yocto', 'isar')
+        description: Human-readable description
+        vendor: Framework vendor/maintainer name
+        includes: KAS configuration files that configure this framework
+    """
+    slug: str
+    description: str
+    vendor: str
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
+class Distro:
+    """
+    Linux distribution / build-system definition.
+
+    A ``Distro`` groups the KAS configuration files that set up a particular
+    build system or Linux distribution (e.g. Poky, Isar).  Releases reference
+    a distro by its ``slug`` via the ``Release.distro`` field so that the
+    resolver can prepend the distro includes before the release includes.
+
+    Attributes:
+        slug: Unique identifier for the distro (e.g., 'poky', 'isar')
+        description: Human-readable description
+        vendor: Distro vendor/maintainer name (e.g., 'yocto', 'siemens')
+        includes: KAS configuration files that configure this distro
+        framework: Optional slug of the build-system framework this distro
+                   is based on (references ``Registry.frameworks``).  Used
+                   by ``Feature.compatible_with`` checks.
+    """
+    slug: str
+    description: str
+    vendor: str = ""
+    includes: List[str] = field(default_factory=empty_list)
+    framework: Optional[str] = None
+
+
+@dataclass
+class Release:
+    """
+    Yocto/Isar release definition.
+
+    Attributes:
+        slug: Unique identifier for the release (e.g., 'scarthgap')
+        description: Human-readable description
+        includes: Base KAS configuration files for this release
+        yocto_version: Yocto Project version string (e.g., '5.0')
+        isar_version: Isar version string (optional)
+        vendor_overrides: Vendor-specific KAS configuration overrides.  Each
+                          entry targets a single board vendor and may contain
+                          both common includes (applied for every build of that
+                          vendor) and a list of sub-releases (e.g. different
+                          kernel / BSP versions).  The resolver selects the
+                          entry whose ``vendor`` matches the device's board
+                          vendor, appends its ``includes``, and—when a
+                          ``vendor_release`` slug is given—appends the matching
+                          sub-release ``includes`` as well.  Multiple sub-
+                          releases for the same Yocto release (e.g.
+                          ``imx-6.6.53``, ``imx-6.12.0``) can thus coexist
+                          without duplicating the Yocto release entry.
+        environment: Optional name of the named environment to use for this
+                     release (references ``RegistryRoot.environments``).
+                     When omitted the ``"default"`` named environment is used
+                     if one is defined, otherwise the global environment list
+                     and device container apply.
+        distro: Optional slug of the distro this release belongs to
+                (references ``Registry.distro``).  When set the resolver
+                prepends the distro's includes before the release includes.
+    """
+    slug: str
+    description: str
+    includes: List[str] = field(default_factory=empty_list)
+    yocto_version: Optional[str] = None
+    isar_version: Optional[str] = None
+    vendor_overrides: List[VendorOverride] = field(default_factory=empty_list)
+    environment: Optional[str] = None
+    distro: Optional[str] = None
+
+
+@dataclass
+class FeatureCompatibility:
+    """
+    Compatibility constraints for a feature.
+
+    Empty lists mean "all" (no restriction on that dimension).
+
+    Attributes:
+        vendor: List of compatible board vendors (empty = all vendors)
+        soc_vendor: List of compatible SoC vendors (empty = all)
+        soc_family: List of compatible SoC families (empty = all)
+    """
+    vendor: List[str] = field(default_factory=empty_list)
+    soc_vendor: List[str] = field(default_factory=empty_list)
+    soc_family: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
+class FeatureReleaseOverride:
+    """
+    Release-specific KAS configuration overrides for a feature.
+
+    A ``FeatureReleaseOverride`` entry inside ``Feature.release_overrides``
+    allows a feature to include extra KAS files only when a particular release
+    (e.g. ``scarthgap``) is active.  The resolver matches entries by comparing
+    the ``release`` field to the ``release_slug`` passed to ``resolve()``.
+
+    Include ordering when a ``FeatureReleaseOverride`` is active::
+
+        feature.includes                 (base includes, always applied)
+        → feature.release_overrides[release].includes  (release-specific extras)
+        → feature.vendor_overrides[vendor].includes    (vendor-specific extras)
+
+    Attributes:
+        release: Release slug this entry applies to (e.g. 'scarthgap').
+                 Must match the release slug passed to the resolver for this
+                 entry to be selected.
+        includes: KAS configuration files to add when this release is active.
+    """
+    release: str
+    includes: List[str] = field(default_factory=empty_list)
+
+
+@dataclass
+class Feature:
+    """
+    Optional BSP feature definition (e.g., OTA update, secure boot).
+
+    Attributes:
+        slug: Unique identifier for the feature
+        description: Human-readable description
+        compatibility: Device compatibility constraints (vendor / SoC-level).
+        compatible_with: Optional list of framework or distro slugs this
+                         feature is restricted to.  An empty list means no
+                         framework/distro restriction.  When non-empty the
+                         resolver checks that the release's distro slug **or**
+                         the distro's framework slug appears in this list; if
+                         neither matches the build exits with an error.
+        includes: KAS configuration files that enable this feature
+        local_conf: local.conf lines to append when feature is enabled
+        env: Environment variables required/set by this feature
+        release_overrides: Optional list of release-specific KAS configuration
+                           overrides for this feature.  Each entry targets a
+                           single release slug; when the active release matches,
+                           the entry's ``includes`` are appended *after* the
+                           feature's base ``includes`` and *before* any
+                           ``vendor_overrides`` includes.
+        vendor_overrides: Optional list of vendor-specific KAS configuration
+                          overrides for this feature.  Works identically to
+                          ``Release.vendor_overrides`` but is scoped to a
+                          single feature: the resolver matches entries by
+                          ``device.vendor`` (and ``device.soc_vendor`` when
+                          ``soc_vendors`` are defined) and appends the
+                          resulting includes *after* the feature's base
+                          ``includes``.  ``VendorRelease`` sub-entries inside
+                          a feature override are selected via the same
+                          ``vendor_release_slug`` passed to ``resolve()``.
+    """
+    slug: str
+    description: str
+    compatibility: Optional[FeatureCompatibility] = None
+    compatible_with: List[str] = field(default_factory=empty_list)
+    includes: List[str] = field(default_factory=empty_list)
+    local_conf: List[str] = field(default_factory=empty_list)
+    env: List[EnvironmentVariable] = field(default_factory=empty_list)
+    release_overrides: List[FeatureReleaseOverride] = field(default_factory=empty_list)
+    vendor_overrides: List[VendorOverride] = field(default_factory=empty_list)
+
+
+@dataclass
+class LavaServerConfig:
+    """
+    LAVA server connection settings (top-level ``lava:`` block in the registry).
+
+    All fields support ``$ENV{VAR}`` expansion so that credentials and URLs can
+    be kept outside the registry file and injected at runtime via environment
+    variables.
+
+    Attributes:
+        server: Base URL of the LAVA server (e.g. ``https://lava.example.com``).
+        token: LAVA authentication token.  Use ``$ENV{LAVA_TOKEN}`` to read it
+               from the environment.
+        username: LAVA username.  Use ``$ENV{LAVA_USER}`` to read it from the
+                  environment.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Acts as a
+                             registry-wide default that individual preset
+                             ``testing.lava.artifact_server_url`` blocks can
+                             override.  Used together with ``artifact_name``
+                             to form the full image URL; overridden by
+                             ``--artifact-url`` (full URL) on the CLI.
+        wait_timeout: Maximum number of seconds to wait for a submitted job to
+                      complete when ``--wait`` is requested (default: 3600).
+        poll_interval: Polling interval in seconds when waiting for job
+                       completion (default: 30).
+    """
+    server: str = ""
+    token: str = ""
+    username: str = ""
+    artifact_server_url: str = ""
+    wait_timeout: int = 3600
+    poll_interval: int = 30
+
+
+@dataclass
+class RobotTestConfig:
+    """
+    Robot Framework test suite configuration embedded in a LAVA job.
+
+    Attributes:
+        suites: List of ``.robot`` suite file paths (relative to the registry
+                directory) that LAVA should execute as test actions.
+        variables: Optional key/value pairs passed to Robot Framework via
+                   ``--variable NAME:VALUE``.  Values support ``$ENV{}``
+                   expansion.
+    """
+    suites: List[str] = field(default_factory=empty_list)
+    variables: Dict[str, str] = field(default_factory=empty_dict)
+
+
+@dataclass
+class LavaContext:
+    """
+    LAVA job context block (``context:`` in the submitted YAML).
+
+    These values are passed verbatim into the LAVA job's ``context:`` section
+    and are forwarded to the device's LAVA dispatcher for scheduling and
+    image-format decisions.
+
+    When a preset does not specify ``testing.lava.context`` the resolver falls
+    back to the device's ``architecture`` field for ``arch`` and to the
+    device's ``slug`` for ``machine``.
+
+    Attributes:
+        arch: CPU architecture string understood by the LAVA dispatcher
+              (e.g. ``"amd64"``, ``"arm64"``, ``"arm"``).
+        machine: Machine / board identifier used by the dispatcher
+                 (e.g. ``"qemux86-64"``, ``"imx8mpevk"``).  Defaults to
+                 the device slug when not set explicitly.
+    """
+    arch: str = ""
+    machine: str = ""
+
+
+@dataclass
+class LavaTestConfig:
+    """
+    LAVA-specific test configuration for a BSP preset or device.
+
+    Attributes:
+        device_type: LAVA device-type label (must match a ``device_type``
+                     configured in the LAVA instance, e.g.
+                     ``"qemu-aarch64"`` or ``"imx8mp-evk"``).
+        job_template: Path to a Jinja2 LAVA job template (``.yaml.j2`` or
+                      ``.yml.j2``).  Resolved relative to the registry
+                      directory.  When omitted a built-in minimal template is
+                      used.
+        artifact_server_url: Base URL where built image artifacts are served
+                             (e.g. ``http://fileserver/builds``).  Overrides
+                             the registry-level ``lava.artifact_server_url``
+                             for this preset.  Combined with ``artifact_name``
+                             to form the full image URL.  Takes precedence over
+                             the registry-level default but is itself overridden
+                             by a full ``artifact_url`` or the ``--artifact-url``
+                             CLI flag.
+        artifact_name: Image file name (e.g. ``"core-image-minimal-qemu.wic.gz"``).
+                       Prepended with ``artifact_server_url`` to produce the
+                       ``image_url`` context variable inside the LAVA job
+                       template.  Mutually exclusive with ``artifact_url`` —
+                       use ``artifact_url`` when you need to specify the
+                       complete URL without any automatic path composition.
+        artifact_url: Complete URL to the primary image artifact.  Overrides
+                      the ``artifact_server_url`` + ``artifact_name`` combination
+                      and the registry-level default.  Also overridden by the
+                      ``--artifact-url`` CLI flag.
+        tags: Optional list of LAVA device tags that the scheduler must
+              match when allocating a worker (e.g. ``["hil", "imx8"]``).
+        context: Optional LAVA job context block (``arch`` and ``machine``).
+                 When omitted the resolver falls back to the device's
+                 ``architecture`` field for ``arch``.
+        robot: Optional Robot Framework test configuration embedded in the
+               LAVA job.
+    """
+    device_type: str = ""
+    job_template: Optional[str] = None
+    artifact_server_url: str = ""
+    artifact_name: str = ""
+    artifact_url: str = ""
+    tags: List[str] = field(default_factory=empty_list)
+    context: Optional[LavaContext] = None
+    robot: Optional[RobotTestConfig] = None
+
+
+@dataclass
+class TestingConfig:
+    """
+    Testing configuration block attached to a ``BspPreset``.
+
+    Attributes:
+        lava: LAVA-specific test settings (device type, job template, tags).
+    """
+    lava: Optional[LavaTestConfig] = None
+
+
+@dataclass
+class BspPreset:
+    """
+    Named BSP preset (optional shortcut for a device+release+features combination).
+
+    A preset can target either a single release (``release``) or multiple
+    releases at once (``releases``).  Exactly one of these two fields must be
+    provided.  When ``releases`` is used the resolver expands the preset into
+    one virtual preset per release; each expanded preset is named
+    ``{name}-{release_slug}`` and its build path is auto-composed.
+
+    Attributes:
+        name: Unique preset name
+        description: Human-readable description
+        device: Device slug (references a device in registry.devices)
+        release: Single release slug (mutually exclusive with ``releases``).
+        releases: List of release slugs (mutually exclusive with ``release``).
+                  The resolver expands each entry into an individual virtual
+                  preset named ``{name}-{release_slug}``.
+        vendor_release: Optional vendor sub-release slug (references a
+                        ``VendorRelease.slug`` inside the matching
+                        ``VendorOverride`` entry for the device's board vendor).
+                        When set the resolver appends the sub-release's includes
+                        after the vendor's common includes.
+        override: Optional ``VendorOverride.slug`` to select a specific
+                  vendor override entry by its slug rather than by vendor
+                  matching.  When set the resolver looks up the matching
+                  ``VendorOverride`` entry in the release's ``vendor_overrides``
+                  list and applies its includes (and its ``distro`` override, if
+                  present) regardless of the device's vendor field.
+        features: List of feature slugs to enable (references registry.features)
+        local_conf: Optional block of local.conf lines to append for this
+                    preset.  Specified as a YAML block scalar (``|``); each
+                    non-empty line is appended to the resolved local_conf
+                    after device- and feature-level entries.
+        targets: Optional list of Bitbake build targets (images/recipes) to
+                 pass to KAS.  When non-empty these are written into the
+                 ``target`` section of the generated KAS YAML file.
+        build: Optional build configuration (container + output path).  When
+               absent the container is taken from the release's named
+               environment and the path is auto-composed from the distro,
+               device, release, and feature slugs.  When ``releases`` is used,
+               the ``path`` sub-field is ignored and the path is always
+               auto-composed; the ``container`` override is still applied.
+        testing: Optional HIL test configuration for this preset.  When set,
+                 ``bsp test <preset>`` will submit a LAVA job using the
+                 configuration defined here.
     """
     name: str
     description: str
-    build: BuildSetup
-    os: Optional[OperatingSystem] = None
+    device: str
+    release: Optional[str] = None
+    releases: List[str] = field(default_factory=empty_list)
+    vendor_release: Optional[str] = None
+    override: Optional[str] = None
+    features: List[str] = field(default_factory=empty_list)
+    local_conf: Optional[str] = None
+    targets: List[str] = field(default_factory=empty_list)
+    build: Optional[BspBuild] = None
+    deploy: Optional["DeployConfig"] = None
+    testing: Optional[TestingConfig] = None
 
 
 @dataclass
 class Registry:
     """
-    Main registry containing BSP definitions.
+    Main v2.0 registry containing devices, releases, features, distros, and presets.
 
     Attributes:
-        bsp: List of BSP definitions in the registry
+        devices: List of hardware device definitions
+        releases: List of Yocto/Isar release definitions
+        features: List of optional feature definitions
+        bsp: Optional list of named BSP presets (shortcuts)
+        frameworks: Optional list of build-system framework definitions
+        distro: Optional list of distribution/build-system definitions
+        vendors: Optional list of board vendor definitions.  When a vendor's
+                 ``slug`` matches a device's ``vendor`` field the resolver
+                 prepends the vendor's ``includes`` in the KAS file list
+                 (after distro includes, before release includes).
     """
-    bsp: Optional[List[BSP]] = field(default_factory=empty_list)
+    devices: List[Device] = field(default_factory=empty_list)
+    releases: List[Release] = field(default_factory=empty_list)
+    features: List[Feature] = field(default_factory=empty_list)
+    bsp: Optional[List[BspPreset]] = field(default_factory=empty_list)
+    frameworks: List[Framework] = field(default_factory=empty_list)
+    distro: List[Distro] = field(default_factory=empty_list)
+    vendors: List[Vendor] = field(default_factory=empty_list)
+
+
+@dataclass
+class ArchiveConfig:
+    """
+    Configuration for bundling all build artifacts into a single compressed
+    archive before cloud upload.
+
+    Attributes:
+        name: Archive filename template (without extension).  Supports the
+              same placeholders as :attr:`DeployConfig.prefix`: ``{device}``,
+              ``{release}``, ``{distro}``, ``{vendor}``, ``{date}`` and
+              ``{datetime}``.  The appropriate extension is appended
+              automatically based on ``format``.
+              Example: ``"firmware-{device}-{release}-{date}"``.
+        format: Compression format.  Supported values: ``"tar.gz"``
+                (default), ``"tar.bz2"``, ``"tar.xz"``, ``"zip"``.
+    """
+    name: str = "artifacts-{device}-{date}"
+    format: str = "tar.gz"
+
+
+@dataclass
+class DeployConfig:
+    """
+    Cloud storage deployment configuration for build artifacts.
+
+    A ``DeployConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        provider: Storage provider.  Supported values: ``"azure"`` (default),
+                  ``"aws"``.
+        container: Azure Blob Storage container name *or* AWS S3 bucket name.
+                   For AWS you may alternatively use ``bucket``.
+        bucket: Alias for ``container`` used with the ``"aws"`` provider.
+                If both are supplied ``container`` takes precedence.
+        account_url: Azure storage account URL (e.g.
+                     ``https://<account>.blob.core.windows.net``).  Supports
+                     ``$ENV{VAR}`` expansion.  Ignored for the ``"aws"``
+                     provider.
+        prefix: Path prefix template inside the storage container / bucket.
+                Supports ``{device}``, ``{release}``, ``{distro}``,
+                ``{vendor}``, ``{date}`` and ``{datetime}`` placeholders.
+                Default: ``"{vendor}/{device}/{release}/{date}"``.
+        patterns: Glob patterns (relative to each artifact directory) that
+                  select files to upload.  Default covers the most common
+                  Yocto image formats.
+        artifact_dirs: Subdirectories under the build output path to search
+                       for artifacts.  Default: images and sdk deploy dirs.
+        include_manifest: When ``True`` (default), a JSON manifest listing
+                          all uploaded artifacts (names, sizes, SHA-256
+                          checksums, build metadata) is uploaded alongside
+                          the artifacts.
+        archive: When set, all collected artifacts are bundled into a single
+                 compressed archive **before** uploading.  Only the archive is
+                 uploaded (plus the manifest when ``include_manifest`` is
+                 ``True``).  Configure via an :class:`ArchiveConfig` block::
+
+                     archive:
+                       name: "firmware-{device}-{release}-{date}"
+                       format: tar.gz
+
+                 When ``None`` (default) each artifact is uploaded
+                 individually.
+        region: AWS region override (``"aws"`` provider only).
+        profile: AWS credential profile name (``"aws"`` provider only).
+    """
+    provider: str = "azure"
+    container: Optional[str] = None
+    bucket: Optional[str] = None
+    account_url: Optional[str] = None
+    prefix: Optional[str] = None
+    patterns: List[str] = field(default_factory=lambda: [
+        "**/*.wic",
+        "**/*.wic.gz",
+        "**/*.wic.bz2",
+        "**/*.wic.xz",
+        "**/*.tar.gz",
+        "**/*.tar.bz2",
+        "**/*.ext4",
+        "**/*.sdimg",
+        "**/*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+        "tmp/deploy/sdk",
+    ])
+    include_manifest: bool = True
+    archive: Optional["ArchiveConfig"] = None
+    region: Optional[str] = None
+    profile: Optional[str] = None
 
 
 @dataclass
 class RegistryRoot:
     """
-    Root container for the registry configuration.
+    Root container for the v2.0 registry configuration.
 
     Attributes:
-        specification: Specification version information
-        registry: Main registry data containing BSP definitions
-        containers: Dictionary of container definitions keyed by name
-        environment: Global environment variables for all builds (supports expansion)
+        specification: Specification version information (must be '2.0')
+        registry: Main registry data containing devices, releases, features, and presets
+        containers: Dictionary of Docker container definitions keyed by name
+        environment: Global environment applied to every build.  Contains
+                     ``variables`` (``$ENV{}``-expandable) and ``copy``
+                     (file-copy entries executed inside the build environment
+                     before every build).
+        environments: Optional dictionary of named environments.  Each entry
+                      bundles a container reference and environment variables.
+                      The special name ``"default"`` is applied to any release
+                      that does not explicitly name an environment.
+        deploy: Optional global deployment configuration.  Applied to all
+                builds unless overridden by a preset-level ``deploy`` block.
+        lava: Optional top-level LAVA server connection settings shared across
+              all presets in this registry.  Individual preset ``testing.lava``
+              blocks inherit these settings and can override them on the CLI.
     """
     specification: Specification
     registry: Registry
     containers: Optional[Dict[str, Docker]] = field(default_factory=empty_dict)
-    environment: Optional[List[EnvironmentVariable]] = field(default_factory=empty_list)
+    environment: Optional[GlobalEnvironment] = None
+    environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
+    deploy: Optional[DeployConfig] = None
+    lava: Optional[LavaServerConfig] = None

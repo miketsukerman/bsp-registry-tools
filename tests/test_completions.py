@@ -90,22 +90,36 @@ class TestBspNameCompleter:
         monkeypatch.chdir(tmp_dir)
         registry_content = """
 specification:
-  version: "1.0"
+  version: "2.0"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
 registry:
+  devices:
+    - slug: local-dev
+      description: "Local Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      includes: []
+  releases:
+    - slug: local-rel
+      description: "Local Release"
+      yocto_version: "5.0"
+      includes: []
+  features: []
   bsp:
     - name: local-bsp
       description: "BSP from local file"
+      device: local-dev
+      release: local-rel
+      features: []
       build:
+        container: "ubuntu-22.04"
         path: build/local
-        environment:
-          container: "ubuntu-22.04"
         configuration:
           - test.yml
-containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
 """
         (tmp_dir / "bsp-registry.yaml").write_text(registry_content)
         completer = BspNameCompleter()
@@ -117,30 +131,46 @@ containers:
         """Completer returns all matching names from a multi-BSP registry."""
         registry_content = """
 specification:
-  version: "1.0"
+  version: "2.0"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
 registry:
+  devices:
+    - slug: dev-a
+      description: "Device A"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      includes: []
+  releases:
+    - slug: rel-a
+      description: "Release A"
+      yocto_version: "5.0"
+      includes: []
+  features: []
   bsp:
     - name: alpha-bsp
       description: "Alpha BSP"
+      device: dev-a
+      release: rel-a
+      features: []
       build:
+        container: "ubuntu-22.04"
         path: build/alpha
-        environment:
-          container: "ubuntu-22.04"
         configuration:
           - test.yml
     - name: beta-bsp
       description: "Beta BSP"
+      device: dev-a
+      release: rel-a
+      features: []
       build:
+        container: "ubuntu-22.04"
         path: build/beta
-        environment:
-          container: "ubuntu-22.04"
         configuration:
           - test.yml
-containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
 """
         registry_path = tmp_dir / "multi.yaml"
         registry_path.write_text(registry_content)
@@ -152,30 +182,46 @@ containers:
     def test_prefix_filter_returns_subset(self, tmp_dir):
         registry_content = """
 specification:
-  version: "1.0"
+  version: "2.0"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
 registry:
+  devices:
+    - slug: dev-a
+      description: "Device A"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      includes: []
+  releases:
+    - slug: rel-a
+      description: "Release A"
+      yocto_version: "5.0"
+      includes: []
+  features: []
   bsp:
     - name: alpha-bsp
       description: "Alpha BSP"
+      device: dev-a
+      release: rel-a
+      features: []
       build:
+        container: "ubuntu-22.04"
         path: build/alpha
-        environment:
-          container: "ubuntu-22.04"
         configuration:
           - test.yml
     - name: beta-bsp
       description: "Beta BSP"
+      device: dev-a
+      release: rel-a
+      features: []
       build:
+        container: "ubuntu-22.04"
         path: build/beta
-        environment:
-          container: "ubuntu-22.04"
         configuration:
           - test.yml
-containers:
-  - ubuntu-22.04:
-      image: "test/ubuntu-22.04:latest"
-      file: Dockerfile.ubuntu
-      args: []
 """
         registry_path = tmp_dir / "multi.yaml"
         registry_path.write_text(registry_content)
@@ -196,17 +242,24 @@ class TestNewSubcommandParsing:
             with patch.object(BspManager, "test_bsp", side_effect=NotImplementedError) as mock_test:
                 exit_code = bsp.main()
         # Should fail (NotImplementedError → exit 1) but the parse must succeed
-        mock_test.assert_called_once_with(bsp_name="test-bsp", suite=None)
+        mock_test.assert_called_once_with(
+            "test-bsp",
+            lava_server=None,
+            lava_token=None,
+            artifact_url=None,
+            wait=False,
+        )
         assert exit_code != 0
 
-    def test_test_command_parses_suite_flag(self, registry_file):
+    def test_test_command_parses_wait_flag(self, registry_file):
         from bsp.bsp_manager import BspManager
         with patch("sys.argv", [
-            "bsp", "--registry", str(registry_file), "test", "test-bsp", "--suite", "smoke"
+            "bsp", "--registry", str(registry_file), "test", "test-bsp", "--wait"
         ]):
             with patch.object(BspManager, "test_bsp", side_effect=NotImplementedError) as mock_test:
                 exit_code = bsp.main()
-        mock_test.assert_called_once_with(bsp_name="test-bsp", suite="smoke")
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("wait") is True
         assert exit_code != 0
 
     def test_gather_command_parses_bsp_name(self, registry_file):
@@ -214,18 +267,22 @@ class TestNewSubcommandParsing:
         with patch("sys.argv", ["bsp", "--registry", str(registry_file), "gather", "test-bsp"]):
             with patch.object(BspManager, "gather_bsp", side_effect=NotImplementedError) as mock_gather:
                 exit_code = bsp.main()
-        mock_gather.assert_called_once_with(bsp_name="test-bsp", output_dir=None)
+        mock_gather.assert_called_once()
+        args, kwargs = mock_gather.call_args
+        assert args[0] == "test-bsp"
         assert exit_code != 0
 
-    def test_gather_command_parses_output_flag(self, registry_file, tmp_dir):
+    def test_gather_command_parses_dest_dir_flag(self, registry_file, tmp_dir):
         from bsp.bsp_manager import BspManager
         output = str(tmp_dir / "artifacts")
         with patch("sys.argv", [
-            "bsp", "--registry", str(registry_file), "gather", "test-bsp", "--output", output
+            "bsp", "--registry", str(registry_file), "gather", "test-bsp", "--dest-dir", output
         ]):
             with patch.object(BspManager, "gather_bsp", side_effect=NotImplementedError) as mock_gather:
                 exit_code = bsp.main()
-        mock_gather.assert_called_once_with(bsp_name="test-bsp", output_dir=output)
+        mock_gather.assert_called_once()
+        _, kwargs = mock_gather.call_args
+        assert kwargs.get("dest_dir") == output
         assert exit_code != 0
 
 

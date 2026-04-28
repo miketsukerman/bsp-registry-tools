@@ -1,0 +1,7 @@
+header:
+  version: 14
+
+repos:
+  isar:
+    tag: "v1.0"
+    commit: "6504321e85b5fdc3bb5a83f042b77cb39cd11a6f"

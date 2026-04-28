@@ -1,0 +1,15 @@
+# KAS configuration for Yocto Walnascar (5.2 LTS)
+# https://downloads.yoctoproject.org/releases/yocto/yocto-5.2/RELEASENOTES
+header:
+  version: 14
+
+target: core-image-minimal
+
+defaults:
+  repos:
+    branch: "walnascar"
+
+repos:
+  bitbake:
+    branch: "2.16"
+    commit: "663021740bc086bd959a8457ad9ddb6da52a8278"
