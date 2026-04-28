@@ -22,6 +22,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
+- 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
 
 
 ## Installation
@@ -78,6 +79,62 @@ pip install "bsp-registry-tools[aws]"
 # Both providers
 pip install "bsp-registry-tools[deploy]"
 ```
+
+#### Optional extras for shell completions
+
+Tab-completion support is optional and requires [argcomplete](https://kislyuk.github.io/argcomplete/):
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+See the [Shell Completions](#shell-completions) section below for activation instructions.
+
+## Shell Completions
+
+`bsp` supports tab completions for Bash, Zsh, Fish, and tcsh via
+[argcomplete](https://kislyuk.github.io/argcomplete/).  Completions
+dynamically query the active registry so that preset names, device slugs,
+release slugs, feature slugs, and remote names are all available.
+
+### 1. Install the completions extra
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+### 2. Activate completions for your shell
+
+Use the `bsp completions` sub-command to print the shell-specific activation
+snippet, then source it:
+
+```bash
+# Bash — add to ~/.bashrc
+eval "$(bsp completions bash)"
+
+# Zsh — add to ~/.zshrc
+eval "$(bsp completions zsh)"
+
+# Fish — add to ~/.config/fish/config.fish
+bsp completions fish | source
+
+# tcsh — add to ~/.tcshrc
+eval `bsp completions tcsh`
+```
+
+`bsp completions` without an argument auto-detects the shell from `$SHELL`.
+
+### 3. (Alternative) Global activation
+
+If you want completions for all argcomplete-enabled tools at once, use the
+helper provided by argcomplete itself:
+
+```bash
+activate-global-python-argcomplete
+```
+
+This installs a single shell hook that covers every tool that calls
+`argcomplete.autocomplete()`.
 
 ## Quick Start
 
