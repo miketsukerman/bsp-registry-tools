@@ -224,6 +224,23 @@ class BspManager:
             _, reg_path = self._config_pairs[0]
             yield reg_name, reg_model, self.resolver, reg_path
 
+    def _validate_registry_filter(self, registry_filter: Optional[str]) -> None:
+        """Validate *registry_filter* against known registry names.
+
+        Exits with an error message listing available remote names when the
+        given filter does not match any loaded registry.
+        """
+        if registry_filter is None:
+            return
+        known = [name for name, _, _, _ in self._iter_registries()]
+        if registry_filter not in known:
+            logging.error(
+                "Remote '%s' not found. Available remotes: %s",
+                registry_filter,
+                ", ".join(known) if known else "(none)",
+            )
+            sys.exit(1)
+
     @contextmanager
     def _use_registry_context(
         self,
@@ -326,7 +343,7 @@ class BspManager:
     # Listing commands
     # ------------------------------------------------------------------
 
-    def list_bsp(self, use_color: bool = True) -> None:
+    def list_bsp(self, use_color: bool = True, registry_filter: Optional[str] = None) -> None:
         """
         List all BSP presets defined in the registry (or registries).
 
@@ -338,7 +355,9 @@ class BspManager:
 
         Args:
             use_color: Enable colored output (requires colorama).
+            registry_filter: When set, only show presets from the named registry.
         """
+        self._validate_registry_filter(registry_filter)
         _header, _name, _dim = self._color_helpers(use_color)
 
         multi = len(self.registries) > 1
@@ -346,6 +365,8 @@ class BspManager:
         # Collect all presets across registries
         all_preset_rows: List[Tuple[str, object]] = []  # (registry_name, preset)
         for reg_name, reg_model, reg_resolver, _ in self._iter_registries():
+            if registry_filter and reg_name != registry_filter:
+                continue
             raw = reg_model.registry.bsp if reg_model else []
             if raw:
                 for preset in reg_resolver.list_presets():
@@ -375,7 +396,7 @@ class BspManager:
                 + _dim(f"(device: {preset.device}, release: {preset.release}{extra_str})")
             )
 
-    def list_devices(self, use_color: bool = True) -> None:
+    def list_devices(self, use_color: bool = True, registry_filter: Optional[str] = None) -> None:
         """
         List all hardware devices defined across all registries.
 
@@ -384,12 +405,16 @@ class BspManager:
 
         Args:
             use_color: Enable colored output (requires colorama).
+            registry_filter: When set, only show devices from the named registry.
         """
+        self._validate_registry_filter(registry_filter)
         _header, _name, _dim = self._color_helpers(use_color)
         multi = len(self.registries) > 1
 
         all_devices: List[Tuple[str, object]] = []
         for reg_name, reg_model, _, _ in self._iter_registries():
+            if registry_filter and reg_name != registry_filter:
+                continue
             devices = reg_model.registry.devices if reg_model else []
             for d in (devices or []):
                 all_devices.append((reg_name, d))
@@ -409,7 +434,7 @@ class BspManager:
                 + _dim(f"(vendor: {device.vendor}, soc_vendor: {device.soc_vendor}{soc_family})")
             )
 
-    def list_releases(self, device_slug: Optional[str] = None, use_color: bool = True) -> None:
+    def list_releases(self, device_slug: Optional[str] = None, use_color: bool = True, registry_filter: Optional[str] = None) -> None:
         """
         List all release definitions across all registries.
 
@@ -424,13 +449,17 @@ class BspManager:
                          matches the device's board vendor.  When omitted, all
                          releases are shown.
             use_color: Enable colored output (requires colorama).
+            registry_filter: When set, only show releases from the named registry.
         """
+        self._validate_registry_filter(registry_filter)
         _header, _name, _dim = self._color_helpers(use_color)
         multi = len(self.registries) > 1
 
         # Collect (registry_name, device|None, releases_list) per registry
         rows: List[Tuple[str, List]] = []
         for reg_name, reg_model, reg_resolver, _ in self._iter_registries():
+            if registry_filter and reg_name != registry_filter:
+                continue
             releases = reg_model.registry.releases if reg_model else []
             if not releases:
                 continue
@@ -492,18 +521,22 @@ class BspManager:
                         for vr in svo.releases:
                             print(f"{indent}  " + _dim(f"      release: {vr.slug} — {vr.description}"))
 
-    def list_features(self, use_color: bool = True) -> None:
+    def list_features(self, use_color: bool = True, registry_filter: Optional[str] = None) -> None:
         """
         List all feature definitions across all registries.
 
         Args:
             use_color: Enable colored output (requires colorama).
+            registry_filter: When set, only show features from the named registry.
         """
+        self._validate_registry_filter(registry_filter)
         _header, _name, _dim = self._color_helpers(use_color)
         multi = len(self.registries) > 1
 
         all_features: List[Tuple[str, object]] = []
         for reg_name, reg_model, _, _ in self._iter_registries():
+            if registry_filter and reg_name != registry_filter:
+                continue
             features = reg_model.registry.features if reg_model else []
             for f in (features or []):
                 all_features.append((reg_name, f))
@@ -528,18 +561,22 @@ class BspManager:
             reg_prefix = _dim(f"[{reg_name}] ") if multi else ""
             print(f"- {reg_prefix}{_name(feature.slug)}: {feature.description}{compat_str}")
 
-    def list_distros(self, use_color: bool = True) -> None:
+    def list_distros(self, use_color: bool = True, registry_filter: Optional[str] = None) -> None:
         """
         List all distribution/build-system definitions across all registries.
 
         Args:
             use_color: Enable colored output (requires colorama).
+            registry_filter: When set, only show distros from the named registry.
         """
+        self._validate_registry_filter(registry_filter)
         _header, _name, _dim = self._color_helpers(use_color)
         multi = len(self.registries) > 1
 
         all_distros: List[Tuple[str, object]] = []
         for reg_name, reg_model, _, _ in self._iter_registries():
+            if registry_filter and reg_name != registry_filter:
+                continue
             distros = reg_model.registry.distro if reg_model else []
             for d in (distros or []):
                 all_distros.append((reg_name, d))
@@ -616,7 +653,7 @@ class BspManager:
                 args_str = ', '.join([f'{arg.name}={arg.value}' for arg in container_config.args])
                 print(f"    Args: {_dim(args_str)}")
 
-    def tree_bsp(self, use_color: bool = True, mode: str = "default") -> None:
+    def tree_bsp(self, use_color: bool = True, mode: str = "default", registry_filter: Optional[str] = None) -> None:
         """
         Print a colored ASCII tree of the full BSP registry hierarchy.
 
@@ -631,8 +668,10 @@ class BspManager:
             mode: Display mode — ``"default"`` (standard detail level including
                   vendor overrides/releases), ``"compact"`` (names/slugs only),
                   or ``"full"`` (all details including includes lists).
+            registry_filter: When set, only show entries from the named registry.
         """
 
+        self._validate_registry_filter(registry_filter)
         colored = use_color and COLORAMA_AVAILABLE
 
         # -----------------------------------------------------------------
@@ -892,6 +931,8 @@ class BspManager:
             """Collect (registry_name, item) pairs for a given section key."""
             result = []
             for reg_name, reg_model, reg_resolver, _ in self._iter_registries():
+                if registry_filter and reg_name != registry_filter:
+                    continue
                 if not reg_model:
                     continue
                 registry = reg_model.registry
