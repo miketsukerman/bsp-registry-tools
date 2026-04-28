@@ -312,18 +312,18 @@ bsp gather poky-qemuarm64-scarthgap --output /mnt/artifacts
 bsp completions {bash,zsh,fish,tcsh}
 ```
 
-Prints the shell-specific eval snippet for enabling tab completion.
+Prints the shell-specific eval snippet for enabling tab completion.  See the [Shell Completion](#shell-completion) section below for shell-specific setup instructions.
 
 **Examples:**
 
 ```bash
-# One-time activation in the current session
+# One-time activation in the current bash/zsh session
 eval "$(bsp completions bash)"
 
-# Permanent activation — add to ~/.bashrc
+# Permanent activation for bash — add to ~/.bashrc
 echo 'eval "$(bsp completions bash)"' >> ~/.bashrc
 
-# Permanent activation for zsh — add to ~/.zshrc
+# Permanent activation for zsh — add AFTER source $ZSH/oh-my-zsh.sh
 echo 'eval "$(bsp completions zsh)"' >> ~/.zshrc
 
 # System-wide activation (requires root)
@@ -334,26 +334,52 @@ bsp completions bash | sudo tee /etc/bash_completion.d/bsp
 
 `bsp` supports tab-completion for BSP names and subcommands in **bash**, **zsh**, **fish**, and **tcsh** via [argcomplete](https://kislyuk.github.io/argcomplete/).
 
-### Quick Setup
+The completion script produced by `bsp completions` auto-detects the running shell at source time, so the same script works in both bash and zsh.
 
-Add the following line to your shell configuration file:
+### Bash
 
-**Bash** (`~/.bashrc`):
+Add to `~/.bashrc`:
+
 ```bash
 eval "$(bsp completions bash)"
 ```
 
-**Zsh** (`~/.zshrc`):
+### Zsh (plain zsh, no framework)
+
+Add to `~/.zshrc`:
+
 ```zsh
 eval "$(bsp completions zsh)"
 ```
 
-**Fish** (`~/.config/fish/config.fish`):
+### Zsh with Oh My Zsh
+
+Oh My Zsh calls `compinit` during its own initialisation.  The `compdef` call that registers the `bsp` completer must come **after** `oh-my-zsh.sh` is sourced, otherwise `compdef` is not yet available and the registration is silently skipped.
+
+Add the following lines to `~/.zshrc` **after** the line `source $ZSH/oh-my-zsh.sh`:
+
+```zsh
+# Must appear AFTER:  source $ZSH/oh-my-zsh.sh
+eval "$(bsp completions zsh)"
+```
+
+If the native zsh registration still does not work (e.g. you see no completions or get a "command not found: compdef" error), use the bash-compatibility fallback instead:
+
+```zsh
+# Must appear AFTER:  source $ZSH/oh-my-zsh.sh
+autoload -U bashcompinit && bashcompinit
+eval "$(bsp completions bash)"
+```
+
+### Fish
+
+Add to `~/.config/fish/config.fish`:
+
 ```fish
 bsp completions fish | source
 ```
 
-### System-wide Activation (bash)
+### System-wide Activation (bash / zsh)
 
 ```bash
 # Install for all users (requires root)
