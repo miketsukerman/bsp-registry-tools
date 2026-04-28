@@ -352,6 +352,14 @@ def main() -> int:
             dest="device",
             help='Filter releases by device slug (only used with "releases")'
         )
+        list_parser.add_argument(
+            "--remote",
+            type=str,
+            dest="filter_remote",
+            metavar="NAME",
+            default=None,
+            help="Show only entries from the named remote registry"
+        )
 
         # List containers command
         subparsers.add_parser("containers", help="List available containers")
@@ -370,6 +378,14 @@ def main() -> int:
             "--compact",
             action="store_true",
             help="Show compact output with names/slugs only"
+        )
+        tree_parser.add_argument(
+            "--remote",
+            type=str,
+            dest="filter_remote",
+            metavar="NAME",
+            default=None,
+            help="Show only entries from the named remote registry"
         )
 
         # ----------------------------------------------------------------
@@ -957,17 +973,18 @@ def main() -> int:
         elif args.command == "list":
             list_type = getattr(args, "list_type", None)
             device = getattr(args, "device", None)
+            registry_filter = getattr(args, "filter_remote", None)
             use_color = not args.no_color
             if list_type == "devices":
-                bsp_mgr.list_devices(use_color=use_color)
+                bsp_mgr.list_devices(use_color=use_color, registry_filter=registry_filter)
             elif list_type == "releases":
-                bsp_mgr.list_releases(device_slug=device, use_color=use_color)
+                bsp_mgr.list_releases(device_slug=device, use_color=use_color, registry_filter=registry_filter)
             elif list_type == "features":
-                bsp_mgr.list_features(use_color=use_color)
+                bsp_mgr.list_features(use_color=use_color, registry_filter=registry_filter)
             elif list_type == "distros":
-                bsp_mgr.list_distros(use_color=use_color)
+                bsp_mgr.list_distros(use_color=use_color, registry_filter=registry_filter)
             else:
-                bsp_mgr.list_bsp(use_color=use_color)
+                bsp_mgr.list_bsp(use_color=use_color, registry_filter=registry_filter)
 
         elif args.command == "containers":
             bsp_mgr.list_containers(use_color=not args.no_color)
@@ -976,7 +993,8 @@ def main() -> int:
             full = getattr(args, "full", False)
             compact = getattr(args, "compact", False)
             mode = "full" if full else ("compact" if compact else "default")
-            bsp_mgr.tree_bsp(use_color=not args.no_color, mode=mode)
+            registry_filter = getattr(args, "filter_remote", None)
+            bsp_mgr.tree_bsp(use_color=not args.no_color, mode=mode, registry_filter=registry_filter)
 
         elif args.command == "export":
             device = getattr(args, "device", None)
