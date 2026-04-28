@@ -94,6 +94,10 @@ def _build_manager_for_completion(parsed_args) -> Optional[BspManager]:
         return mgr
 
     except (Exception, SystemExit):  # pylint: disable=broad-except
+        # BspManager.load_configuration() calls sys.exit(1) on registry errors
+        # (missing file, invalid YAML, unsupported version, etc.).  Catching
+        # SystemExit here prevents those errors from crashing the user's shell
+        # session when tab-completion is triggered on a broken registry.
         logger.debug("_build_manager_for_completion failed", exc_info=True)
         return None
 
