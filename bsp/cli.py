@@ -19,6 +19,7 @@ from .completions import (
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .registry_writer import RegistryWriter
 from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION
 
@@ -192,6 +193,344 @@ def _dispatch_completions(args) -> int:
         return 1
 
     return 0
+
+
+# =============================================================================
+# Registry subcommand arg-builder helpers
+# =============================================================================
+
+
+def _add_device_args(parser) -> None:
+    """Attach device-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True, help="Unique device identifier")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--vendor", default="", help="Board vendor slug (e.g. 'advantech')")
+    parser.add_argument("--soc-vendor", dest="soc_vendor", default="",
+                        help="SoC vendor slug (e.g. 'nxp')")
+    parser.add_argument("--soc-family", dest="soc_family", default=None,
+                        help="SoC family identifier (e.g. 'imx8')")
+    parser.add_argument("--architecture", default=None,
+                        help="Target CPU architecture (e.g. 'arm64')")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="KAS configuration files for this device")
+
+
+def _add_vendor_args(parser) -> None:
+    """Attach vendor-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True, help="Unique vendor identifier")
+    parser.add_argument("--name", default="", help="Human-readable vendor name")
+    parser.add_argument("--description", default="", help="Optional description")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="KAS configuration files common to this vendor")
+
+
+def _add_release_args(parser) -> None:
+    """Attach release-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True,
+                        help="Unique release identifier (e.g. 'scarthgap')")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--yocto-version", dest="yocto_version", default=None,
+                        help="Yocto Project version string (e.g. '5.0')")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="Base KAS configuration files for this release")
+
+
+def _add_feature_args(parser) -> None:
+    """Attach feature-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True, help="Unique feature identifier")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="KAS configuration files that enable this feature")
+
+
+def _add_preset_args(parser) -> None:
+    """Attach preset-specific arguments to *parser*."""
+    parser.add_argument("--name", required=True, help="Unique preset name")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--device", required=True, help="Device slug")
+    parser.add_argument("--release", default=None, help="Release slug (single)")
+    parser.add_argument("--releases", nargs="*", metavar="RELEASE",
+                        help="Multiple release slugs (mutually exclusive with --release)")
+    parser.add_argument("--features", nargs="*", metavar="FEATURE",
+                        help="Feature slugs to enable")
+
+
+def _add_distro_args(parser) -> None:
+    """Attach distro-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True, help="Unique distro identifier")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--vendor", default="", help="Distro vendor/maintainer")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="KAS configuration files for this distro")
+
+
+def _add_framework_args(parser) -> None:
+    """Attach framework-specific arguments to *parser*."""
+    parser.add_argument("--slug", required=True, help="Unique framework identifier")
+    parser.add_argument("--description", default="", help="Human-readable description")
+    parser.add_argument("--vendor", default="", help="Framework vendor/maintainer")
+    parser.add_argument("--includes", nargs="*", metavar="FILE",
+                        help="KAS configuration files for this framework")
+
+
+def _add_container_args(parser) -> None:
+    """Attach container-specific arguments to *parser*."""
+    parser.add_argument("--name", required=True, help="Container name key")
+    parser.add_argument("--image", default=None, help="Docker image reference")
+    parser.add_argument("--file", default=None,
+                        help="Dockerfile path (relative to registry dir)")
+
+
+def _add_git_args(parser) -> None:
+    """Add shared ``--git-stage`` / ``--git-commit`` flags to a mutating subcommand."""
+    parser.add_argument("--git-stage", dest="git_stage", action="store_true",
+                        help="Run 'git add' on the registry file after saving")
+    parser.add_argument("--git-commit", dest="git_commit", metavar="MESSAGE", default=None,
+                        help="Run 'git commit' with this message after saving")
+
+
+# =============================================================================
+# Registry subcommand dispatcher
+# =============================================================================
+
+_REGISTRY_ENTITY_TYPES = (
+    "device", "vendor", "release", "feature",
+    "preset", "distro", "framework", "container",
+)
+
+
+def _dispatch_registry(args, registry_path: str) -> int:  # noqa: C901
+    """Handle all ``bsp registry`` sub-commands.
+
+    Returns an integer exit code (0 = success, 1 = failure).
+    """
+    registry_cmd = getattr(args, "registry_command", None)
+
+    # ------------------------------------------------------------------
+    # init — does not need an existing registry file
+    # ------------------------------------------------------------------
+    if registry_cmd == "init":
+        output = getattr(args, "output", None) or registry_path
+        force = getattr(args, "force", False)
+        try:
+            RegistryWriter.init_registry(Path(output), force=force)
+            print(f"Initialised empty registry at {output}")
+            return 0
+        except FileExistsError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+    # For all other sub-commands we need to load an existing file.
+    writer = RegistryWriter()
+    try:
+        writer.load(Path(registry_path))
+    except FileNotFoundError:
+        print(
+            f"Error: Registry file not found: {registry_path}\n"
+            "Use 'bsp --registry <path> registry init --output <path>' to create one.",
+            file=sys.stderr,
+        )
+        return 1
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"Error loading registry: {exc}", file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
+    # validate
+    # ------------------------------------------------------------------
+    if registry_cmd == "validate":
+        issues = writer.validate()
+        if not issues:
+            print("Registry is valid. No issues found.")
+            return 0
+        errors = [i for i in issues if i.severity == "error"]
+        for issue in issues:
+            print(str(issue))
+        return 1 if errors else 0
+
+    # ------------------------------------------------------------------
+    # diff
+    # ------------------------------------------------------------------
+    if registry_cmd == "diff":
+        other = getattr(args, "other", None)
+        if not other:
+            print("Error: provide a second registry file as positional argument.",
+                  file=sys.stderr)
+            return 1
+        try:
+            result = writer.diff(Path(other))
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        print(result, end="")
+        return 0
+
+    # ------------------------------------------------------------------
+    # add / edit / remove / show
+    # ------------------------------------------------------------------
+    entity_type = getattr(args, "registry_entity", None)
+    if entity_type is None:
+        print("Error: no entity type specified.", file=sys.stderr)
+        return 1
+
+    try:
+        if registry_cmd == "show":
+            return _registry_show(writer, entity_type, args)
+
+        if registry_cmd == "add":
+            result = _registry_add(writer, entity_type, args)
+        elif registry_cmd == "edit":
+            result = _registry_edit(writer, entity_type, args)
+        elif registry_cmd == "remove":
+            _registry_remove(writer, entity_type, args)
+            result = None
+        else:
+            print(f"Error: unknown registry command '{registry_cmd}'.", file=sys.stderr)
+            return 1
+
+        writer.save()
+        if getattr(args, "git_stage", False):
+            writer.git_stage()
+        git_msg = getattr(args, "git_commit", None)
+        if git_msg:
+            writer.git_commit(git_msg)
+
+        if registry_cmd == "remove":
+            if entity_type in ("preset", "container"):
+                id_val = getattr(args, "name", None)
+            else:
+                id_val = getattr(args, "slug", None)
+            print(f"Removed {entity_type} '{id_val}'.")
+        elif result is not None:
+            import yaml as _yaml
+            print(_yaml.dump(result, default_flow_style=False, allow_unicode=True,
+                             sort_keys=False), end="")
+
+    except (KeyError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+def _registry_show(writer: RegistryWriter, entity_type: str, args) -> int:
+    """Print entity / entities as YAML and return exit code."""
+    import yaml as _yaml
+
+    try:
+        if entity_type == "container":
+            name = getattr(args, "name", None)
+            result = writer.show_container(name)
+        elif entity_type == "preset":
+            name = getattr(args, "name", None)
+            result = writer.show_preset(name)
+        else:
+            slug = getattr(args, "slug", None)
+            show_fn = getattr(writer, f"show_{entity_type}")
+            result = show_fn(slug)
+    except (KeyError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(_yaml.dump(result, default_flow_style=False, allow_unicode=True,
+                     sort_keys=False), end="")
+    return 0
+
+
+def _registry_add(writer: RegistryWriter, entity_type: str, args) -> dict:
+    """Delegate to the appropriate writer.add_* method."""
+    if entity_type == "device":
+        return writer.add_device(
+            slug=args.slug,
+            description=args.description,
+            vendor=args.vendor,
+            soc_vendor=args.soc_vendor,
+            soc_family=getattr(args, "soc_family", None),
+            architecture=getattr(args, "architecture", None),
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "vendor":
+        return writer.add_vendor(
+            slug=args.slug,
+            name=getattr(args, "name", ""),
+            description=getattr(args, "description", ""),
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "release":
+        return writer.add_release(
+            slug=args.slug,
+            description=args.description,
+            yocto_version=getattr(args, "yocto_version", None),
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "feature":
+        return writer.add_feature(
+            slug=args.slug,
+            description=args.description,
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "preset":
+        return writer.add_preset(
+            name=args.name,
+            description=args.description,
+            device=args.device,
+            release=getattr(args, "release", None),
+            releases=getattr(args, "releases", None),
+            features=getattr(args, "features", None),
+        )
+    if entity_type == "distro":
+        return writer.add_distro(
+            slug=args.slug,
+            description=args.description,
+            vendor=getattr(args, "vendor", ""),
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "framework":
+        return writer.add_framework(
+            slug=args.slug,
+            description=args.description,
+            vendor=getattr(args, "vendor", ""),
+            includes=getattr(args, "includes", None),
+        )
+    if entity_type == "container":
+        return writer.add_container(
+            name=args.name,
+            image=args.image or "",
+            file=getattr(args, "file", None),
+        )
+    raise ValueError(f"Unknown entity type: {entity_type}")
+
+
+def _registry_edit(writer: RegistryWriter, entity_type: str, args) -> dict:
+    """Delegate to the appropriate writer.edit_* method."""
+    _skip = frozenset({
+        "registry_command", "registry_entity", "git_stage", "git_commit",
+        "command", "verbose", "no_color", "registry", "remote", "branch",
+        "update", "local",
+    })
+    fields = {k: v for k, v in vars(args).items()
+              if k not in _skip and v is not None}
+    if entity_type in ("preset", "container"):
+        id_val = args.name
+        fields.pop("name", None)
+        edit_fn = getattr(writer, f"edit_{entity_type}")
+        return edit_fn(id_val, **fields)
+    id_val = args.slug
+    fields.pop("slug", None)
+    edit_fn = getattr(writer, f"edit_{entity_type}")
+    return edit_fn(id_val, **fields)
+
+
+def _registry_remove(writer: RegistryWriter, entity_type: str, args) -> None:
+    """Delegate to the appropriate writer.remove_* method."""
+    if entity_type == "preset":
+        writer.remove_preset(args.name)
+    elif entity_type == "container":
+        writer.remove_container(args.name)
+    else:
+        remove_fn = getattr(writer, f"remove_{entity_type}")
+        remove_fn(args.slug)
+
 
 # =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
@@ -867,6 +1206,115 @@ def main() -> int:
             ),
         )
 
+        # ----------------------------------------------------------------
+        # Registry management command group
+        # ----------------------------------------------------------------
+        registry_parser = subparsers.add_parser(
+            "registry",
+            help="Manage the BSP registry file (CRUD for entities)",
+        )
+        registry_subparsers = registry_parser.add_subparsers(
+            dest="registry_command",
+            help="Registry operation",
+            required=True,
+        )
+
+        # bsp registry init
+        reg_init = registry_subparsers.add_parser(
+            "init",
+            help="Create a new empty registry file",
+        )
+        reg_init.add_argument(
+            "--output", "-o", metavar="FILE", default=None,
+            help="Path for the new registry file (default: bsp-registry.yaml)",
+        )
+        reg_init.add_argument(
+            "--force", action="store_true",
+            help="Overwrite an existing file",
+        )
+
+        # bsp registry validate
+        registry_subparsers.add_parser(
+            "validate",
+            help="Validate the registry file and report issues",
+        )
+
+        # bsp registry diff <other>
+        reg_diff = registry_subparsers.add_parser(
+            "diff",
+            help="Show a unified diff between two registry files",
+        )
+        reg_diff.add_argument(
+            "other", metavar="FILE",
+            help="Registry file to compare against the loaded one",
+        )
+
+        # bsp registry add <entity>
+        reg_add = registry_subparsers.add_parser("add", help="Add an entity to the registry")
+        reg_add_entity = reg_add.add_subparsers(dest="registry_entity", required=True)
+        for _etype, _add_fn in (
+            ("device", _add_device_args),
+            ("vendor", _add_vendor_args),
+            ("release", _add_release_args),
+            ("feature", _add_feature_args),
+            ("preset", _add_preset_args),
+            ("distro", _add_distro_args),
+            ("framework", _add_framework_args),
+            ("container", _add_container_args),
+        ):
+            _p = reg_add_entity.add_parser(_etype, help=f"Add a {_etype}")
+            _add_fn(_p)
+            _add_git_args(_p)
+
+        # bsp registry edit <entity>  --slug <slug>  [fields]
+        reg_edit = registry_subparsers.add_parser("edit", help="Edit an existing entity")
+        reg_edit_entity = reg_edit.add_subparsers(dest="registry_entity", required=True)
+        for _etype, _add_fn in (
+            ("device", _add_device_args),
+            ("vendor", _add_vendor_args),
+            ("release", _add_release_args),
+            ("feature", _add_feature_args),
+            ("preset", _add_preset_args),
+            ("distro", _add_distro_args),
+            ("framework", _add_framework_args),
+            ("container", _add_container_args),
+        ):
+            _p = reg_edit_entity.add_parser(_etype, help=f"Edit a {_etype}")
+            # Re-use the same helper but override required=True on the id arg
+            _add_fn(_p)
+            # For edit, make --slug / --name optional (only update provided fields)
+            for action in _p._actions:
+                if action.dest in ("slug", "name"):
+                    action.required = True  # still required: we need to know which entity
+                else:
+                    action.required = False
+            _add_git_args(_p)
+
+        # bsp registry remove <entity>  --slug <slug>
+        reg_remove = registry_subparsers.add_parser("remove", help="Remove an entity")
+        reg_remove_entity = reg_remove.add_subparsers(dest="registry_entity", required=True)
+        for _etype in _REGISTRY_ENTITY_TYPES:
+            _p = reg_remove_entity.add_parser(_etype, help=f"Remove a {_etype}")
+            if _etype in ("preset", "container"):
+                _p.add_argument("--name", required=True,
+                                help=f"{_etype.capitalize()} name to remove")
+            else:
+                _p.add_argument("--slug", required=True,
+                                help=f"{_etype.capitalize()} slug to remove")
+            _add_git_args(_p)
+
+        # bsp registry show <entity>  [--slug <slug>]
+        reg_show = registry_subparsers.add_parser("show", help="Show entity details")
+        reg_show_entity = reg_show.add_subparsers(dest="registry_entity", required=True)
+        for _etype in _REGISTRY_ENTITY_TYPES:
+            _p = reg_show_entity.add_parser(_etype, help=f"Show {_etype}(s)")
+            if _etype in ("preset", "container"):
+                _p.add_argument("--name", default=None,
+                                help=f"Optional {_etype} name (omit to list all)")
+            else:
+                _p.add_argument("--slug", default=None,
+                                help=f"Optional {_etype} slug (omit to list all)")
+
         # Activate argcomplete (exits immediately when shell is completing;
         # no-ops when argcomplete is not installed).
         try:
@@ -902,6 +1350,21 @@ def main() -> int:
 
         if args.command == "completions":
             return _dispatch_completions(args)
+
+        # ----------------------------------------------------------------
+        # Dispatch registry commands — operate on raw YAML, no BspManager.
+        # Resolve the registry file path first (local only; no remote fetch).
+        # ----------------------------------------------------------------
+        if args.command == "registry":
+            LOCAL_DEFAULTS_REG = ["bsp-registry.yaml", "bsp-registry.yml"]
+            if args.registry is not None:
+                reg_file_path = args.registry
+            else:
+                reg_file_path = next(
+                    (name for name in LOCAL_DEFAULTS_REG if Path(name).is_file()),
+                    LOCAL_DEFAULTS_REG[0],
+                )
+            return _dispatch_registry(args, reg_file_path)
 
         # Resolve registry file path
         LOCAL_DEFAULTS = ["bsp-registry.yaml", "bsp-registry.yml"]
