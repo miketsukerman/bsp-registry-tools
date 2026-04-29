@@ -1,34 +1,41 @@
-% BSP Registry Tools — Technical Reference
+% BSP Registry Tools - Technical Reference
 % A4 LaTeX document
-% Compile with: pdflatex bsp_registry_tools.tex
+% Compile with: pdflatex bsp_registry_tools.tex  (run twice for TOC)
 \documentclass[a4paper,11pt]{article}
 
-% ── Encoding & fonts ──────────────────────────────────────────────────────────
+% -- Encoding & fonts ----------------------------------------------------------
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
 
-% ── Page geometry ─────────────────────────────────────────────────────────────
+% -- Page geometry -------------------------------------------------------------
 \usepackage[a4paper,
             top=25mm, bottom=25mm,
             left=22mm, right=22mm,
             headheight=14pt]{geometry}
 
-% ── Colours ───────────────────────────────────────────────────────────────────
+% -- Colours -------------------------------------------------------------------
 \usepackage[table,dvipsnames]{xcolor}
+% Structural colours
 \definecolor{accent}{RGB}{0,140,110}
 \definecolor{sectionbg}{RGB}{235,248,244}
-\definecolor{codebg}{RGB}{245,245,245}
-\definecolor{codefg}{RGB}{40,40,120}
+\definecolor{codebg}{RGB}{246,248,250}
 \definecolor{tableheadbg}{RGB}{210,230,240}
 \definecolor{titleblue}{RGB}{30,80,150}
 \definecolor{roweven}{RGB}{252,252,252}
 \definecolor{rowodd}{RGB}{243,248,253}
+% Syntax highlighting colours
+\definecolor{kwblue}{RGB}{0,0,200}
+\definecolor{kwpurple}{RGB}{120,0,180}
+\definecolor{strred}{RGB}{163,21,21}
+\definecolor{cmtgreen}{RGB}{30,140,30}
+\definecolor{numbrn}{RGB}{180,80,0}
+\definecolor{bashkw}{RGB}{0,80,160}
 
-% ── Micro-typography ──────────────────────────────────────────────────────────
+% -- Micro-typography ----------------------------------------------------------
 \usepackage{microtype}
 
-% ── Headers / footers ─────────────────────────────────────────────────────────
+% -- Headers / footers ---------------------------------------------------------
 \usepackage{fancyhdr}
 \pagestyle{fancy}
 \fancyhf{}
@@ -37,25 +44,27 @@
 \fancyhead[R]{\small\textit{Advantech EECC}}
 \fancyfoot[C]{\small\thepage}
 
-% ── Section styling ───────────────────────────────────────────────────────────
+% -- Section styling -----------------------------------------------------------
 \usepackage{titlesec}
 \titleformat{\section}
   {\large\bfseries\color{accent}}
   {\thesection.}{0.6em}{}
   [\vspace{-2pt}\textcolor{accent}{\rule{\linewidth}{0.6pt}}]
-
 \titleformat{\subsection}
-  {\normalsize\bfseries\color{gray}}
+  {\normalsize\bfseries\color{gray!70!black}}
   {\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}
+  {\small\bfseries\color{gray!50!black}}
+  {\thesubsubsection}{0.6em}{}
 
-% ── Hyperlinks ────────────────────────────────────────────────────────────────
+% -- Hyperlinks ----------------------------------------------------------------
 \usepackage[colorlinks=true,
             linkcolor=accent,
             urlcolor=titleblue,
             bookmarks=true,
             bookmarksopen=true]{hyperref}
 
-% ── Tables ────────────────────────────────────────────────────────────────────
+% -- Tables --------------------------------------------------------------------
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{array}
@@ -65,39 +74,83 @@
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 \renewcommand{\arraystretch}{1.3}
 
-% ── Code listings ─────────────────────────────────────────────────────────────
+% -- Code listings with syntax highlighting ------------------------------------
 \usepackage{listings}
+
+% Python language definition
+\lstdefinelanguage{Python}{
+  morekeywords={def,class,return,if,else,elif,for,while,import,from,as,
+                with,try,except,raise,pass,True,False,None,and,or,not,
+                in,is,lambda,yield,async,await,global,nonlocal,del,assert,
+                print,range,len,str,int,list,dict,tuple,set,type},
+  keywordstyle=\color{kwblue}\bfseries,
+  morestring=[b]",
+  morestring=[b]',
+  stringstyle=\color{strred},
+  morecomment=[l]{\#},
+  commentstyle=\color{cmtgreen}\itshape,
+  sensitive=true,
+}
+
+% YAML language definition
+\lstdefinelanguage{YAML}{
+  keywords={true,false,null,yes,no,True,False,Null},
+  keywordstyle=\color{kwpurple}\bfseries,
+  morestring=[b]",
+  morestring=[b]',
+  stringstyle=\color{strred},
+  morecomment=[l]{\#},
+  commentstyle=\color{cmtgreen}\itshape,
+  sensitive=false,
+  % Highlight YAML keys (word followed by colon)
+  moredelim=[l][\color{bashkw}]{- },
+}
+
+% Bash / shell language definition
+\lstdefinelanguage{Bash}{
+  morekeywords={pip,bsp,git,export,curl,az,aws,kas,echo,cat,ls,cd,source},
+  keywordstyle=\color{bashkw}\bfseries,
+  morestring=[b]",
+  morestring=[b]',
+  stringstyle=\color{strred},
+  morecomment=[l]{\#},
+  commentstyle=\color{cmtgreen}\itshape,
+  sensitive=true,
+}
+
+% Base listing style
 \lstset{
   backgroundcolor=\color{codebg},
-  basicstyle=\small\ttfamily\color{codefg},
+  basicstyle=\small\ttfamily,
   breaklines=true,
   breakatwhitespace=false,
   frame=single,
-  rulecolor=\color{gray!40},
-  framesep=4pt,
+  rulecolor=\color{gray!35},
+  framesep=5pt,
   aboveskip=6pt,
   belowskip=6pt,
   xleftmargin=4pt,
   xrightmargin=4pt,
   showstringspaces=false,
   tabsize=2,
+  numbers=none,
 }
 
-% ── Graphics ──────────────────────────────────────────────────────────────────
+% -- Graphics ------------------------------------------------------------------
 \usepackage{graphicx}
 \graphicspath{{images/}}
 
-% ── Lists ─────────────────────────────────────────────────────────────────────
+% -- Lists ---------------------------------------------------------------------
 \usepackage{enumitem}
 \setlist[itemize]{leftmargin=*,topsep=2pt,itemsep=1pt}
 \setlist[enumerate]{leftmargin=*,topsep=2pt,itemsep=1pt}
 
-% ── Misc ──────────────────────────────────────────────────────────────────────
+% -- Misc ----------------------------------------------------------------------
 \usepackage{parskip}
 \usepackage{tcolorbox}
 \tcbuselibrary{skins}
 
-% ── Custom environments ───────────────────────────────────────────────────────
+% -- Custom environments -------------------------------------------------------
 \newtcolorbox{infobox}{
   enhanced,
   colback=sectionbg,
@@ -106,16 +159,24 @@
   arc=3pt,
   left=6pt, right=6pt, top=4pt, bottom=4pt,
 }
+\newtcolorbox{notebox}{
+  enhanced,
+  colback=yellow!12!white,
+  colframe=numbrn,
+  boxrule=0.6pt,
+  arc=3pt,
+  left=6pt, right=6pt, top=4pt, bottom=4pt,
+  fontupper=\small,
+}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \begin{document}
 
-% ── Cover page ────────────────────────────────────────────────────────────────
+% -- Cover page ----------------------------------------------------------------
 \begin{titlepage}
   \pagecolor{white}
   \newgeometry{top=0mm,bottom=0mm,left=0mm,right=0mm}
-  % Top accent bar
-  \noindent\colorbox{accent}{\rule{0pt}{6pt}\hspace{\paperwidth}}\\[30mm]
+  \noindent\colorbox{accent}{\rule{0pt}{6pt}\hspace{\paperwidth}}\\[28mm]
 
   \begin{center}
     {\Huge\bfseries\color{titleblue} BSP Registry Tools}\\[6mm]
@@ -123,20 +184,19 @@
       Streamlined Yocto \& Isar BSP Management\\[2mm]
       for Embedded Linux Teams}\\[10mm]
     {\large\itshape\color{gray}
-      From registry to built image --- one command}\\[18mm]
+      From registry to built image --- one command}\\[16mm]
 
     \begin{tcolorbox}[
-        enhanced, width=120mm,
+        enhanced, width=128mm,
         colback=sectionbg, colframe=accent, boxrule=0.8pt, arc=4pt,
         left=8pt, right=8pt, top=6pt, bottom=6pt]
-      \ttfamily pip install bsp-registry-tools\\
-      \ttfamily github.com/Advantech-EECC/bsp-registry\\
-      License: Apache 2.0
+      \ttfamily\small pip install bsp-registry-tools\\[2pt]
+      \ttfamily\small github.com/Advantech-EECC/bsp-registry\\[2pt]
+      \ttfamily\small License: Apache 2.0
     \end{tcolorbox}
   \end{center}
 
   \vfill
-  % Bottom accent bar
   \noindent\colorbox{accent}{%
     \parbox{\paperwidth}{%
       \centering\small\color{white}\bfseries
@@ -150,34 +210,37 @@
 \tableofcontents
 \clearpage
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Overview}
 
-BSP Registry Tools is a Python CLI and library for managing Board Support Packages
-(BSPs) for embedded Linux systems. It uses a YAML-based registry (schema v2.0) as
-the single source of truth, covering devices, Yocto/Isar releases, composable
-features, named presets, Docker container definitions, cloud deployment, and CI/CD
-integration.
+BSP Registry Tools is a Python CLI and library for managing Board Support
+Packages (BSPs) for embedded Linux systems based on Yocto Project or Isar
+(Debian-based). It uses a YAML registry (schema~v2.0) as the single source of
+truth for all configuration, enabling reproducible, team-shareable builds across
+dozens of boards and release combinations.
 
 \begin{itemize}
-  \item Python CLI tool (\texttt{bsp}) and importable Python API
-        (\texttt{BspManager}, \texttt{V2Resolver}, \ldots)
+  \item Python CLI tool (\texttt{bsp}) and importable Python API (\texttt{BspManager})
   \item YAML registry v2.0 --- devices, releases, features, presets, environments
-  \item Wraps KAS (\texttt{kas} / \texttt{kas-container}) for reproducible Yocto and Isar builds
+  \item Wraps KAS (\texttt{kas} / \texttt{kas-container}) for Yocto and Isar builds
   \item Zero-config first run --- auto-clones the Advantech registry on first use
+  \item Named remote management --- save/reuse remote registries like git remotes
+  \item Environment variable expansion via \texttt{\$ENV\{VAR\}} in registry YAML
   \item Cloud artifact deploy / gather (Azure Blob Storage, AWS S3)
   \item HTTP server with REST + GraphQL APIs (FastAPI + Strawberry)
-  \item Shell tab completions for all arguments
+  \item Shell tab completions for all arguments (Bash, Zsh, Fish, tcsh)
+  \item HIL test triggering via LAVA with Robot Framework suites
+  \item Interactive registry editor (\texttt{bsp registry add/edit/remove})
+  \item Registry validation, diff, and split across multiple files
 \end{itemize}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{System Architecture}
 
-The diagram below shows how the BSP Registry Tools components interact with each
-other and with external systems. The \texttt{BspManager} API is the central hub
-connecting all user-facing interfaces (CLI, TUI/GUI explorer, HTTP server) to the
-underlying build infrastructure (KAS, container engines, cloud storage, LAVA test
-infrastructure).
+Figure~\ref{fig:arch} shows how the BSP Registry Tools components interact.
+The \texttt{BspManager} API is the central hub connecting all user-facing
+interfaces (CLI, TUI/GUI explorer, HTTP server) to the underlying build
+infrastructure (KAS, container engines, cloud storage, LAVA test infrastructure).
 
 \begin{figure}[htbp]
   \centering
@@ -195,7 +258,7 @@ infrastructure).
   \rowcolor{roweven} bsp CLI
     & Primary user interface --- build, list, export, deploy, gather, registry CRUD \\
   \rowcolor{rowodd}  bsp-explorer
-    & TUI / GUI interface (interactive terminal explorer) \\
+    & TUI / GUI interface for interactive registry browsing \\
   \rowcolor{roweven} bsp server
     & HTTP REST + GraphQL server for automation and dashboards \\
   \rowcolor{rowodd}  BspManager API
@@ -205,49 +268,76 @@ infrastructure).
   \rowcolor{rowodd}  KAS Build System
     & Orchestrates Yocto BitBake or Isar builds from YAML config files \\
   \rowcolor{roweven} Container Engine
-    & Docker / Podman provides isolated, reproducible build environments \\
+    & Docker / Podman for isolated, reproducible build environments \\
   \rowcolor{rowodd}  Cloud Storage
-    & Azure Blob / AWS S3 for artifact upload (\texttt{deploy}) and download (\texttt{gather}) \\
+    & Azure Blob / AWS S3 for artifact upload and download \\
   \rowcolor{roweven} HIL Test / LAVA
     & Hardware-in-the-loop test automation via LAVA \\
+  \rowcolor{rowodd}  bsp-registry.yaml
+    & Git repository or local folder holding all KAS YAML, Dockerfiles,
+      LAVA test configs, and cloud storage config \\
   \bottomrule
 \end{tabularx}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Installation}
 
 Python 3.8 or later is required. A virtual environment is strongly recommended.
 
-\subsection{Core install}
+\subsection{From PyPI}
 
-\begin{lstlisting}[language=bash]
+\begin{lstlisting}[language=Bash]
 pip install bsp-registry-tools
+\end{lstlisting}
+
+\subsection{From Source}
+
+\begin{lstlisting}[language=Bash]
+git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
+cd bsp-registry-tools
+pip install .
 \end{lstlisting}
 
 \subsection{Optional extras}
 
-\begin{tabularx}{\linewidth}{L{35mm}X}
+\begin{tabularx}{\linewidth}{L{38mm}X}
   \rowcolor{tableheadbg}
   \textbf{Extra} & \textbf{Installs} \\
   \toprule
-  \rowcolor{roweven} \texttt{[azure]}       & Azure Blob Storage upload / download \\
-  \rowcolor{rowodd}  \texttt{[aws]}         & AWS S3 upload / download \\
-  \rowcolor{roweven} \texttt{[server]}      & FastAPI + uvicorn + Strawberry GraphQL \\
-  \rowcolor{rowodd}  \texttt{[completions]} & Shell tab completions (argcomplete) \\
-  \rowcolor{roweven} \texttt{[dev]}         & pytest, coverage, ruff, \ldots \\
+  \rowcolor{roweven} \texttt{[azure]}       & Azure Blob Storage support (\texttt{azure-storage-blob}, \texttt{azure-identity}) \\
+  \rowcolor{rowodd}  \texttt{[aws]}         & AWS S3 support (\texttt{boto3}) \\
+  \rowcolor{roweven} \texttt{[deploy]}      & Both Azure and AWS \\
+  \rowcolor{rowodd}  \texttt{[server]}      & FastAPI + uvicorn + Strawberry GraphQL \\
+  \rowcolor{roweven} \texttt{[completions]} & Shell tab completions (\texttt{argcomplete}) \\
+  \rowcolor{rowodd}  \texttt{[dev]}         & pytest, coverage, ruff, mypy \\
   \bottomrule
 \end{tabularx}
 
-\begin{lstlisting}[language=bash]
-pip install "bsp-registry-tools[azure,completions]"
+\begin{lstlisting}[language=Bash]
+pip install "bsp-registry-tools[azure,completions,server]"
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Core Dependencies}
+
+\begin{tabularx}{\linewidth}{L{38mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Package} & \textbf{Purpose} \\
+  \toprule
+  \rowcolor{roweven} PyYAML >= 6.0            & YAML registry parsing \\
+  \rowcolor{rowodd}  dacite >= 1.6.0          & Dataclass deserialization from YAML \\
+  \rowcolor{roweven} kas >= 4.7               & KAS build orchestrator \\
+  \rowcolor{rowodd}  colorama >= 0.4.6        & Coloured terminal output \\
+  \rowcolor{roweven} requests >= 2.28.0       & LAVA HIL test integration \\
+  \rowcolor{rowodd}  Jinja2 >= 3.1.0          & LAVA job template rendering \\
+  \bottomrule
+\end{tabularx}
+
+% -----------------------------------------------------------------------------
 \section{Supported Hardware}
 
 \subsection{NXP i.MX Boards (Advantech Europe)}
 
-\begin{tabularx}{\linewidth}{L{22mm}L{22mm}XL{22mm}}
+\begin{tabularx}{\linewidth}{L{24mm}L{24mm}XL{22mm}}
   \rowcolor{tableheadbg}
   \textbf{Board} & \textbf{SoC} & \textbf{Yocto Releases} & \textbf{Status} \\
   \toprule
@@ -285,7 +375,7 @@ pip install "bsp-registry-tools[azure,completions]"
   \item \texttt{qemux86-64} / \texttt{qemuamd64} --- x86-64
 \end{itemize}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Supported Releases}
 
 \subsection{Yocto Releases}
@@ -317,116 +407,426 @@ pip install "bsp-registry-tools[azure,completions]"
   \bottomrule
 \end{tabularx}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Registry Schema v2}
+\label{sec:registry}
 
 The registry uses a YAML file (default: \texttt{bsp-registry.yml}) with schema
-version 2.0. The file decomposes into independent, reusable sections:
+version 2.0. The top-level structure is:
+
+\begin{lstlisting}[language=YAML]
+specification:
+  version: "2.0"          # required; tool exits on mismatch
+
+include:                  # optional -- list of additional YAML files to merge
+  - devices/boards.yaml
+  - releases/scarthgap.yaml
+
+environment:              # optional -- global env vars for every build
+  variables:
+    - name: "DL_DIR"
+      value: "$ENV{HOME}/downloads"
+  copy:                   # optional -- files copied before every build
+    - scripts/global-setup.sh: build/
+
+environments:             # optional -- named build environments (dict)
+  default:
+    container: "ubuntu-22.04"
+    variables:
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/sstate"
+
+containers:               # optional -- Docker image definitions (dict)
+  ubuntu-22.04:
+    image: "bsp/kas:5.2"
+    file: Dockerfile
+
+registry:
+  frameworks: [...]       # build-system framework defs (Yocto, Isar)
+  distro: [...]           # distribution defs (Poky, fsl-imx-xwayland, ...)
+  vendors: [...]          # cross-release vendor KAS fragments
+  devices: [...]          # hardware board definitions
+  releases: [...]         # Yocto / Isar release definitions
+  features: [...]         # optional add-ons
+  bsp: [...]              # named presets (device + release + features)
+
+deploy:                   # optional -- cloud artifact upload config
+  provider: azure         # "azure" (default) or "aws"
+  container: bsp-artifacts
+  prefix: "{vendor}/{device}/{release}/{date}"
+\end{lstlisting}
+
+\subsection{Registry Sections Summary}
 
 \begin{tabularx}{\linewidth}{L{36mm}X}
   \rowcolor{tableheadbg}
   \textbf{Section} & \textbf{Purpose} \\
   \toprule
-  \rowcolor{roweven} \texttt{frameworks}   & Build-system definitions (Yocto, Isar) \\
+  \rowcolor{roweven} \texttt{frameworks}   & Build-system definitions (Yocto, Isar); referenced by distros \\
   \rowcolor{rowodd}  \texttt{distro}       & Distribution definitions (Poky, fsl-imx-xwayland, \ldots) \\
   \rowcolor{roweven} \texttt{vendors}      & Cross-release board-vendor KAS fragments \\
   \rowcolor{rowodd}  \texttt{devices}      & Hardware board definitions (slug, vendor, SoC, KAS includes) \\
-  \rowcolor{roweven} \texttt{releases}     & Yocto / Isar release definitions with vendor overrides \\
-  \rowcolor{rowodd}  \texttt{features}     & Optional add-ons (OTA, secure-boot, ROS 2, hailo, \ldots) \\
+  \rowcolor{roweven} \texttt{releases}     & Yocto/Isar release definitions with optional vendor overrides \\
+  \rowcolor{rowodd}  \texttt{features}     & Optional composable add-ons (OTA, secure-boot, ROS2, \ldots) \\
   \rowcolor{roweven} \texttt{bsp}          & Named presets = device + release(s) + features \\
   \rowcolor{rowodd}  \texttt{environments} & Container + variable bundles per build class \\
-  \rowcolor{roweven} \texttt{containers}   & Docker image definitions \\
+  \rowcolor{roweven} \texttt{containers}   & Docker image definitions with optional volume mounts \\
   \rowcolor{rowodd}  \texttt{deploy}       & Cloud artifact upload configuration (Azure / AWS) \\
   \rowcolor{roweven} \texttt{include}      & Split large registries across multiple files \\
   \bottomrule
 \end{tabularx}
 
-\subsection{Device Definition Example}
+\subsection{File Splitting with \texttt{include}}
 
-\begin{lstlisting}[language={}]
+Large registries can be split across multiple YAML files using the top-level
+\texttt{include} directive.  Each included file is merged before the root file's
+own content is processed.
+
+\begin{tabularx}{\linewidth}{L{28mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Data type} & \textbf{Merge behaviour} \\
+  \toprule
+  \rowcolor{roweven} Lists (devices, releases, \ldots)
+    & Concatenated --- included items appear before the including file's items \\
+  \rowcolor{rowodd}  Dicts (containers, environments)
+    & Merged recursively --- including file wins on conflicting keys \\
+  \rowcolor{roweven} Scalars
+    & Including file wins \\
+  \bottomrule
+\end{tabularx}
+
+\begin{notebox}
+  Included files can themselves contain \texttt{include} directives
+  (paths are always resolved relative to the file containing the directive).
+  Circular includes are detected at load time.
+  The \texttt{specification} block is silently stripped from included files.
+\end{notebox}
+
+\subsection{Device Definition}
+
+\begin{lstlisting}[language=YAML]
 registry:
   devices:
-    - slug: rsb3720
+    - slug: rsb3720          # unique identifier
       description: "Advantech RSB-3720 (i.MX8M Plus, 6GB)"
       vendor: advantech-europe
       soc_vendor: nxp
-      architecture: arm64
+      soc_family: imx8       # optional
       includes:
         - vendors/advantech-europe/nxp/machine/imx8/rsb3720.yml
+      local_conf:             # optional: extra lines appended to local.conf
+        - "MACHINE_EXTRA_RDEPENDS += 'kernel-modules'"
+      copy:                   # optional: files copied before the build
+        - scripts/setup.sh: build/rsb3720/
 \end{lstlisting}
 
-\subsection{Named Preset Example}
+\begin{tabularx}{\linewidth}{L{28mm}L{18mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Field} & \textbf{Type} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{slug}        & string   & Unique identifier; used in CLI and presets \\
+  \rowcolor{rowodd}  \texttt{vendor}      & string   & Board vendor name \\
+  \rowcolor{roweven} \texttt{soc\_vendor} & string   & Silicon vendor (for compatibility checks) \\
+  \rowcolor{rowodd}  \texttt{soc\_family} & string?  & SoC family (for compatibility checks) \\
+  \rowcolor{roweven} \texttt{includes}    & list     & Device-specific KAS configuration files \\
+  \rowcolor{rowodd}  \texttt{local\_conf} & list     & Lines appended to \texttt{local.conf} \\
+  \rowcolor{roweven} \texttt{copy}        & list     & Files to copy before each build \\
+  \bottomrule
+\end{tabularx}
 
-\begin{lstlisting}[language={}]
+\subsection{Release Definition}
+
+\begin{lstlisting}[language=YAML]
+registry:
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      yocto_version: "5.0"
+      distro: poky              # references distro[*].slug
+      # environment: default   # optional named environment
+      includes:
+        - kas/scarthgap.yaml
+      vendor_overrides:         # optional per-vendor overrides (see next section)
+        - vendor: advantech-europe
+          includes:
+            - kas/advantech-europe/scarthgap-vendor.yaml
+\end{lstlisting}
+
+\subsection{Named Preset (BSP)}
+
+\begin{lstlisting}[language=YAML]
 registry:
   bsp:
     - name: modular-bsp-rsb3720
-      description: "Advantech RSB-3720 (i.MX8)"
+      description: "Advantech RSB-3720 (i.MX8M Plus)"
       device: rsb3720
       releases: [scarthgap, styhead, walnascar, whinlatter]
       features: [systemd, security, virtualization, ipv6, usrmerge]
-      build:
+      build:                         # optional overrides
         path: build/modular-bsp-rsb3720
+        # container: "ubuntu-22.04" # optional container override
+    - name: modular-bsp-rsb3720-imx6.6.53
+      description: "RSB-3720 pinned to i.MX BSP 6.6.53"
+      device: rsb3720
+      release: scarthgap             # single-release form
+      vendor_release: imx-6.6.53    # pin kernel/firmware version
+      features: [systemd, security]
 \end{lstlisting}
 
-\subsection{Vendor Override Example}
+\subsection{Vendor Overrides}
 
-Vendor overrides allow a single release slug (e.g.\ \texttt{scarthgap}) to apply
-different KAS fragments and distro settings per hardware vendor / SoC combination,
-with optional kernel sub-release pinning:
+Vendor overrides let a single release slug (e.g.\ \texttt{scarthgap}) apply
+different KAS fragments, distro settings, and kernel/firmware version pins per
+hardware vendor and SoC family.
 
-\begin{lstlisting}[language={}]
+\subsubsection{Basic Vendor Override}
+
+\begin{lstlisting}[language=YAML]
 releases:
   - slug: scarthgap
     distro: poky
     includes:
-      - compilers/clang/clang.yml
-      - yocto/releases/scarthgap.yml
+      - kas/scarthgap.yaml
     vendor_overrides:
       - vendor: advantech-europe
-        soc_vendors:
-          - vendor: nxp
-            distro: fsl-imx-xwayland
+        distro: fsl-imx-xwayland   # overrides release.distro for this vendor
+        includes:
+          - kas/advantech-europe/scarthgap-vendor.yaml
+        releases:                  # optional kernel/firmware sub-releases
+          - slug: imx-6.6.52-2.2.2
             includes:
-              - vendors/advantech-europe/nxp/modular-bsp-nxp.yml
-            releases:
-              - slug: imx-6.6.52-2.2.2
-                includes:
-                  - vendors/advantech-europe/nxp/imx-6.6.52-2.2.2-scarthgap.yml
+              - kas/advantech-europe/nxp/imx-6.6.52-2.2.2-scarthgap.yml
+          - slug: imx-6.12.0
+            includes:
+              - kas/advantech-europe/nxp/imx-6.12.0-scarthgap.yml
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Feature System}
+\subsubsection{SoC Vendor Overrides}
 
-Features are optional, composable add-ons that can be mixed into any BSP preset.
-They support \texttt{vendor\_overrides} and \texttt{release\_overrides} so the correct
-KAS fragments are injected automatically based on the target hardware and Yocto release.
+When a board vendor ships hardware based on multiple SoC families, the
+\texttt{soc\_vendors} list selects per-SoC-family KAS fragments automatically
+by matching the device's \texttt{soc\_vendor} field:
 
-\begin{tabularx}{\linewidth}{L{34mm}X}
+\begin{lstlisting}[language=YAML]
+vendor_overrides:
+  - vendor: advantech
+    includes:
+      - kas/advantech/scarthgap-common.yaml  # common for all Advantech boards
+    soc_vendors:
+      - vendor: nxp
+        distro: fsl-imx-xwayland
+        includes:
+          - kas/advantech/nxp/scarthgap.yaml
+        releases:
+          - slug: imx-6.6.53
+            includes: [kas/advantech/nxp/imx-6.6.53.yaml]
+          - slug: imx-6.12.0
+            includes: [kas/advantech/nxp/imx-6.12.0.yaml]
+      - vendor: mediatek
+        distro: mt-distro
+        includes:
+          - kas/advantech/mediatek/scarthgap.yaml
+\end{lstlisting}
+
+\subsubsection{KAS Include Ordering}
+
+The resolver assembles the final KAS file list in this order:
+
+\begin{enumerate}
+  \item \texttt{framework.includes}
+  \item \texttt{distro.includes}
+        (uses \texttt{SocVendorOverride.distro} $>$ \texttt{VendorOverride.distro} $>$
+         \texttt{Release.distro})
+  \item \texttt{vendors[device.vendor].includes}
+  \item \texttt{release.includes}
+  \item \texttt{VendorOverride.includes}
+  \item \texttt{SocVendorOverride.includes}
+  \item \texttt{VendorRelease.includes} (sub-release, if \texttt{vendor\_release} is set)
+  \item \texttt{device.includes}
+  \item \texttt{feature.includes} (for each enabled feature)
+  \item \texttt{feature.VendorOverride.includes}
+  \item \texttt{feature.SocVendorOverride.includes}
+  \item \texttt{feature.VendorRelease.includes}
+\end{enumerate}
+
+\subsection{Containers}
+
+\begin{lstlisting}[language=YAML]
+containers:
+  ubuntu-22.04:
+    image: "bsp/kas:5.2"
+    file: Dockerfile
+    args:
+      - name: "KAS_VERSION"
+        value: "5.2"
+    runtime_args: "--device=/dev/net/tun --cap-add=NET_ADMIN"
+    volumes:
+      - host: "$ENV{HOME}/sstate-cache"
+        container: "/sstate-cache"
+      - host: "/opt/downloads"
+        container: "/downloads"
+        read_only: true
+  isar-debian-13:
+    image: "ghcr.io/ilbers/isar:latest"
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{L{32mm}X}
   \rowcolor{tableheadbg}
-  \textbf{Slug} & \textbf{Description} \\
+  \textbf{Field} & \textbf{Description} \\
   \toprule
-  \rowcolor{roweven} \texttt{systemd}      & Enable systemd as the init system \\
-  \rowcolor{rowodd}  \texttt{yocto-ssh}    & Include SSH server in the image \\
-  \rowcolor{roweven} \texttt{debug-tweaks} & Enable debug build tweaks (empty root password, \ldots) \\
-  \rowcolor{rowodd}  \texttt{root-login}   & Enable root login \\
-  \rowcolor{roweven} \texttt{security}     & Security hardening meta-layer \\
-  \rowcolor{rowodd}  \texttt{secure-boot}  & NXP HAB / AHAB cryptographic image signing \\
-  \rowcolor{roweven} \texttt{virtualization} & KVM / container virtualisation support \\
-  \rowcolor{rowodd}  \texttt{wayland}      & Wayland display server support \\
-  \rowcolor{roweven} \texttt{x11}          & X11 display server support \\
-  \rowcolor{rowodd}  \texttt{ipv6}         & IPv6 networking \\
-  \rowcolor{roweven} \texttt{udev}         & udev device manager \\
-  \rowcolor{rowodd}  \texttt{usrmerge}     & /usr merge (FHS compliance) \\
-  \rowcolor{roweven} \texttt{rauc}         & RAUC Over-the-Air update framework \\
-  \rowcolor{rowodd}  \texttt{swupdate}     & SWUpdate OTA framework \\
-  \rowcolor{roweven} \texttt{ostree}       & OSTree atomic filesystem upgrades \\
-  \rowcolor{rowodd}  \texttt{hailo}        & Hailo-8 AI accelerator support \\
-  \rowcolor{roweven} \texttt{ros2}         & ROS 2 via ros2-humble-scarthgap release \\
+  \rowcolor{roweven} \texttt{image}        & Docker image used at runtime \\
+  \rowcolor{rowodd}  \texttt{file}         & Optional path to Dockerfile for \texttt{docker build} \\
+  \rowcolor{roweven} \texttt{args}         & Docker build arguments (\texttt{name}/\texttt{value} pairs) \\
+  \rowcolor{rowodd}  \texttt{runtime\_args}& Extra flags passed to the container engine (\texttt{run}) \\
+  \rowcolor{roweven} \texttt{volumes}      & List of host-to-container directory mounts (\texttt{host}, \texttt{container}, \texttt{read\_only}) \\
   \bottomrule
 \end{tabularx}
 
-% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Named Environments}
+
+Named environments bundle a container with environment variables and setup
+file-copy entries under a single name, referenced by releases:
+
+\begin{lstlisting}[language=YAML]
+environments:
+  default:                    # used when release has no environment field
+    container: "ubuntu-22.04"
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
+    copy:
+      - scripts/env-setup.sh: build/
+
+  isar-build:                 # named environment for Isar releases
+    container: "isar-debian-13"
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/isar-downloads"
+    copy:
+      - isar/scripts/isar-runqemu.sh: build/
+\end{lstlisting}
+
+Container priority: \texttt{device.build.container} (highest) $>$
+named environment container $>$ none (bare \texttt{kas} run). \\
+Variable merge order: root \texttt{environment.variables} $\to$
+named environment variables $\to$ feature \texttt{env} variables (feature wins).
+
+% -----------------------------------------------------------------------------
+\section{Feature System}
+
+Features are optional, composable add-ons mixed into any BSP preset. They
+support device compatibility constraints, framework/distro restrictions,
+release-specific includes, and vendor-specific includes.
+
+\begin{lstlisting}[language=YAML]
+registry:
+  features:
+    - slug: rauc
+      description: "Enable RAUC OTA update support"
+      compatible_with: [yocto]   # only compatible with Yocto framework
+      compatibility:
+        soc_vendor: [nxp]        # allow-list: only NXP SoC devices
+      includes:
+        - features/ota/rauc/rauc.yml
+      local_conf:
+        - "DISTRO_FEATURES:append = ' rauc'"
+      env:
+        - name: "RAUC_KEY_FILE"
+          value: "$ENV{RAUC_KEY_FILE}"
+      vendor_overrides:
+        - vendor: advantech-europe
+          includes:
+            - features/ota/rauc/advantech-rauc.yml
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/rauc/modular-bsp-ota-nxp.yml
+              releases:
+                - slug: imx-6.6.53
+                  includes:
+                    - features/ota/rauc/rauc-imx-6.6.53.yml
+      release_overrides:
+        - release: scarthgap
+          includes:
+            - features/ota/rauc/rauc-scarthgap.yml
+\end{lstlisting}
+
+\subsection{Device Compatibility (\texttt{compatibility})}
+
+\begin{tabularx}{\linewidth}{L{30mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Key} & \textbf{Meaning} \\
+  \toprule
+  \rowcolor{roweven} \texttt{vendor}      & Allow-list of board vendor names (empty = all) \\
+  \rowcolor{rowodd}  \texttt{soc\_vendor} & Allow-list of SoC vendor names (empty = all) \\
+  \rowcolor{roweven} \texttt{soc\_family} & Allow-list of SoC family strings (empty = all) \\
+  \bottomrule
+\end{tabularx}
+
+If any constraint fails, the build exits with a clear error message before any
+files are modified or processes started.
+
+\subsection{Framework/Distro Compatibility (\texttt{compatible\_with})}
+
+\begin{tabularx}{\linewidth}{L{82mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Condition} & \textbf{Result} \\
+  \toprule
+  \rowcolor{roweven} \texttt{compatible\_with} is empty
+    & Compatible with all releases \\
+  \rowcolor{rowodd}  Release's distro slug is in the list
+    & Compatible \\
+  \rowcolor{roweven} Release's distro's framework slug is in the list
+    & Compatible \\
+  \rowcolor{rowodd}  Neither distro nor framework is in the list
+    & Build exits with error \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Feature Catalogue}
+
+\begin{tabularx}{\linewidth}{L{34mm}L{22mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Slug} & \textbf{Framework} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{systemd}      & yocto & Enable systemd as the init system \\
+  \rowcolor{rowodd}  \texttt{yocto-ssh}   & yocto & Include SSH server in the image \\
+  \rowcolor{roweven} \texttt{debug-tweaks}& yocto & Debug tweaks (empty root password, \ldots) \\
+  \rowcolor{rowodd}  \texttt{root-login}  & yocto & Enable root login \\
+  \rowcolor{roweven} \texttt{security}    & yocto & Security hardening meta-layer \\
+  \rowcolor{rowodd}  \texttt{secure-boot} & yocto & NXP HAB / AHAB cryptographic signing \\
+  \rowcolor{roweven} \texttt{virtualization}& yocto& KVM / container virtualisation \\
+  \rowcolor{rowodd}  \texttt{wayland}     & yocto & Wayland display server \\
+  \rowcolor{roweven} \texttt{x11}         & yocto & X11 display server \\
+  \rowcolor{rowodd}  \texttt{ipv6}        & yocto & IPv6 networking \\
+  \rowcolor{roweven} \texttt{udev}        & yocto & udev device manager \\
+  \rowcolor{rowodd}  \texttt{usrmerge}    & yocto & /usr merge (FHS compliance) \\
+  \rowcolor{roweven} \texttt{rauc}        & yocto & RAUC Over-the-Air update framework \\
+  \rowcolor{rowodd}  \texttt{swupdate}    & yocto & SWUpdate OTA framework \\
+  \rowcolor{roweven} \texttt{ostree}      & yocto & OSTree atomic filesystem upgrades \\
+  \rowcolor{rowodd}  \texttt{hailo}       & yocto & Hailo-8 AI accelerator support \\
+  \rowcolor{roweven} \texttt{ros2}        & yocto & ROS 2 (ros2-humble-scarthgap) \\
+  \rowcolor{rowodd}  \texttt{isar-users}  & isar  & Sample non-root user accounts (Isar only) \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Release Overrides}
+
+A feature can include different KAS files per Yocto/Isar release. The include
+order for a feature with both \texttt{release\_overrides} and
+\texttt{vendor\_overrides} is:
+
+\begin{enumerate}
+  \item \texttt{feature.includes} (always applied)
+  \item \texttt{feature.release\_overrides[release].includes} (when release slug matches)
+  \item \texttt{feature.VendorOverride.includes}
+  \item \texttt{feature.SocVendorOverride.includes}
+  \item \texttt{feature.VendorRelease.includes}
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
 \section{OTA Update Support}
 
 Three OTA technologies are supported as first-class composable features.
@@ -451,7 +851,7 @@ All major Advantech Europe NXP boards support all three methods.
   \bottomrule
 \end{tabularx}
 
-\begin{lstlisting}[language=bash]
+\begin{lstlisting}[language=Bash]
 # Build RSB-3720 with RAUC OTA (Walnascar release)
 bsp build modular-bsp-rauc-rsb3720 --release walnascar
 
@@ -462,39 +862,35 @@ bsp build modular-bsp-swupdate-rsb3720 --release scarthgap
 bsp build modular-bsp-ostree-rsb3720 --release walnascar
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Secure Boot}
 
 NXP-based Advantech boards support cryptographic boot-image signing via HAB
-(i.MX8 family) and AHAB (i.MX9 / i.MX95 family). The \texttt{secure-boot}
+(i.MX8 family) and AHAB (i.MX9/i.MX95 family). The \texttt{secure-boot}
 feature uses the \texttt{ubuntu-22.04-csb} container which automatically mounts
-the NXP CST signing tool and keys from the host into the container.
+the NXP Code Signing Tool (CST) and key material from the host.
 
 \begin{tabularx}{\linewidth}{L{22mm}L{56mm}X}
   \rowcolor{tableheadbg}
   \textbf{SoC Family} & \textbf{Technology} & \textbf{Boards} \\
   \toprule
-  \rowcolor{roweven} i.MX8  & HAB (High Assurance Boot)            & RSB-3720, ROM-2620, ROM-5720, ROM-5721, ROM-5722 \\
-  \rowcolor{rowodd}  i.MX93 & AHAB (Advanced High Assurance Boot)  & ROM-2820 \\
-  \rowcolor{roweven} i.MX95 & AHAB                                  & AOM-5521 \\
+  \rowcolor{roweven} i.MX8  & HAB (High Assurance Boot)           & RSB-3720, ROM-2620, ROM-5720, ROM-5721, ROM-5722 \\
+  \rowcolor{rowodd}  i.MX93 & AHAB (Advanced High Assurance Boot) & ROM-2820 \\
+  \rowcolor{roweven} i.MX95 & AHAB                                & AOM-5521 \\
   \bottomrule
 \end{tabularx}
 
-\begin{lstlisting}[language=bash]
+\begin{lstlisting}[language=Bash]
 # Export signing key environment variables
 export CST_TOOL_PATH=/opt/nxp/cst/
 export KEYS_PATH=/path/to/srk-keys/
 
-# Build ROM-5721 2G with Secure Boot (uses ubuntu-22.04-csb container)
+# Build with Secure Boot (ubuntu-22.04-csb container mounts key paths)
 bsp build modular-bsp-rom5721-2g-db5901-secureboot --release walnascar
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Containers \& Environments}
-
-Container definitions bundle a Dockerfile, a Docker image name, build args, and
-optional volume mounts. Named environments combine a container with build-system
-environment variables.
 
 \begin{tabularx}{\linewidth}{L{38mm}L{26mm}L{18mm}X}
   \rowcolor{tableheadbg}
@@ -510,80 +906,149 @@ environment variables.
   \bottomrule
 \end{tabularx}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{CLI Reference}
 
-\begin{tabularx}{\linewidth}{L{78mm}X}
+\subsection{Build Commands}
+
+\begin{tabularx}{\linewidth}{L{82mm}X}
   \rowcolor{tableheadbg}
   \textbf{Command} & \textbf{Description} \\
   \toprule
-  \rowcolor{roweven} \texttt{bsp list}                              & List all named BSP presets \\
-  \rowcolor{rowodd}  \texttt{bsp list devices}                     & List all device slugs \\
-  \rowcolor{roweven} \texttt{bsp list releases}                    & List all release slugs \\
-  \rowcolor{rowodd}  \texttt{bsp list features}                    & List all feature slugs \\
-  \rowcolor{roweven} \texttt{bsp containers}                       & List container definitions \\
-  \rowcolor{rowodd}  \texttt{bsp build <preset>}                   & Build a named preset \\
-  \rowcolor{roweven} \texttt{bsp build <preset> --release <r>}     & Build with a specific release \\
-  \rowcolor{rowodd}  \texttt{bsp build <preset> --checkout}        & Validate config (no actual build) \\
-  \rowcolor{roweven} \texttt{bsp build <preset> --deploy}          & Build and deploy to cloud storage \\
-  \rowcolor{rowodd}  \texttt{bsp build <preset> --clean}           & Clean build dir before building \\
-  \rowcolor{roweven} \texttt{bsp shell <preset>}                   & Open shell in build container \\
-  \rowcolor{rowodd}  \texttt{bsp export <preset>}                  & Export resolved KAS config \\
-  \rowcolor{roweven} \texttt{bsp deploy <preset>}                  & Upload artifacts to cloud storage \\
-  \rowcolor{rowodd}  \texttt{bsp gather <preset>}                  & Download artifacts from cloud \\
-  \rowcolor{roweven} \texttt{bsp registry init}                    & Scaffold a new registry YAML file \\
-  \rowcolor{rowodd}  \texttt{bsp registry validate}                & Validate registry schema \\
-  \rowcolor{roweven} \texttt{bsp registry diff <f1> <f2>}          & Diff between two registry files \\
-  \rowcolor{rowodd}  \texttt{bsp registry add device ...}          & Add a new device entry \\
-  \rowcolor{roweven} \texttt{bsp registry add release ...}         & Add a new release entry \\
-  \rowcolor{rowodd}  \texttt{bsp remotes add <name> <url>}         & Save a named remote registry URL \\
-  \rowcolor{roweven} \texttt{bsp remotes show}                     & List all saved remotes \\
-  \rowcolor{rowodd}  \texttt{bsp server}                           & Start REST + GraphQL HTTP server \\
-  \rowcolor{roweven} \texttt{bsp completions bash|zsh|fish}        & Print shell completion script \\
+  \rowcolor{roweven} \texttt{bsp build <preset>}
+    & Build a named preset with its default release \\
+  \rowcolor{rowodd}  \texttt{bsp build <preset> --release <r>}
+    & Override the Yocto/Isar release \\
+  \rowcolor{roweven} \texttt{bsp build <preset> --checkout}
+    & Validate config only (no actual build) \\
+  \rowcolor{rowodd}  \texttt{bsp build <preset> --deploy}
+    & Build and upload artifacts to cloud storage \\
+  \rowcolor{roweven} \texttt{bsp build <preset> --clean}
+    & Clean build directory before building \\
+  \rowcolor{rowodd}  \texttt{bsp build --device <d> --release <r>}
+    & Component-based build (no preset required) \\
+  \rowcolor{roweven} \texttt{bsp build --device <d> --release <r> --features f1,f2}
+    & Component-based build with features \\
+  \rowcolor{rowodd}  \texttt{bsp shell <preset>}
+    & Open a shell in the build container \\
+  \rowcolor{roweven} \texttt{bsp export <preset>}
+    & Export the resolved KAS YAML configuration \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Listing \& Inspection}
+
+\begin{tabularx}{\linewidth}{L{66mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Command} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{bsp list}               & List all named BSP presets \\
+  \rowcolor{rowodd}  \texttt{bsp list devices}       & List all device slugs \\
+  \rowcolor{roweven} \texttt{bsp list releases}      & List all release slugs \\
+  \rowcolor{rowodd}  \texttt{bsp list features}      & List all feature slugs \\
+  \rowcolor{roweven} \texttt{bsp containers}         & List container definitions \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Cloud Artifacts}
+
+\begin{tabularx}{\linewidth}{L{66mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Command} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{bsp deploy <preset>}
+    & Upload build artifacts to cloud storage \\
+  \rowcolor{rowodd}  \texttt{bsp deploy <preset> --dry-run}
+    & Preview uploads without sending anything \\
+  \rowcolor{roweven} \texttt{bsp gather <preset>}
+    & Download previously uploaded artifacts \\
+  \rowcolor{rowodd}  \texttt{bsp gather <preset> --release <r>}
+    & Download artifacts for a specific release \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Registry Management}
+
+\begin{tabularx}{\linewidth}{L{82mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Command} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{bsp registry init}          & Scaffold a new registry YAML file \\
+  \rowcolor{rowodd}  \texttt{bsp registry validate}      & Validate registry schema and references \\
+  \rowcolor{roweven} \texttt{bsp registry diff <f1> <f2>}& Diff between two registry files \\
+  \rowcolor{rowodd}  \texttt{bsp registry add device ...}& Add a new device entry \\
+  \rowcolor{roweven} \texttt{bsp registry add release ...}& Add a new release entry \\
+  \rowcolor{rowodd}  \texttt{bsp registry add feature ...}& Add a new feature entry \\
+  \rowcolor{roweven} \texttt{bsp registry edit device ...}& Edit an existing device \\
+  \rowcolor{rowodd}  \texttt{bsp registry remove device <slug>}& Remove a device entry \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Remotes \& Server}
+
+\begin{tabularx}{\linewidth}{L{66mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Command} & \textbf{Description} \\
+  \toprule
+  \rowcolor{roweven} \texttt{bsp remotes add <name> <url>}   & Save a named remote registry URL \\
+  \rowcolor{rowodd}  \texttt{bsp remotes show}               & List all saved remotes \\
+  \rowcolor{roweven} \texttt{bsp remotes remove <name>}      & Remove a saved remote \\
+  \rowcolor{rowodd}  \texttt{bsp remotes rename <old> <new>} & Rename a saved remote \\
+  \rowcolor{roweven} \texttt{bsp server}                     & Start REST + GraphQL server \\
+  \rowcolor{rowodd}  \texttt{bsp completions bash\textbar{}zsh\textbar{}fish} & Print shell completion script \\
   \bottomrule
 \end{tabularx}
 
 \subsection{Global CLI Flags}
 
-\begin{tabularx}{\linewidth}{L{46mm}X}
+\begin{tabularx}{\linewidth}{L{50mm}X}
   \rowcolor{tableheadbg}
   \textbf{Flag} & \textbf{Description} \\
   \toprule
-  \rowcolor{roweven} \texttt{--registry <path>} & Use an explicit local registry file \\
+  \rowcolor{roweven} \texttt{--registry <path>} & Use an explicit local registry YAML \\
   \rowcolor{rowodd}  \texttt{--local}           & Use \texttt{./bsp-registry.yml}, no network \\
-  \rowcolor{roweven} \texttt{--remote <url>}    & Remote registry URL or saved remote name \\
-  \rowcolor{rowodd}  \texttt{--branch <b>}      & Branch to checkout when using \texttt{--remote} \\
+  \rowcolor{roweven} \texttt{--remote <url>}    & Remote URL or saved remote name \\
+  \rowcolor{rowodd}  \texttt{--branch <b>}      & Git branch for \texttt{--remote} \\
   \rowcolor{roweven} \texttt{--no-update}       & Skip git-pull of the remote registry \\
   \bottomrule
 \end{tabularx}
 
 \subsection{Quick Start}
 
-\begin{lstlisting}[language=bash]
-# First run: clones the Advantech registry automatically
+\begin{lstlisting}[language=Bash]
+# First run: auto-clones the Advantech registry
 bsp list
 
-# Build Advantech RSB-3720 with the default release
+# Build with default release
 bsp build modular-bsp-rsb3720
 
 # Build with a specific Yocto release
 bsp build modular-bsp-rsb3720 --release walnascar
 
-# Validate config quickly (no full build)
+# Validate config without building
 bsp build modular-bsp-rsb3720 --checkout
 
-# Use the Advantech development branch explicitly
+# Component-based build (no preset required)
+bsp build --device rsb3720 --release scarthgap --features systemd,security
+
+# Use the Advantech development branch
 bsp --remote https://github.com/Advantech-EECC/bsp-registry.git@development list
+
+# Save a remote for reuse
+bsp remotes add advantech https://github.com/Advantech-EECC/bsp-registry.git
+bsp --remote advantech list
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Python API}
 
-All CLI operations are backed by a public Python API.  The key entry point is
-\texttt{BspManager}, which coordinates registry loading, preset resolution, builds,
-deployment, and artifact gathering.
+All CLI operations are backed by a public Python API. The primary entry point
+is \texttt{BspManager}, which coordinates registry loading, preset resolution,
+builds, deployment, and artifact gathering.
 
-\begin{lstlisting}[language=python]
+\subsection{Basic Usage}
+
+\begin{lstlisting}[language=Python]
 from bsp import BspManager, RegistryFetcher, V2Resolver
 
 # 1. Fetch / update the remote registry
@@ -597,23 +1062,64 @@ registry_path = fetcher.fetch_registry(
 # 2. Load registry and inspect contents
 manager = BspManager(str(registry_path))
 manager.initialize()
-for dev in manager.model.registry.devices:
-    print(dev.slug, dev.description)
 
-# 3. Resolve a preset into a full build configuration
+for dev in manager.model.registry.devices:
+    print(dev.slug, "-", dev.description)
+
+for rel in manager.model.registry.releases:
+    print(rel.slug, rel.yocto_version)
+\end{lstlisting}
+
+\subsection{Building and Deploying}
+
+\begin{lstlisting}[language=Python]
+from bsp import BspManager
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+# Build a named preset
+result = manager.build_bsp("modular-bsp-rsb3720", release="walnascar")
+print("Build exited with:", result.returncode)
+
+# Deploy artifacts to cloud storage
+deploy_result = manager.deploy_bsp("modular-bsp-rsb3720")
+for artifact in deploy_result.uploaded:
+    print("Uploaded:", artifact.name, "->", artifact.url)
+
+# Gather (download) previously uploaded artifacts
+gather_result = manager.gather_bsp("modular-bsp-rsb3720", release="walnascar")
+for path in gather_result.downloaded:
+    print("Downloaded:", path)
+\end{lstlisting}
+
+\subsection{Resolving a Configuration}
+
+\begin{lstlisting}[language=Python]
+from bsp import BspManager, V2Resolver
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
 resolver = V2Resolver(manager.model)
 config = resolver.resolve(
     device_slug="rsb3720",
     release_slug="walnascar",
     feature_slugs=["systemd", "security", "rauc"],
 )
+
+# Inspect the resolved KAS file list
 for f in config.kas_files:
     print(f)
+
+# Inspect environment variables
+for var in config.env_vars:
+    print(f"{var.name}={var.value}")
 \end{lstlisting}
 
 \subsection{Multi-Registry Mode}
 
-\begin{lstlisting}[language=python]
+\begin{lstlisting}[language=Python]
 from bsp import BspManager
 
 manager = BspManager(
@@ -623,44 +1129,136 @@ manager = BspManager(
     ]
 )
 manager.initialize()
+
 # Disambiguate with registry:preset syntax
-config = manager.resolve("advantech:modular-bsp-rsb3720")
+result = manager.build_bsp("advantech:modular-bsp-rsb3720")
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
+\section{Cloud Artifact Deployment}
+
+\subsection{Registry Configuration}
+
+\begin{lstlisting}[language=YAML]
+specification:
+  version: "2.0"
+
+deploy:
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+  prefix: "{vendor}/{device}/{release}/{date}"
+  patterns:
+    - "**/*.wic.gz"
+    - "**/*.wic.bz2"
+    - "**/*.tar.bz2"
+    - "**/*.ext4"
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{L{36mm}X}
+  \rowcolor{tableheadbg}
+  \textbf{Prefix Placeholder} & \textbf{Expands to} \\
+  \toprule
+  \rowcolor{roweven} \texttt{\{vendor\}}  & Board vendor slug \\
+  \rowcolor{rowodd}  \texttt{\{device\}}  & Device slug \\
+  \rowcolor{roweven} \texttt{\{release\}} & Release slug \\
+  \rowcolor{rowodd}  \texttt{\{date\}}    & Build date (YYYY-MM-DD) \\
+  \rowcolor{roweven} \texttt{\{preset\}}  & Preset name \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{Authentication}
+
+\begin{lstlisting}[language=Bash]
+# Azure (DefaultAzureCredential chain: CLI, managed identity, ...)
+az login
+export AZURE_STORAGE_ACCOUNT_URL="https://myaccount.blob.core.windows.net"
+
+# AWS
+aws configure
+# or
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_DEFAULT_REGION="eu-west-1"
+\end{lstlisting}
+
+\subsection{CLI Deploy / Gather}
+
+\begin{lstlisting}[language=Bash]
+# Build and deploy in one step
+bsp build modular-bsp-rsb3720 --release walnascar --deploy
+
+# Deploy artifacts from an existing build
+bsp deploy modular-bsp-rsb3720 --container bsp-artifacts
+
+# Preview what would be uploaded (no credentials required)
+bsp deploy modular-bsp-rsb3720 --dry-run
+
+# Download previously uploaded artifacts
+bsp gather modular-bsp-rsb3720 --release walnascar
+\end{lstlisting}
+
+% -----------------------------------------------------------------------------
 \section{HTTP Server (REST + GraphQL)}
 
-\begin{lstlisting}[language=bash]
+\begin{lstlisting}[language=Bash]
 pip install "bsp-registry-tools[server]"
-bsp server --port 8080
+
+# Default: http://127.0.0.1:8080
+bsp server
+
+# Bind to all interfaces, custom port, auto-reload for development
+bsp server --host 0.0.0.0 --port 9000 --reload
+
+# Use a specific registry
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0
 \end{lstlisting}
 
 \subsection{REST API Endpoints}
 
-\begin{tabularx}{\linewidth}{L{14mm}L{64mm}X}
+\begin{tabularx}{\linewidth}{L{14mm}L{72mm}X}
   \rowcolor{tableheadbg}
   \textbf{Method} & \textbf{Path} & \textbf{Description} \\
   \toprule
-  \rowcolor{roweven} GET  & \texttt{/api/v1/devices}          & List all devices \\
-  \rowcolor{rowodd}  GET  & \texttt{/api/v1/releases}         & List all releases \\
-  \rowcolor{roweven} GET  & \texttt{/api/v1/features}         & List all features \\
-  \rowcolor{rowodd}  GET  & \texttt{/api/v1/bsp}              & List all named presets \\
-  \rowcolor{roweven} POST & \texttt{/api/v1/bsp/\{name\}/build} & Trigger a build \\
-  \rowcolor{rowodd}  POST & \texttt{/graphql}                 & GraphQL endpoint \\
+  \rowcolor{roweven} GET  & \texttt{/api/v1/devices}              & List all devices \\
+  \rowcolor{rowodd}  GET  & \texttt{/api/v1/releases}             & List all releases \\
+  \rowcolor{roweven} GET  & \texttt{/api/v1/features}             & List all features \\
+  \rowcolor{rowodd}  GET  & \texttt{/api/v1/bsp}                  & List all named presets \\
+  \rowcolor{roweven} POST & \texttt{/api/v1/bsp/\{name\}/build}   & Trigger a build \\
+  \rowcolor{rowodd}  POST & \texttt{/graphql}                     & GraphQL endpoint \\
+  \rowcolor{roweven} GET  & \texttt{/docs}                        & OpenAPI (Swagger) docs \\
   \bottomrule
 \end{tabularx}
 
-\begin{lstlisting}[language=bash]
-# GraphQL query example
+\subsection{GraphQL Query Example}
+
+\begin{lstlisting}[language=Bash]
 curl -X POST http://localhost:8080/graphql \
   -H 'Content-Type: application/json' \
   -d '{"query": "{ releases { slug description yoctoVersion } }"}'
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Starting the Server from Python}
+
+\begin{lstlisting}[language=Python]
+import uvicorn
+from bsp import BspManager
+from bsp.server import create_app
+
+# Reuse an already-initialised manager (avoids double registry load)
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+app = create_app(manager=manager)
+uvicorn.run(app, host="0.0.0.0", port=8080)
+\end{lstlisting}
+
+% -----------------------------------------------------------------------------
 \section{CI/CD Integration}
 
-\begin{lstlisting}[language={}]
+\subsection{GitHub Actions --- Azure}
+
+\begin{lstlisting}[language=YAML]
 # .github/workflows/build.yml
 jobs:
   build:
@@ -680,23 +1278,44 @@ jobs:
       - name: Build and deploy artifacts
         env:
           AZURE_STORAGE_ACCOUNT_URL: ${{ secrets.AZURE_STORAGE_ACCOUNT_URL }}
-        run: bsp --no-update build modular-bsp-rsb3720 --release walnascar --deploy
+        run: |
+          bsp --no-update build modular-bsp-rsb3720 \
+            --release walnascar --deploy
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+\subsection{GitHub Actions --- AWS}
+
+\begin{lstlisting}[language=YAML]
+      - name: Build and deploy to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1
+        run: |
+          pip install "bsp-registry-tools[aws]"
+          bsp --no-update build modular-bsp-rsb3720 \
+            --release walnascar --deploy
+\end{lstlisting}
+
+% -----------------------------------------------------------------------------
 \section{Extending BSPs with Custom Yocto Layers}
 
-A BSP registry KAS configuration can be included in your own project,
-allowing you to add custom Yocto layers on top of an existing BSP without
-modifying the registry itself.
+Export a resolved KAS configuration and include it in a downstream project to
+add custom meta-layers without modifying the registry:
 
-\begin{lstlisting}[language={}]
+\begin{lstlisting}[language=Bash]
+# Export the resolved KAS config for a specific preset + release
+bsp export modular-bsp-rsb3720 --release walnascar \
+  > modular-bsp-rsb3720-walnascar.yaml
+\end{lstlisting}
+
+\begin{lstlisting}[language=YAML]
 # my-custom-kas.yaml
 header:
   version: 19
   includes:
     - repo: bsp-registry
-      file: modular-bsp-rsb3720-walnascar.yaml   # from `bsp export`
+      file: modular-bsp-rsb3720-walnascar.yaml  # from bsp export
 
 repos:
   bsp-registry:
@@ -709,16 +1328,16 @@ repos:
       meta-custom:    # your custom Yocto meta-layer
 \end{lstlisting}
 
-\begin{lstlisting}[language=bash]
-# meta-custom/meta-custom/recipes-core/imx-image-%.bbappend
-CORE_IMAGE_EXTRA_INSTALL += "mpv"
-LICENSE_FLAGS_ACCEPTED += "commercial"
+\begin{lstlisting}[language=Bash]
+# meta-custom/recipes-core/images/imx-image-%.bbappend
+# CORE_IMAGE_EXTRA_INSTALL += "mpv"
+# LICENSE_FLAGS_ACCEPTED += "commercial"
 
 # Build with your extension
 kas build my-custom-kas.yaml
 \end{lstlisting}
 
-% ─────────────────────────────────────────────────────────────────────────────
+% -----------------------------------------------------------------------------
 \section{Summary}
 
 \begin{tabularx}{\linewidth}{L{50mm}X}
@@ -729,14 +1348,16 @@ kas build my-custom-kas.yaml
   \rowcolor{rowodd}  Auto remote fetch        & Zero-config first run; teams share the Advantech registry \\
   \rowcolor{roweven} Two build systems        & Yocto/BitBake AND Isar/Debian in one registry \\
   \rowcolor{rowodd}  KAS integration          & Reproducible builds for every device $\times$ release combo \\
-  \rowcolor{roweven} Named environments       & Correct container per build class (secure-boot, Isar, \ldots) \\
-  \rowcolor{rowodd}  Feature system           & Composable add-ons: OTA, secure-boot, ROS 2, Hailo \\
-  \rowcolor{roweven} OTA support              & RAUC, SWUpdate, OSTree --- all first-class features \\
-  \rowcolor{rowodd}  Secure Boot              & NXP HAB / AHAB signing built into the registry \\
-  \rowcolor{roweven} Cloud deploy / gather    & Full artifact lifecycle: build $\to$ upload $\to$ download \\
-  \rowcolor{rowodd}  HTTP server              & REST + GraphQL for dashboards and automation \\
-  \rowcolor{roweven} Tab completions          & Fast CLI use with context-aware completions \\
-  \rowcolor{rowodd}  Python API               & Integrate into custom tools and CI scripts \\
+  \rowcolor{roweven} Vendor overrides         & NXP/MediaTek/Qualcomm-specific KAS fragments, distros, kernel pins \\
+  \rowcolor{rowodd}  Named environments       & Correct container per build class (secure-boot, Isar, \ldots) \\
+  \rowcolor{roweven} Feature system           & Composable add-ons with compat. checks, release + vendor overrides \\
+  \rowcolor{rowodd}  OTA support              & RAUC, SWUpdate, OSTree --- all first-class features \\
+  \rowcolor{roweven} Secure Boot              & NXP HAB / AHAB signing built into the registry \\
+  \rowcolor{rowodd}  Cloud deploy / gather    & Full artifact lifecycle: build $\to$ upload $\to$ download \\
+  \rowcolor{roweven} HTTP server              & REST + GraphQL for dashboards and automation \\
+  \rowcolor{rowodd}  Tab completions          & Context-aware completions for all CLI arguments \\
+  \rowcolor{roweven} Python API               & Integrate into custom tools, CI scripts, and dashboards \\
+  \rowcolor{rowodd}  Registry editor          & CRUD for devices, releases, features, presets with validation \\
   \bottomrule
 \end{tabularx}
 
