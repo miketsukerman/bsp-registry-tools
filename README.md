@@ -10,12 +10,20 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 - 📋 **BSP registry management** via YAML configuration files
 - 🌐 **Automatic remote registry fetching** — clone/update a remote registry with no manual setup
+- 🔗 **Named remote management** — `bsp remotes add/remove/rename/set-url/show` for persistent, git-style remote configuration
 - 🐳 **Docker container support** for reproducible build environments
 - 🔧 **KAS integration** for Yocto-based builds (`kas`, `kas-container`)
 - 🖥️ **Interactive shell** access to build environments
 - 🔄 **Environment variable expansion** (`$ENV{VAR}` syntax)
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
+- 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
+- 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
+- ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
+- ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
+- 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
+- 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
+
 
 ## Installation
 
@@ -25,12 +33,21 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 pip install bsp-registry-tools
 ```
 
+To also install the optional HTTP server dependencies:
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
 ### From Source
 
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
 pip install .
+
+# With server extras:
+pip install ".[server]"
 ```
 
 ### Dependencies
@@ -40,6 +57,84 @@ pip install .
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
+- [requests](https://requests.readthedocs.io/) >= 2.28.0 *(for LAVA HIL test integration)*
+- [Jinja2](https://jinja.palletsprojects.com/) >= 3.1.0 *(for LAVA job template rendering)*
+
+**Optional — server mode** (`pip install bsp-registry-tools[server]`):
+
+- [FastAPI](https://fastapi.tiangolo.com/) >= 0.100.0
+- [uvicorn](https://www.uvicorn.org/) >= 0.23.0
+- [strawberry-graphql](https://strawberry.rocks/) >= 0.200.0
+#### Optional extras for cloud deployment
+
+Cloud SDK dependencies are optional and only needed if you use `bsp deploy`:
+
+```bash
+# Azure Blob Storage support
+pip install "bsp-registry-tools[azure]"
+
+# AWS S3 support
+pip install "bsp-registry-tools[aws]"
+
+# Both providers
+pip install "bsp-registry-tools[deploy]"
+```
+
+#### Optional extras for shell completions
+
+Tab-completion support is optional and requires [argcomplete](https://kislyuk.github.io/argcomplete/):
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+See the [Shell Completions](#shell-completions) section below for activation instructions.
+
+## Shell Completions
+
+`bsp` supports tab completions for Bash, Zsh, Fish, and tcsh via
+[argcomplete](https://kislyuk.github.io/argcomplete/).  Completions
+dynamically query the active registry so that preset names, device slugs,
+release slugs, feature slugs, and remote names are all available.
+
+### 1. Install the completions extra
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+### 2. Activate completions for your shell
+
+Use the `bsp completions` sub-command to print the shell-specific activation
+snippet, then source it:
+
+```bash
+# Bash — add to ~/.bashrc
+eval "$(bsp completions bash)"
+
+# Zsh — add to ~/.zshrc
+eval "$(bsp completions zsh)"
+
+# Fish — add to ~/.config/fish/config.fish
+bsp completions fish | source
+
+# tcsh — add to ~/.tcshrc
+eval `bsp completions tcsh`
+```
+
+`bsp completions` without an argument auto-detects the shell from `$SHELL`.
+
+### 3. (Alternative) Global activation
+
+If you want completions for all argcomplete-enabled tools at once, use the
+helper provided by argcomplete itself:
+
+```bash
+activate-global-python-argcomplete
+```
+
+This installs a single shell hook that covers every tool that calls
+`argcomplete.autocomplete()`.
 
 ## Quick Start
 
@@ -59,9 +154,44 @@ bsp list
 # Skip the network update (useful offline or in CI)
 bsp --no-update list
 
-# Use a different remote or branch
+# Use a different remote or branch (one-off override)
 bsp --remote https://github.com/my-org/bsp-registry.git --branch dev list
 ```
+
+### Persistent Named Remotes
+
+For a more permanent setup, register one or more named remotes (similar to
+`git remote`).  Once added, these are used automatically whenever `bsp` falls
+back to remote registry fetching — no `--remote` flag required:
+
+```bash
+# Register a named remote
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch dev
+
+# List configured remotes
+bsp remotes
+
+# Show full details
+bsp remotes show myorg
+
+# Now use it — the stored remote is picked up automatically
+bsp list
+bsp build my-preset
+
+# With multiple remotes configured, list/tree show all remotes annotated with [remote-name]
+bsp list
+bsp tree
+
+# Scope listing to a single named remote
+bsp list --remote myorg
+bsp tree --remote myorg
+```
+
+When **multiple remotes** are registered, `bsp list` and `bsp tree` display
+entries from all of them, each annotated with `[remote-name]`.  Registries are
+kept strictly separate — definitions from different remotes are never merged.
+Use `--remote NAME` with `list` or `tree` to restrict output to a single named
+remote.
 
 ### Manual Registry Usage
 
@@ -71,35 +201,85 @@ Create a `bsp-registry.yaml` or `bsp-registry.yml` file (see [examples/bsp-regis
 
 ```yaml
 specification:
-  version: "1.0"
+  version: "2.0"
 
 environment:
-  - name: "DL_DIR"
-    value: "$ENV{HOME}/yocto-cache/downloads"
-  - name: "SSTATE_DIR"
-    value: "$ENV{HOME}/yocto-cache/sstate"
+  variables:
+    - name: "GITCONFIG_FILE"
+      value: "$ENV{HOME}/.gitconfig"
+
+# Named environment: container + variables used for all builds by default
+environments:
+  default:
+    container: "debian-bookworm"
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/yocto-cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/yocto-cache/sstate"
 
 containers:
-  - debian-bookworm:
-      image: "bsp/registry/debian/kas:5.1"
-      file: Dockerfile
-      args:
-        - name: "DISTRO"
-          value: "debian-bookworm"
-        - name: "KAS_VERSION"
-          value: "5.1"
+  debian-bookworm:
+    image: "bsp/registry/debian/kas:5.1"
+    file: Dockerfile
+    args:
+      - name: "DISTRO"
+        value: "debian-bookworm"
+      - name: "KAS_VERSION"
+        value: "5.1"
 
 registry:
+  # frameworks and distro define the build system hierarchy (optional but recommended)
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      framework: yocto     # links distro to a framework for feature compatibility checks
+      includes:
+        - kas/yocto/distro/poky.yaml
+
+  # devices define hardware targets (KAS includes listed flat, no nested build: block)
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      distro: poky
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+
+  # bsp presets name a device + release + features combination.
+  # Use "releases" (plural) to target multiple releases without repetition:
   bsp:
-    - name: poky-qemuarm64-scarthgap
-      description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
+    - name: poky-qemuarm64
+      description: "Poky QEMU ARM64"
+      device: qemuarm64
+      releases: [scarthgap, styhead]   # expands to poky-qemuarm64-scarthgap / poky-qemuarm64-styhead
+      features: []
       build:
-        path: build/qemu-arm64-scarthgap
-        environment:
-          container: "debian-bookworm"
-        configuration:
-          - kas/scarthgap.yaml
-          - kas/qemu/qemuarm64.yaml
+        container: "debian-bookworm"
+    # Single-release entry (backward compatible):
+    - name: poky-qemuarm64-scarthgap-ota
+      description: "Poky QEMU ARM64 Scarthgap with OTA"
+      device: qemuarm64
+      release: scarthgap
+      features: [ota]
+      build:
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap-ota
 ```
 
 ### 2. List Available BSPs
@@ -128,24 +308,40 @@ bsp build poky-qemuarm64-scarthgap
 bsp shell poky-qemuarm64-scarthgap
 ```
 
+### 5. Submit a HIL Test Job
+
+```bash
+# Submit a LAVA test job for a pre-built image and wait for results
+bsp test poky-qemuarm64-scarthgap --wait
+
+# Build and immediately trigger a LAVA test after the build succeeds
+bsp build poky-qemuarm64-scarthgap --test --wait
+```
+
 ## CLI Reference
 
 ```
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,export,shell} ...
+           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,export,shell}
+  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
                         Command to execute
     build               Build an image for BSP
-    list                List available BSPs
+    list                List available BSPs and components
     containers          List available containers
+    tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
+    server              Start a GraphQL / REST HTTP server
+    deploy              Deploy build artifacts to cloud storage
+    gather              Download BSP build artifacts from cloud storage
+    test                Submit a LAVA HIL test job for a BSP
+    remotes             Manage named remote BSP registry sources
 
 options:
   -h, --help            show this help message and exit
@@ -169,7 +365,9 @@ The tool determines which registry file to use in the following order:
 2. **`--local`** — use `./bsp-registry.yaml` or `./bsp-registry.yml` in the current directory; no network access.
 3. **`bsp-registry.yaml` exists in the current directory** — auto-detect (preferred extension).
 4. **`bsp-registry.yml` exists in the current directory** — auto-detect (alternate extension).
-5. **Otherwise** — clone/update the remote registry into `~/.cache/bsp/registry` via `RegistryFetcher`.
+5. **`--remote URL` flag(s) provided** — fetch the specified remote(s) on-the-fly (no persistence).
+6. **Named remotes configured** — if `bsp remotes add` has registered remotes in `~/.config/bsp/remotes.yaml`, those are fetched automatically.
+7. **Otherwise** — fall back to the default Advantech BSP registry at `~/.cache/bsp/registry`.
 
 ### Global Options
 
@@ -190,7 +388,30 @@ The tool determines which registry file to use in the following order:
 ```bash
 bsp list
 bsp --registry my-registry.yaml list
+
+# Filter by component type
+bsp list devices
+bsp list releases
+bsp list features
+bsp list distros
+
+# Filter releases to those compatible with a specific device
+bsp list releases --device imx8qm
+
+# When multiple remotes are configured, scope output to a single named remote
+bsp list --remote myorg
+bsp list devices --remote myorg
+bsp list releases --remote myorg
 ```
+
+When multiple remotes are loaded, every entry is annotated with `[registry-name]`
+so the source is always visible.  Registries from different remotes are kept
+separate — their definitions are never merged together.
+
+| Option | Description |
+|--------|-------------|
+| `--remote NAME` | Show only entries from the named remote registry |
+| `--device DEVICE`, `-d DEVICE` | Filter releases by device slug (only used with `releases`) |
 
 #### `containers` — List available container definitions
 
@@ -198,17 +419,120 @@ bsp --registry my-registry.yaml list
 bsp containers
 ```
 
+#### `tree` — Display a tree view of the BSP registry
+
+```bash
+bsp tree
+bsp tree --full
+bsp tree --compact
+bsp --no-color tree
+bsp --registry my-registry.yaml tree
+
+# When multiple remotes are configured, scope the tree to a single named remote
+bsp tree --remote myorg
+bsp tree --full --remote myorg
+```
+
+Renders the full registry as a colored ASCII tree, grouped into sections:
+**Frameworks**, **Distros**, **Releases** (with vendor overrides), **Devices**,
+**Features** (with release and vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
+Use `--no-color` to disable colors (e.g. for scripts or log files).
+
+When multiple remotes are loaded, items are grouped under `[registry-name]`
+sub-nodes.  Registries from different remotes are kept separate — their
+definitions are never merged together.  Use `--remote NAME` to restrict the
+tree to a single named remote.
+
+| Option | Description |
+|--------|-------------|
+| `--full` | Show full details including includes lists, release overrides and vendor overrides for features, vendor overrides for releases, and override slugs for presets |
+| `--compact` | Show compact output with names/slugs only (no sub-items) |
+| `--remote NAME` | Show only entries from the named remote registry |
+
+**Example output (`bsp tree`):**
+
+```
+BSP Registry
+├── Frameworks (1)
+│   └── yocto: Yocto Project (vendor: yocto)
+├── Distros (1)
+│   └── poky: Poky (vendor: yocto, framework: yocto)
+├── Releases (1)
+│   └── scarthgap: Yocto 5.0 LTS [Yocto 5.0]
+│       ├── distro: poky
+│       └── vendor override: advantech (sub-releases: imx-6.6.53)
+├── Devices (2)
+│   ├── qemu-arm64: QEMU ARM64 (vendor: qemu, soc_vendor: arm)
+│   └── imx8qm: i.MX8 QM (vendor: advantech, soc_vendor: nxp, soc_family: imx8)
+├── Features (2)
+│   ├── ota: OTA Update
+│   └── secure-boot: Secure Boot [requires vendor: ['advantech']]
+└── BSP Presets (2)
+    ├── qemu-arm64-scarthgap: QEMU ARM64 Scarthgap
+    │   └── device: qemu-arm64  release: scarthgap
+    └── imx8qm-scarthgap: i.MX8 QM Scarthgap
+        ├── device: imx8qm  release: scarthgap
+        ├── vendor release: imx-6.6.53
+        └── features: ota, secure-boot
+```
+
+**Example output (`bsp tree --full`):**
+
+In `--full` mode all includes lists are expanded, release overrides and vendor overrides for features are shown as nested sub-trees, and vendor overrides for releases are also expanded:
+
+```
+BSP Registry
+├── Releases (1)
+│   └── scarthgap: Yocto 5.0 LTS [Yocto 5.0]
+│       ├── distro: poky
+│       ├── includes: kas/poky/scarthgap.yaml
+│       └── vendor override: advantech (distro: fsl-imx-xwayland)
+│           ├── includes: kas/yocto/vendors/advantech/scarthgap.yaml
+│           └── vendor release: imx-6.6.53: Scarthgap for i.MX 6.6.53
+│               └── includes:
+│                   └── kas/yocto/vendors/advantech/nxp/imx-6.6.53.yaml
+└── Features (1)
+    └── ostree: Enable OSTree support in the Yocto image [requires compatible_with: yocto]
+        ├── includes:
+        │   └── features/ota/ostree/ostree.yml
+        ├── release override: scarthgap
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-scarthgap.yml
+        ├── release override: styhead
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-styhead.yml
+        └── vendor override: advantech
+            └── soc vendor: nxp
+                └── includes: features/ota/ostree/modular-bsp-ota-nxp.yml
+```
+
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout] [--path PATH]
+bsp build <bsp_name> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
+bsp build <bsp_name> [--feature FEATURE...] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
+bsp build <bsp_name> [--feature FEATURE...] [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
+bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--clean` | Clean build directory before building |
+| `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
 | `--checkout` | Validate configuration and checkout repos without building |
 | `--path PATH` | Override the output build directory path defined in the registry |
+| `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
+| `--task TASK` | Bitbake task to run (e.g. `compile`, `configure`) to pass to KAS |
+| `--deploy` | Deploy artifacts to cloud storage after a successful build |
+| `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
+| `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
+| `--deploy-prefix PREFIX` | Remote path prefix template (overrides registry config) |
+| `--deploy-archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--deploy-archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--test` | Submit a LAVA HIL test job after a successful build |
+| `--wait` | Wait for the LAVA job to complete and print results (requires `--test`) |
+| `--lava-server URL` | LAVA server base URL override (overrides registry `lava.server`) |
+| `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
+| `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
 
 **Examples:**
 
@@ -219,8 +543,35 @@ bsp build poky-qemuarm64-scarthgap
 # Checkout/validate only (fast, no build)
 bsp build poky-qemuarm64-scarthgap --checkout
 
+# Build a preset with an extra feature enabled on top of the preset's defaults
+bsp build poky-qemuarm64-scarthgap --feature secure-boot
+
+# Build with multiple extra features
+bsp build poky-qemuarm64-scarthgap --feature secure-boot --feature ota
+
 # Override the output build directory
 bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
+# Build a specific Bitbake image (overrides registry-configured targets)
+bsp build poky-qemuarm64-scarthgap --target core-image-minimal
+
+# Build a specific image and run only the compile task
+bsp build poky-qemuarm64-scarthgap --target core-image-minimal --task compile
+
+# Build and deploy artifacts to Azure automatically
+bsp build poky-qemuarm64-scarthgap --deploy
+
+# Build and deploy to a specific AWS bucket
+bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-container my-s3-bucket
+
+# Build and trigger LAVA test, wait for result
+bsp build poky-qemuarm64-scarthgap --test --wait
+
+# Build with LAVA credential overrides
+bsp build poky-qemuarm64-scarthgap --test --wait \
+  --lava-server https://lava.ci.example.com \
+  --lava-token $LAVA_TOKEN \
+  --artifact-url http://files.example.com/builds
 ```
 
 #### `shell` — Interactive shell in build environment
@@ -247,6 +598,7 @@ bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
 
 ```bash
 bsp export <bsp_name> [--output OUTPUT]
+bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
 ```
 
 | Option | Description |
@@ -263,38 +615,617 @@ bsp export poky-qemuarm64-scarthgap
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
 
+#### `server` — Start an HTTP server (REST + GraphQL)
+
+Starts a FastAPI-based HTTP server that exposes the full BSP registry via both a REST API and a GraphQL API.  Requires the `server` optional extras (`pip install "bsp-registry-tools[server]"`).
+
+```bash
+bsp server [--host HOST] [--port PORT] [--reload]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host HOST` | `127.0.0.1` | Host address to bind to |
+| `--port PORT` | `8080` | Port to listen on |
+| `--reload` | — | Enable auto-reload on code changes (development mode) |
+
+Once started, the following interfaces are available:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
+| `http://localhost:8080/redoc` | ReDoc UI (REST) |
+| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
+| `http://localhost:8080/api/v1/…` | REST API endpoints |
+
+---
+
+#### `deploy` — Upload build artifacts to cloud storage
+
+Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
+to Azure Blob Storage or AWS S3.
+
+```bash
+bsp deploy <bsp_name> [OPTIONS]
+bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
+| `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
+| `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--dry-run` | List what would be uploaded without uploading (no credentials required) |
+
+---
+
+#### `gather` — Download build artifacts from cloud storage
+
+Downloads Yocto build artifacts that were previously uploaded by `bsp deploy`
+from Azure Blob Storage or AWS S3 to a local directory.
+
+```bash
+bsp gather <bsp_name> [OPTIONS]
+bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`) |
+| `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
+| `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
+| `--dry-run` | List what would be downloaded without downloading (no credentials required) |
+
+**Examples:**
+
+```bash
+# Download artifacts for a preset build (uses today's date)
+bsp gather poky-qemuarm64-scarthgap
+
+# Download artifacts into a specific local directory
+bsp gather poky-qemuarm64-scarthgap --dest-dir /mnt/artifacts
+
+# Download artifacts produced on a specific date
+bsp gather poky-qemuarm64-scarthgap --date 2025-03-15
+
+# Preview what would be downloaded (dry-run)
+bsp gather poky-qemuarm64-scarthgap --dry-run
+
+# Component-based gather
+bsp gather --device qemuarm64 --release scarthgap --dest-dir /mnt/artifacts
+```
+
+---
+
+#### `test` — Submit a LAVA HIL test job
+
+Submits a LAVA job for hardware-in-the-loop testing.  By default the job is submitted and the URL is printed; use `--wait` to block until it completes.
+
+```bash
+bsp test <bsp_name> [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]
+bsp test --device <device> --release <release> [--feature FEATURE...] [--wait] ...
+```
+
+| Option | Description |
+|--------|-------------|
+| `--wait` | Block until the LAVA job completes and print per-suite results |
+| `--lava-server URL` | LAVA server base URL (overrides registry `lava.server`) |
+| `--lava-token TOKEN` | LAVA API authentication token (overrides registry `lava.token`) |
+| `--artifact-url URL` | Base URL where built image artifacts are accessible to the LAVA lab |
+
+**Examples:**
+
+```bash
+# Submit a LAVA job for a pre-built image and exit immediately
+bsp test poky-qemuarm64-scarthgap
+
+# Submit and wait for the job to complete
+bsp test poky-qemuarm64-scarthgap --wait
+
+# Override LAVA settings from the CLI
+bsp test poky-qemuarm64-scarthgap --wait \
+  --lava-server https://lava.ci.example.com \
+  --lava-token $LAVA_TOKEN \
+  --artifact-url http://minio.example.com/builds
+
+# Component-based (no preset needed)
+bsp test --device qemuarm64 --release scarthgap --wait
+```
+
+#### `remotes` — Manage named remote registries
+
+`bsp remotes` manages a persistent list of named remote BSP registry sources,
+stored in `~/.config/bsp/remotes.yaml` (overridable via the
+`BSP_REMOTES_CONFIG` environment variable).  This is modelled after
+`git remote` and integrates with the registry resolution fallback: when no
+`--remote` flag is passed and no local registry file exists, configured remotes
+are used automatically.
+
+**List remotes**
+
+```bash
+# Short listing — one name per line
+bsp remotes
+
+# Verbose — include URL and branch
+bsp remotes -v
+```
+
+Example output:
+
+```
+advantech
+myorg
+```
+
+```
+advantech  https://github.com/Advantech-EECC/bsp-registry.git (branch: main)
+myorg      https://github.com/my-org/bsp-registry.git (branch: develop)
+```
+
+**Add a remote**
+
+```bash
+bsp remotes add <name> <url> [--branch BRANCH]
+```
+
+```bash
+# Add the default Advantech registry under a friendly name
+bsp remotes add advantech https://github.com/Advantech-EECC/bsp-registry.git
+
+# Add a private registry on a non-default branch
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch develop
+```
+
+**Remove a remote**
+
+```bash
+bsp remotes remove <name>
+# or: bsp remotes rm <name>
+```
+
+**Rename a remote**
+
+```bash
+bsp remotes rename <old-name> <new-name>
+```
+
+**Change a remote's URL**
+
+```bash
+bsp remotes set-url <name> <new-url>
+
+# Also update the branch at the same time
+bsp remotes set-url <name> <new-url> --branch <branch>
+```
+
+**Show details of a remote**
+
+```bash
+bsp remotes show <name>
+```
+
+Example output:
+
+```
+name:   myorg
+url:    https://github.com/my-org/bsp-registry.git
+branch: develop
+```
+
+**`remotes` options summary**
+
+| Sub-command | Arguments | Description |
+|-------------|-----------|-------------|
+| *(none)* | | List configured remote names |
+| `-v` / `--verbose-list` | | Show URL and branch alongside each name |
+| `add` | `<name> <url> [--branch BRANCH]` | Register a new named remote |
+| `remove` / `rm` | `<name>` | Remove a named remote |
+| `rename` | `<old-name> <new-name>` | Rename a remote |
+| `set-url` | `<name> <url> [--branch BRANCH]` | Update URL (and optionally branch) |
+| `show` | `<name>` | Print name, URL and branch for a remote |
+
+> **Config file location** — `~/.config/bsp/remotes.yaml`  (override with
+> `BSP_REMOTES_CONFIG=/path/to/remotes.yaml bsp remotes ...`)
+
+
+
+## HTTP Server (REST + GraphQL)
+
+The `bsp server` command exposes the entire BSP registry over HTTP.  Both a REST API and a GraphQL API are available simultaneously on the same port.
+
+### Installation
+
+```bash
+pip install "bsp-registry-tools[server]"
+```
+
+### Starting the server
+
+```bash
+# Default: http://127.0.0.1:8080
+bsp server
+
+# Custom host/port
+bsp server --host 0.0.0.0 --port 9000
+
+# Using a specific registry file
+bsp --registry /path/to/bsp-registry.yaml server --host 0.0.0.0 --port 8080
+```
+
+### REST API (`/api/v1/`)
+
+#### Query endpoints (GET)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/bsp` | List all BSP presets |
+| GET | `/api/v1/devices` | List all hardware devices |
+| GET | `/api/v1/releases` | List all releases |
+| GET | `/api/v1/releases?device=<slug>` | List releases compatible with a device |
+| GET | `/api/v1/features` | List all optional features |
+| GET | `/api/v1/distros` | List all distribution definitions |
+| GET | `/api/v1/frameworks` | List all framework definitions |
+| GET | `/api/v1/containers` | List all Docker container definitions |
+
+**Example:**
+
+```bash
+curl http://localhost:8080/api/v1/devices
+```
+
+```json
+[
+  {
+    "slug": "qemuarm64",
+    "description": "QEMU ARM64 (emulated)",
+    "vendor": "qemu",
+    "soc_vendor": "arm",
+    "soc_family": null,
+    "includes": ["kas/qemu/qemuarm64.yaml"],
+    "local_conf": []
+  }
+]
+```
+
+#### Action endpoints (POST)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/export` | Resolve and return a BSP config as YAML |
+| POST | `/api/v1/build` | Trigger a BSP build (blocking) |
+| POST | `/api/v1/shell` | Run a command inside the build container |
+
+All action endpoints accept a JSON body with either `bsp_name` **or** both `device` + `release`:
+
+```bash
+# Export by preset name
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap"}'
+
+# Export by components
+curl -X POST http://localhost:8080/api/v1/export \
+     -H "Content-Type: application/json" \
+     -d '{"device": "qemuarm64", "release": "scarthgap", "features": []}'
+
+# Validate (checkout only) without building
+curl -X POST http://localhost:8080/api/v1/build \
+     -H "Content-Type: application/json" \
+     -d '{"bsp_name": "poky-qemuarm64-scarthgap", "checkout_only": true}'
+```
+
+#### Interactive REST documentation
+
+Navigate to **`http://localhost:8080/docs`** for the full Swagger / OpenAPI UI or **`http://localhost:8080/redoc`** for ReDoc.
+
+### GraphQL API (`/graphql`)
+
+Navigate to **`http://localhost:8080/graphql`** for the interactive GraphiQL editor.
+
+#### Queries
+
+```graphql
+# List all devices
+{ devices { slug description vendor socVendor } }
+
+# List all BSP presets
+{ bsp { name description device release features } }
+
+# List releases compatible with a specific device
+{ releases(device: "qemuarm64") { slug description yoctoVersion } }
+
+# List features, distros, frameworks, and containers
+{ features { slug description compatibleWith }
+  distros { slug description framework }
+  frameworks { slug vendor }
+  containers { name image } }
+```
+
+#### Mutations
+
+```graphql
+# Export BSP config by preset name
+mutation {
+  exportBsp(bspName: "poky-qemuarm64-scarthgap") {
+    yamlContent
+  }
+}
+
+# Export by components
+mutation {
+  exportBsp(device: "qemuarm64", release: "scarthgap") {
+    yamlContent
+  }
+}
+
+# Validate (checkout only) without building
+mutation {
+  buildBsp(bspName: "poky-qemuarm64-scarthgap", checkoutOnly: true) {
+    status
+    message
+  }
+}
+
+# Run a command in the build container
+mutation {
+  shellCommand(bspName: "poky-qemuarm64-scarthgap", command: "bitbake -e") {
+    returnCode
+    output
+  }
+}
+```
+
+### Python API — embedding the server
+
+You can also embed the server directly in Python code:
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+app = create_app(registry_path="/path/to/bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+Or reuse an already-initialised `BspManager`:
+
+```python
+from bsp import BspManager
+from bsp.server import create_app
+import uvicorn
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+app = create_app(manager=manager)
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+## HIL Testing with LAVA and Robot Framework
+
+`bsp-registry-tools` can submit Hardware-in-the-Loop (HIL) test jobs to a
+[LAVA](https://lava.readthedocs.io/) server after or independently of a build.
+Test jobs are rendered from a Jinja2 template and can run
+[Robot Framework](https://robotframework.org/) suites inside the LAVA pipeline.
+
+### Configuration overview
+
+LAVA settings live in two places:
+
+1. **Registry-level `lava:` block** — shared server settings (URL, token, timeouts).
+   All values support `$ENV{}` expansion so credentials are never hardcoded.
+2. **Per-preset `testing.lava:` block** — device type, artifact URL, LAVA tags,
+   custom job template, and Robot Framework suites.
+
+CLI flags (`--lava-server`, `--lava-token`, `--artifact-url`) override both.
+
+### Minimal example
+
+```yaml
+# bsp-registry.yaml
+
+specification:
+  version: "2.0"
+
+# Registry-level LAVA connection settings
+lava:
+  server: "$ENV{LAVA_SERVER}"      # e.g. https://lava.example.com
+  token: "$ENV{LAVA_TOKEN}"        # LAVA API authentication token
+  username: "$ENV{LAVA_USER}"      # LAVA username (optional)
+  wait_timeout: 3600               # max seconds to wait for a job (default: 1 h)
+  poll_interval: 30                # polling interval in seconds
+
+registry:
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      distro: poky
+      includes:
+        - kas/scarthgap.yaml
+
+  bsp:
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap"
+      device: qemuarm64
+      release: scarthgap
+      build:
+        container: debian-bookworm
+        path: build/poky/qemuarm64/scarthgap
+      # HIL test configuration
+      testing:
+        lava:
+          device_type: "qemu-aarch64"          # LAVA device type label
+          artifact_url: "http://files.ci/builds" # where the image is served
+          tags: ["hil", "qemu"]                # optional LAVA scheduler tags
+          job_template: "kas/lava/qemu.yaml.j2" # optional; builtin used if omitted
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+              - tests/robot/boot.robot
+            variables:
+              BOARD_IP: "10.0.0.5"
+              SSH_PORT: "22"
+```
+
+### LAVA job templates
+
+When `job_template` is omitted a built-in minimal template is used (QEMU boot +
+optional Robot Framework test action).  For real devices, create a Jinja2
+template and point `job_template` at it.
+
+A fully annotated example is provided at
+[`examples/lava/job-template.yaml.j2`](examples/lava/job-template.yaml.j2).
+
+**Available Jinja2 context variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `device_type` | LAVA device type label |
+| `job_name` | Auto-composed from device/release/feature slugs |
+| `image_url` | Full artifact URL (`artifact_url` + `build_path`) |
+| `artifact_url` | Base artifact URL |
+| `build_path` | Relative build output directory |
+| `device_slug` | Device slug (e.g. `qemuarm64`) |
+| `release_slug` | Release slug (e.g. `scarthgap`) |
+| `feature_slugs` | List of active feature slugs |
+| `lava_tags` | List of LAVA scheduler tags |
+| `robot_suites` | List of Robot Framework `.robot` file paths |
+| `robot_variables` | Dict of Robot Framework `--variable` pairs |
+| `timeout_minutes` | Overall job timeout in minutes |
+
+### Workflow examples
+
+```bash
+# Submit a LAVA job after a successful build and wait for results
+bsp build poky-qemuarm64-scarthgap --test --wait
+
+# Submit a LAVA test job for an already-built image
+bsp test poky-qemuarm64-scarthgap --wait
+
+# Override LAVA settings at the command line (useful in CI)
+export LAVA_SERVER=https://lava.ci.example.com
+export LAVA_TOKEN=mytoken
+bsp test poky-qemuarm64-scarthgap \
+  --artifact-url http://minio.example.com/builds \
+  --wait
+
+# Component-based test (no preset required)
+bsp test --device qemuarm64 --release scarthgap \
+  --lava-server https://lava.ci.example.com \
+  --lava-token $LAVA_TOKEN \
+  --wait
+```
+
+### Python API
+
+```python
+from bsp import BspManager, LavaClient, LavaTestSuite, build_lava_job
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+# Submit LAVA test and wait for results
+passed = manager.test_bsp(
+    "poky-qemuarm64-scarthgap",
+    lava_server="https://lava.example.com",
+    lava_token="mytoken",
+    artifact_url="http://files.example.com/builds",
+    wait=True,
+)
+
+# Use LavaClient directly
+client = LavaClient(server="https://lava.example.com", token="mytoken")
+job_id = client.submit_job(job_yaml_string)
+health = client.wait_for_job(job_id, timeout=3600, poll_interval=30)
+suites: list[LavaTestSuite] = client.get_job_results(job_id)
+```
+
+
 ## Registry Configuration Reference
 
-The BSP registry is a YAML file with the following top-level sections:
+The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
 
 ### `specification`
 
 ```yaml
 specification:
-  version: "1.0"
+  version: "2.0"
 ```
+
+### `include` (optional)
+
+Split a large registry across multiple files using the `include` directive.
+Paths are relative to the file that contains the directive.
+
+```yaml
+include:
+  - devices/boards.yaml
+  - releases/scarthgap.yaml
+```
+
+Each included file is merged before the root file's own content.  Lists
+(e.g. `devices`, `releases`, `features`, `environment`) are concatenated; dicts
+(e.g. `containers`, `environments`) are merged recursively; scalars use the root
+file's value.
+Included files can themselves contain further `include` directives, and
+circular references are detected at load time.
+
+See [docs/registry-v2.md](docs/registry-v2.md#include-optional) for full details.
 
 ### `environment`
 
-Global environment variables applied to all builds. Supports `$ENV{VAR_NAME}` expansion to reference system environment variables.
+Global build environment applied to all builds.  Groups `variables` (supports `$ENV{VAR_NAME}` expansion) and `copy` (file-copy entries executed inside the build environment before every build) under a single key.
 
 ```yaml
 environment:
-  - name: "GITCONFIG_FILE"
-    value: "$ENV{HOME}/.gitconfig"
-  - name: "DL_DIR"
-    value: "$ENV{HOME}/yocto-cache/downloads"
-  - name: "SSTATE_DIR"
-    value: "$ENV{HOME}/yocto-cache/sstate"
+  variables:
+    - name: "GITCONFIG_FILE"
+      value: "$ENV{HOME}/.gitconfig"
+    - name: "DL_DIR"
+      value: "$ENV{HOME}/yocto-cache/downloads"
+    - name: "SSTATE_DIR"
+      value: "$ENV{HOME}/yocto-cache/sstate"
+  copy:
+    - scripts/global-setup.sh: build/
+    - config/global.conf: build/conf/
 ```
 
-**Supported variables:**
+Both `variables` and `copy` are optional.  Global copies are merged first, before named-environment and device copies.
 
-| Variable | Description |
-|----------|-------------|
-| `DL_DIR` | Yocto downloads cache directory |
-| `SSTATE_DIR` | Yocto shared state cache directory |
-| `GITCONFIG_FILE` | Git configuration file path |
+### `environments`
+
+Named environments bundle a container reference, environment variables, and optional file-copy entries together.  The special name `"default"` is used by any release that does not explicitly name an environment.
+
+```yaml
+environments:
+  default:
+    container: "debian-bookworm"
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/yocto-cache/downloads"
+  isar-build:
+    container: "isar-debian-trixie"
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/isar-cache/downloads"
+    # Copy the QEMU run script into every Isar build directory
+    copy:
+      - isar/scripts/isar-runqemu.sh: build/
+```
 
 ### `containers`
 
@@ -302,25 +1233,20 @@ Docker container definitions for build environments:
 
 ```yaml
 containers:
-  - ubuntu-22.04:
-      image: "my-registry/ubuntu-22.04/kas:4.7"
-      file: Dockerfile.ubuntu
-      args:
-        - name: "DISTRO"
-          value: "ubuntu:22.04"
-        - name: "KAS_VERSION"
-          value: "4.7"
-  - ubuntu-20.04:
-      image: "my-registry/ubuntu-20.04/kas:4.7"
-      file: Dockerfile.ubuntu
-      args:
-        - name: "DISTRO"
-          value: "ubuntu:20.04"
-  - isar-container:
-      image: "my-registry/isar/kas:4.7"
-      file: Dockerfile.isar
-      args: []
-      privileged: true    # Run container in privileged mode (required for ISAR builds)
+  debian-bookworm:
+    image: "my-registry/debian/kas:5.1"
+    file: Dockerfile
+    args:
+      - name: "DISTRO"
+        value: "debian-bookworm"
+      - name: "KAS_VERSION"
+        value: "5.1"
+  isar-container:
+    image: "my-registry/isar/kas:5.1"
+    file: Dockerfile.isar
+    args: []
+    privileged: true    # Run container in privileged mode (required for ISAR builds)
+    runtime_args: "-p 2222:2222"  # Extra flags passed to the container engine
 ```
 
 **Container fields:**
@@ -330,32 +1256,242 @@ containers:
 | `image` | string | — | Docker image name/tag |
 | `file` | string | — | Path to Dockerfile for building the image |
 | `args` | list | `[]` | Docker build arguments (`name`/`value` pairs) |
-| `privileged` | boolean | `false` | Run container with elevated privileges. Required for ISAR (Debian-based) builds. Adds `--isar` to `kas-container`, which enables the `--privileged` Docker flag. |
+| `privileged` | boolean | `false` | Run container with elevated privileges. Required for ISAR builds. |
+| `runtime_args` | string | — | Extra flags appended to the container engine `run` invocation (e.g. port-forwarding, `--device` access). Forwarded via `--runtime-args`. |
+
+### `registry.devices`
+
+Hardware device/board definitions:
+
+```yaml
+registry:
+  devices:
+    - slug: qemuarm64
+      description: "QEMU ARM64 (emulated)"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+```
+
+### `registry.releases`
+
+Yocto/Isar release definitions referencing a distro:
+
+```yaml
+registry:
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      distro: poky
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+```
+
+### `registry.features`
+
+Optional feature definitions that can be enabled per-build.  Features declare
+their own KAS includes and can restrict themselves to specific frameworks/distros
+(`compatible_with`), board vendors (`compatibility`), and/or releases
+(`release_overrides`).
+
+```yaml
+registry:
+  features:
+    - slug: ostree
+      description: "Enable OSTree support in the Yocto image"
+      compatible_with: [yocto]   # restrict to Yocto framework
+      includes:
+        - features/ota/ostree/ostree.yml   # always included when feature is enabled
+      release_overrides:
+        - release: scarthgap
+          includes:
+            - features/ota/ostree/ostree-scarthgap.yml  # only for Scarthgap
+        - release: styhead
+          includes:
+            - features/ota/ostree/ostree-styhead.yml    # only for Styhead
+      vendor_overrides:
+        - vendor: advantech
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/ostree/modular-bsp-ota-nxp.yml  # only for Advantech NXP boards
+```
+
+See [docs/registry-v2.md](docs/registry-v2.md#registryfeatures) for the full
+reference including `compatibility`, `local_conf`, `env`, and all override fields.
 
 ### `registry.bsp`
 
-List of BSP definitions:
+Named presets — device + release(s) + optional features:
 
 ```yaml
 registry:
   bsp:
-    - name: my-bsp-name           # Unique identifier
-      description: "My BSP"       # Human-readable description
-      os:                         # Optional OS information
-        name: linux
-        build_system: yocto
-        version: "5.0"
-      build:
-        path: build/my-bsp        # Build output directory
-        environment:
-          container: "ubuntu-22.04"   # Reference to containers section
-          # OR use direct Docker configuration:
-          # docker:
-          #   image: "my-image:latest"
-        configuration:            # KAS configuration files (in order)
-          - kas/scarthgap.yaml
-          - kas/qemu/qemuarm64.yaml
+    # Single-release preset (backward compatible)
+    - name: poky-qemuarm64-scarthgap
+      description: "Poky QEMU ARM64 Scarthgap (Yocto 5.0 LTS)"
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      build:              # optional: override container and/or output path
+        container: "debian-bookworm"
+        path: build/poky-qemuarm64-scarthgap
+      testing:            # optional: LAVA HIL test configuration
+        lava:
+          device_type: "qemu-aarch64"
+          artifact_url: "http://files.ci/builds"
+          tags: ["hil"]
+          job_template: "kas/lava/qemu.yaml.j2"   # optional; builtin used if absent
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "10.0.0.5"
+
+    # Multi-release preset: use "releases" (plural) to avoid repeating the
+    # same entry for every Yocto release.  The resolver expands this into one
+    # preset per release, named "{name}-{release_slug}":
+    #   poky-qemuarm64-scarthgap  (auto-composed path: build/poky-qemuarm64-scarthgap)
+    #   poky-qemuarm64-styhead    (auto-composed path: build/poky-qemuarm64-styhead)
+    # The "testing" block (and "deploy", "local_conf", "targets") is inherited
+    # by every expanded preset, so a single testing block covers all releases.
+    - name: poky-qemuarm64
+      description: "Poky QEMU ARM64"
+      device: qemuarm64
+      releases: [scarthgap, styhead]
+      features: [systemd, debug]
+      build:              # optional: container override (path is always auto-composed)
+        container: "debian-bookworm"
+      testing:            # inherited by poky-qemuarm64-scarthgap AND poky-qemuarm64-styhead
+        lava:
+          device_type: "qemu-aarch64"
+          artifact_url: "http://files.ci/builds"
+          tags: ["hil", "qemu"]
+          robot:
+            suites:
+              - tests/robot/smoke.robot
+            variables:
+              BOARD_IP: "10.0.0.5"
 ```
+
+> **Note**: `release` (singular) and `releases` (plural) are mutually exclusive.
+> Exactly one must be specified per preset entry.  When `releases` is used, all
+> non-build fields (`features`, `local_conf`, `targets`, `deploy`, `testing`) are
+> inherited unchanged by every expanded preset.  Build paths are computed per
+> release as `{build.path or "build/{name}"}-{release_slug}`.  You can therefore
+> test every release in the list with a single `testing` block:
+>
+> ```bash
+> bsp test poky-qemuarm64-scarthgap --wait
+> bsp test poky-qemuarm64-styhead --wait
+> ```
+
+### `deploy` (optional)
+
+Global cloud deployment configuration applied to all builds.  An individual
+`BspPreset` can also include a `deploy:` block that overrides specific settings
+for that preset (see [Per-preset override](#per-preset-deploy-override) below).
+
+```yaml
+deploy:
+  provider: azure                                   # "azure" (default) or "aws"
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}      # Azure only; supports $ENV{} expansion
+  container: bsp-artifacts                          # Azure container name
+  # bucket: my-s3-bucket                           # AWS alternative to container
+  prefix: "{vendor}/{device}/{release}/{date}"      # remote path prefix template
+  patterns:                                         # glob patterns for files to upload
+    - "**/*.wic.gz"
+    - "**/*.wic.bz2"
+    - "**/*.tar.bz2"
+    - "**/*.ext4"
+    - "**/*.sdimg"
+  artifact_dirs:                                    # subdirs under build_path to search
+    - tmp/deploy/images
+    - tmp/deploy/sdk
+  include_manifest: true                            # upload a JSON manifest of all artifacts
+```
+
+**Prefix template variables:**
+
+| Variable | Value |
+|----------|-------|
+| `{device}` | Device slug |
+| `{release}` | Release slug |
+| `{distro}` | Effective distro slug |
+| `{vendor}` | Device vendor slug |
+| `{date}` | Build date in `YYYY-MM-DD` format |
+| `{datetime}` | Build datetime in `YYYYMMDD-HHMMSS` format |
+
+#### Per-preset deploy override
+
+Add a `deploy:` block directly on a `BspPreset` to override specific global
+deploy settings for that preset.  Only fields that differ from their default
+values override the global config; other fields keep the global value.
+CLI flags (`--provider`, `--container`, …) are applied last.
+
+```yaml
+deploy:                               # global: Azure, shared container
+  provider: azure
+  account_url: $ENV{AZURE_STORAGE_ACCOUNT_URL}
+  container: bsp-artifacts
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: qemuarm64-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+
+    # Overrides only container and prefix; provider/account_url come from global.
+    - name: imx8mp-adv-scarthgap-release
+      device: imx8mp-adv
+      release: scarthgap
+      features: []
+      deploy:
+        container: imx8mp-release-artifacts         # ← override
+        prefix: "release/{device}/{release}/{date}" # ← override
+        patterns:
+          - "**/*.wic.gz"                           # ← override
+
+    # Switches to AWS entirely for this preset.
+    - name: aws-build-scarthgap
+      device: qemuarm64
+      release: scarthgap
+      features: []
+      deploy:
+        provider: aws                 # ← override: switch provider
+        container: my-s3-bucket       # ← override: bucket name
+```
+
+See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
+
+### `lava` (optional)
+
+Top-level LAVA server settings shared across all presets.  All values support
+`$ENV{}` expansion.
+
+```yaml
+lava:
+  server: "$ENV{LAVA_SERVER}"   # LAVA server base URL (required for bsp test)
+  token: "$ENV{LAVA_TOKEN}"     # API authentication token
+  username: "$ENV{LAVA_USER}"   # Username (optional)
+  wait_timeout: 3600            # Maximum seconds to wait for a job (default: 3600)
+  poll_interval: 30             # Polling interval in seconds (default: 30)
+```
+
+**`lava` fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `server` | string | — | LAVA server base URL (e.g. `https://lava.example.com`) |
+| `token` | string | `""` | LAVA API authentication token |
+| `username` | string | `""` | LAVA username |
+| `wait_timeout` | integer | `3600` | Maximum wait time in seconds when `--wait` is used |
+| `poll_interval` | integer | `30` | Job status polling interval in seconds |
+
 
 ## KAS Configuration Files
 
@@ -367,11 +1503,13 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 
 | File | Description |
 |------|-------------|
-| `examples/kas/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
-| `examples/kas/styhead.yaml` | Yocto Styhead (5.1) base configuration |
-| `examples/kas/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
-| `examples/kas/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
-| `examples/kas/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/yocto/releases/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
+| `examples/kas/yocto/releases/styhead.yaml` | Yocto Styhead (5.1) base configuration |
+| `examples/kas/yocto/releases/walnascar.yaml` | Yocto Walnascar (5.2) base configuration |
+| `examples/kas/devices/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
+| `examples/kas/devices/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/devices/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
+| `examples/kas/isar/` | Isar build-system example configurations |
 
 ### KAS File Structure
 
@@ -444,6 +1582,63 @@ kas = KasManager(
 kas.validate_kas_files()
 ```
 
+### Starting the HTTP server programmatically
+
+```python
+import uvicorn
+from bsp.server import create_app
+
+# Create and run the server (requires bsp-registry-tools[server])
+app = create_app(registry_path="bsp-registry.yaml")
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+### Cloud Deployment API
+
+```python
+from bsp import BspManager
+
+manager = BspManager("bsp-registry.yaml")
+manager.initialize()
+
+# Deploy artifacts from a preset build (dry-run)
+result = manager.deploy_bsp("poky-qemuarm64-scarthgap", dry_run=True)
+print(f"Would upload {result.success_count} artifact(s)")
+
+# Deploy with overrides
+result = manager.deploy_bsp(
+    "poky-qemuarm64-scarthgap",
+    deploy_overrides={
+        "provider": "aws",
+        "container": "my-s3-bucket",
+        "prefix": "builds/{device}/{release}/{date}",
+    },
+)
+for artifact in result.artifacts:
+    print(f"  {artifact.local_path.name} → {artifact.remote_url}")
+
+# Deploy by components
+result = manager.deploy_by_components(
+    device_slug="qemuarm64",
+    release_slug="scarthgap",
+)
+
+# Use the storage backend and deployer directly
+from bsp.storage import create_backend
+from bsp.deployer import ArtifactDeployer
+from bsp.models import DeployConfig
+
+config = DeployConfig(
+    provider="azure",
+    container="bsp-artifacts",
+    prefix="{device}/{release}/{date}",
+    patterns=["**/*.wic.gz"],
+)
+backend = create_backend("azure", container_name="bsp-artifacts", dry_run=True)
+deployer = ArtifactDeployer(config, backend)
+result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", release="scarthgap")
+```
+
 ## Development
 
 ### Setup Development Environment
@@ -451,7 +1646,7 @@ kas.validate_kas_files()
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
-pip install -e ".[dev]"
+pip install -e .
 ```
 
 ### Running Tests
@@ -479,34 +1674,74 @@ bsp-registry-tools/
 │   ├── cli.py                # CLI entry point
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
+│   ├── remotes_manager.py    # Persistent named-remote CRUD (bsp remotes)
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
-│   ├── models.py             # Dataclass models
+│   ├── models.py             # Dataclass models (v2.0 schema)
+│   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
+│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
+│   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
+│   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
+│   ├── gatherer.py           # ArtifactGatherer: download build artifacts from cloud
+│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
 │   ├── utils.py              # YAML / Docker utilities
-│   └── exceptions.py         # Custom exceptions
+│   ├── exceptions.py         # Custom exceptions
+│   ├── server/               # Optional HTTP server (requires [server] extras)
+│   │   ├── __init__.py       # Exports create_app
+│   │   ├── app.py            # FastAPI application factory
+│   │   ├── rest.py           # REST router (/api/v1/*)
+│   │   ├── graphql_schema.py # Strawberry GraphQL schema
+│   │   └── types.py          # Pydantic response models
+│   └── storage/              # Cloud storage backends
+│       ├── __init__.py       # Exports CloudStorageBackend and create_backend()
+│       ├── base.py           # Abstract CloudStorageBackend base class
+│       ├── azure.py          # AzureStorageBackend (azure-storage-blob)
+│       ├── aws.py            # AwsStorageBackend (boto3)
+│       └── factory.py        # create_backend() factory function
 ├── pyproject.toml            # Package configuration
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
+├── docs/
+│   ├── registry-v2.md        # Full v2.0 schema reference
+│   ├── registry-v1.md        # Legacy v1.0 schema reference
+│   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── server.md             # HTTP server (REST + GraphQL) reference
+│   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
-│   ├── test_cli.py
+│   ├── test_cli_basic.py
+│   ├── test_cli_remote_flags.py
+│   ├── test_deploy.py        # Deployment tests
+│   ├── test_gatherer.py      # Gather (download) tests
+│   ├── test_lava_client.py   # LAVA client unit tests (HTTP mocked)
+│   ├── test_lava_job_builder.py # LAVA job template renderer tests
+│   ├── test_models.py
+│   ├── test_kas_manager.py
+│   ├── test_environment.py
+│   ├── test_path_resolver.py
 │   ├── test_registry_fetcher.py
-│   └── ...
+│   └── test_utils.py
 ├── examples/
-│   ├── bsp-registry.yaml      # Sample BSP registry for QEMU targets
+│   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
+│   ├── bsp-registry.devices.yaml # Devices include fragment example
+│   ├── lava/
+│   │   └── job-template.yaml.j2  # Annotated example LAVA job Jinja2 template
 │   └── kas/
-│       ├── scarthgap.yaml     # Yocto Scarthgap base config
-│       ├── styhead.yaml       # Yocto Styhead base config
-│       └── qemu/
-│           ├── qemuarm64.yaml  # QEMU ARM64 machine config
-│           ├── qemux86-64.yaml # QEMU x86-64 machine config
-│           └── qemuarm.yaml    # QEMU ARM machine config
+│       ├── yocto/             # Yocto Project KAS configurations
+│       │   ├── releases/      # Per-release KAS files (scarthgap, styhead, walnascar, …)
+│       │   ├── devices/       # Yocto-specific device KAS files (qemuarm64, qemuarm, …)
+│       │   ├── distro/        # Distro fragments (poky, harden)
+│       │   └── features/      # Feature KAS files (systemd, debug, ssh, …)
+│       ├── isar/              # Isar build system KAS configurations
+│       ├── devices/qemu/      # Shared QEMU device configurations (qemuarm64, qemux86-64, …)
+│       └── vendors/qemu/      # Vendor-level shared KAS fragments
 └── .github/
     └── workflows/
-        ├── tests.yaml         # CI: run tests on push/PR
-        └── publish.yaml       # CD: publish to PyPI on release
+        ├── tests.yml          # CI: run tests on push/PR
+        ├── cli-tests.yml      # CI: integration CLI tests
+        └── publish.yml        # CD: publish to PyPI on release
 ```
 
 ## Publishing to PyPI
@@ -551,18 +1786,38 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `RemotesManager` | Reads/writes `~/.config/bsp/remotes.yaml` — CRUD for named remote registry sources |
+| `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
+| `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
+| `ArtifactGatherer` | Downloads previously uploaded Yocto build artifacts from cloud storage |
+| `AzureStorageBackend` | Azure Blob Storage backend (requires `azure-storage-blob`) |
+| `AwsStorageBackend` | AWS S3 backend (requires `boto3`) |
+| `LavaClient` | LAVA REST API wrapper — submit, poll, and fetch results for HIL test jobs |
+
 
 ### Data Classes
 
 | Class | Description |
 |-------|-------------|
-| `RegistryRoot` | Root registry container |
-| `Registry` | Contains list of BSP definitions |
-| `BSP` | Single BSP definition |
-| `BuildSetup` | Build configuration (path, environment, KAS files) |
-| `BuildEnvironment` | Docker/container settings |
-| `Docker` | Docker image, build arg, and privileged mode configuration |
+| `RegistryRoot` | Root registry container (specification, registry, containers, environments, deploy, lava) |
+| `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
+| `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
+| `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
+| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, release_overrides, vendor_overrides) |
+| `BspPreset` | Named preset combining device + release + features + optional deploy and testing configs |
+| `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
+| `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
+| `Docker` | Docker image, build arg, privileged mode, and runtime_args configuration |
+| `NamedEnvironment` | Named environment bundling a container reference, variables, and optional copy entries |
 | `EnvironmentVariable` | Name/value pair with `$ENV{}` expansion support |
+| `DeployConfig` | Cloud deployment configuration (provider, container/bucket, prefix, patterns, artifact dirs) |
+| `DeployResult` | Result of a deployment run: list of uploaded artifacts with URLs and checksums |
+| `GatherResult` | Result of a gather run: list of local paths for downloaded artifacts |
+| `LavaServerConfig` | Registry-level LAVA server connection settings (server, token, timeouts) |
+| `LavaTestConfig` | Per-preset LAVA test settings (device_type, artifact_url, tags, job_template, robot) |
+| `RobotTestConfig` | Robot Framework suite list and variable dict embedded in a LAVA job |
+| `TestingConfig` | Top-level testing block on a `BspPreset` (currently wraps `LavaTestConfig`) |
+
 
 ### Exceptions
 

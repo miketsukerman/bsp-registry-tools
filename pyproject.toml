@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bsp-registry-tools"
-version = "0.0.2.3"
+version = "0.1.0.0"
 description = "Advantech Board Support Package (BSP) Registry Manager"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -33,6 +33,30 @@ dependencies = [
     "dacite>=1.6.0",
     "kas>=4.7",
     "colorama>=0.4.6",
+    "requests>=2.28.0",
+    "jinja2>=3.1.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "strawberry-graphql[fastapi]>=0.200.0",
+]
+azure = [
+    "azure-storage-blob>=12.0",
+    "azure-identity>=1.0",
+]
+aws = [
+    "boto3>=1.20",
+]
+deploy = [
+    "azure-storage-blob>=12.0",
+    "azure-identity>=1.0",
+    "boto3>=1.20",
+]
+completions = [
+    "argcomplete>=3.0",
 ]
 
 [project.scripts]
@@ -44,7 +68,7 @@ Repository = "https://github.com/Advantech-EECC/bsp-registry-tools"
 Issues = "https://github.com/Advantech-EECC/bsp-registry-tools/issues"
 
 [tool.setuptools]
-packages = ["bsp"]
+packages = ["bsp", "bsp.server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,15 @@
+# KAS configuration for Yocto Scarthgap (5.0 LTS)
+# https://downloads.yoctoproject.org/releases/yocto/yocto-5.0.11/RELEASENOTES
+header:
+  version: 14
+
+target: core-image-minimal
+
+defaults:
+  repos:
+    branch: "scarthgap"
+
+repos:
+  bitbake:
+    branch: "2.8"
+    commit: "139f61fe9eec221745184a14b3618d2dfa650b91"

@@ -1,0 +1,131 @@
+{# LAVA job template for BSP HIL testing with Robot Framework             #}
+{# Rendered by bsp/lava_job_builder.py — see module docstring for context  #}
+{#                                                                          #}
+{# Available context variables:                                             #}
+{#   device_type         - LAVA device type label                           #}
+{#   job_name            - human-readable job name                          #}
+{#   image_url           - full URL to the primary image artifact           #}
+{#   artifact_url        - complete override URL to the image artifact       #}
+{#                         (wins over artifact_server_url composition)      #}
+{#   artifact_server_url - base URL of the artifact server                  #}
+{#   artifact_name       - image file name prepended with artifact_server_url#}
+{#   build_path          - relative build output directory path             #}
+{#   device_slug         - device slug (e.g. "qemu-arm64")                  #}
+{#   release_slug        - release slug (e.g. "scarthgap")                  #}
+{#   feature_slugs       - list of active feature slugs                     #}
+{#   lava_tags           - list of LAVA device tags                         #}
+{#   robot_suites        - list of Robot Framework .robot file paths        #}
+{#   robot_variables     - dict of Robot Framework --variable pairs         #}
+{#   timeout_minutes     - overall job timeout in minutes                   #}
+
+job_name: "{{ job_name }}"
+device_type: {{ device_type }}
+{% if lava_tags %}
+tags:
+{% for tag in lava_tags %}
+  - {{ tag }}
+{% endfor %}
+{% endif %}
+
+{% if context %}
+context:
+  arch: {{ context.device_arch }}
+  machine: {{ context.device_machine }}
+{% endif %}
+
+timeouts:
+  job:
+    minutes: {{ timeout_minutes }}
+  action:
+    minutes: {{ [timeout_minutes // 2, 5] | max }}
+  connection:
+    minutes: 5
+
+priority: medium
+visibility: public
+
+{% if image_url %}
+actions:
+  - deploy:
+      timeout:
+        minutes: {{ [timeout_minutes // 4, 10] | max }}
+      to: tmpfs
+      images:
+        rootfs:
+          url: {{ image_url }}
+          image_arg: "-drive file={rootfs},if=ide,format=raw"
+
+  - boot:
+      timeout:
+        minutes: 10
+      method: qemu
+      media: tmpfs
+      auto_login:
+        login_prompt: "login:"
+        username: root
+      prompts:
+        - "root@"
+        - "\\$"
+
+{% if robot_suites %}
+  - test:
+      timeout:
+        minutes: {{ [timeout_minutes // 2, 15] | max }}
+      definitions:
+{% for suite in robot_suites %}
+        - repository: https://github.com/Advantech-EECC/bsp-registry
+          from: git
+          name: "{{ suite | basename | replace('.robot', '') }}"
+          path: {{ suite }}
+{% if robot_variables %}
+          parameters:
+{% for var_name, var_value in robot_variables.items() %}
+            {{ var_name }}: "{{ var_value }}"
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+  - test:
+      timeout:
+        minutes: {{ [timeout_minutes // 2, 10] | max }}
+      definitions:
+        - repository: https://github.com/Linaro/test-definitions.git
+          from: git
+          path: automated/linux/smoke/smoke.yaml
+          name: smoke
+{% endif %}
+
+{% else %}
+{# No image URL — health-check only (useful for pre-provisioned DUTs) #}
+actions:
+  - boot:
+      timeout:
+        minutes: 5
+      method: ssh
+      prompts:
+        - "root@"
+
+  - test:
+      timeout:
+        minutes: {{ timeout_minutes }}
+      definitions:
+{% if robot_suites %}
+{% for suite in robot_suites %}
+        - repository: {{ suite }}
+          from: file
+          name: "{{ suite | basename | replace('.robot', '') }}"
+          path: {{ suite }}
+{% if robot_variables %}
+          parameters:
+{% for var_name, var_value in robot_variables.items() %}
+            {{ var_name }}: "{{ var_value }}"
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+        - repository: https://github.com/Linaro/test-definitions.git
+          from: git
+          path: automated/linux/smoke/smoke.yaml
+          name: smoke
+{% endif %}
+{% endif %}

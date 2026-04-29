@@ -1,22 +1,20 @@
-# KAS configuration for Yocto Scarthgap (5.0 LTS)
-# https://downloads.yoctoproject.org/releases/yocto/yocto-5.0.11/RELEASENOTES
 header:
   version: 14
 
-distro: poky
-target: core-image-minimal
-
-defaults:
-  repos:
-    branch: "scarthgap"
-
 repos:
+  bitbake:
+    url: "https://github.com/openembedded/bitbake.git"
+    path: "layers/bitbake"
+    layers:
+      bitbake: "disabled"
+
   poky:
     url: "https://git.yoctoproject.org/poky"
     path: "layers/poky"
     layers:
       meta:
       meta-poky:
+      meta-yocto-bsp:
 
   meta-openembedded:
     url: "https://github.com/openembedded/meta-openembedded.git"
@@ -25,3 +23,10 @@ repos:
       meta-oe:
       meta-python:
       meta-networking:
+
+  meta-security:
+    url: "https://git.yoctoproject.org/meta-security"
+    path: "layers/meta-security"
+    layers:
+      .:
+      meta-hardening:

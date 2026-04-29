@@ -1,0 +1,15 @@
+# KAS configuration for Yocto Styhead (5.1)
+# https://downloads.yoctoproject.org/releases/yocto/yocto-5.1/RELEASENOTES
+header:
+  version: 14
+
+target: core-image-minimal
+
+defaults:
+  repos:
+    branch: "styhead"
+
+repos:
+  bitbake:
+    branch: "2.10"
+    commit: "82b9f42126983579da03bdbb4e3ebf07346118a7"
