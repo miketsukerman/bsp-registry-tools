@@ -198,3 +198,67 @@ class TestMainCliRemoteFlags:
             update=True,
         )
         assert exit_code == 0
+
+
+class TestMultiRemoteCliFlags:
+    """Tests for multi-registry --remote CLI behavior."""
+
+    def test_multiple_remotes_dispatch_to_fetch_multiple(self, registry_file):
+        """Two --remote flags should dispatch to RegistryFetcher.fetch_multiple."""
+        url_a = "https://github.com/org/registry-a.git"
+        url_b = "https://github.com/org/registry-b.git"
+        with patch("sys.argv", ["bsp", "--remote", url_a, "--remote", url_b, "list"]):
+            with patch("pathlib.Path.is_file", return_value=False):
+                with patch(
+                    "bsp.registry_fetcher.RegistryFetcher.fetch_multiple",
+                    return_value=[("a", registry_file), ("b", registry_file)],
+                ) as mock_fetch:
+                    with patch("bsp.bsp_manager.BspManager.initialize"):
+                        bsp.main()
+
+        mock_fetch.assert_called_once()
+        specs = mock_fetch.call_args[0][0]
+        assert len(specs) == 2
+        assert specs[0].url == url_a
+        assert specs[1].url == url_b
+
+    def test_multiple_remotes_use_config_paths_on_manager(self, registry_file):
+        """With two --remote flags, BspManager should be created with config_paths."""
+        url_a = "https://github.com/org/registry-a.git"
+        url_b = "https://github.com/org/registry-b.git"
+        created_managers = []
+
+        original_init = bsp.BspManager.__init__
+
+        def capturing_init(self_inner, *args, **kwargs):
+            created_managers.append(kwargs)
+            original_init(self_inner, *args, **kwargs)
+
+        with patch("sys.argv", ["bsp", "--remote", url_a, "--remote", url_b, "list"]):
+            with patch("pathlib.Path.is_file", return_value=False):
+                with patch(
+                    "bsp.registry_fetcher.RegistryFetcher.fetch_multiple",
+                    return_value=[("a", registry_file), ("b", registry_file)],
+                ):
+                    with patch.object(bsp.BspManager, "__init__", capturing_init):
+                        with patch.object(bsp.BspManager, "initialize"):
+                            bsp.main()
+
+        assert any("config_paths" in kw for kw in created_managers)
+
+    def test_single_remote_with_branch_embedded(self, registry_file):
+        """Single --remote URL@BRANCH should parse correctly."""
+        url_and_branch = "https://github.com/org/registry.git@my-branch"
+        with patch("sys.argv", ["bsp", "--remote", url_and_branch, "list"]):
+            with patch("pathlib.Path.is_file", return_value=False):
+                with patch(
+                    "bsp.registry_fetcher.RegistryFetcher.fetch_registry",
+                    return_value=registry_file,
+                ) as mock_fetch:
+                    exit_code = bsp.main()
+
+        mock_fetch.assert_called_once()
+        call_kwargs = mock_fetch.call_args[1]
+        assert call_kwargs["repo_url"] == "https://github.com/org/registry.git"
+        assert call_kwargs["branch"] == "my-branch"
+        assert exit_code == 0

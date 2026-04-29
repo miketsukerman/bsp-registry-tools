@@ -51,6 +51,7 @@ from .models import (
     empty_dict,
     EnvironmentVariable,
     DockerArg,
+    DockerVolume,
     Docker,
     Specification,
     GlobalEnvironment,
@@ -97,6 +98,7 @@ from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
 from .gatherer import ArtifactGatherer, GatherResult
 from .storage import CloudStorageBackend, create_backend
 from .gui import launch_gui, TEXTUAL_AVAILABLE
+from .remotes_manager import RemotesManager, RemoteEntry
 
 __all__ = [
     # Exceptions
@@ -117,6 +119,7 @@ __all__ = [
     # Shared data classes
     "EnvironmentVariable",
     "DockerArg",
+    "DockerVolume",
     "Docker",
     "Specification",
     # v2.0 data classes

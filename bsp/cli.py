@@ -9,9 +9,17 @@ from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from .bsp_manager import BspManager
+from .completions import (
+    DevicesCompleter,
+    FeaturesCompleter,
+    PresetsCompleter,
+    ReleasesCompleter,
+    RemotesCompleter,
+)
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION
 
 # =============================================================================
@@ -75,6 +83,117 @@ def _collect_gather_overrides(args) -> dict:
 
 
 # =============================================================================
+# Remotes sub-command dispatcher (no registry loading required)
+# =============================================================================
+
+
+def _dispatch_remotes(args) -> int:
+    """Handle all ``bsp remotes`` sub-commands.
+
+    Returns an integer exit code (0 = success).
+    """
+    mgr = RemotesManager()
+    subcmd = getattr(args, "remotes_command", None)
+
+    if subcmd is None:
+        # Plain ``bsp remotes`` — list all remotes
+        remotes = mgr.load()
+        if not remotes:
+            print("(no remotes configured)")
+            print(f"Use 'bsp remotes add <name> <url>' to register a remote.")
+            return 0
+        verbose = getattr(args, "remotes_verbose", False)
+        for r in remotes:
+            if verbose:
+                print(f"{r.name}\t{r.url} (branch: {r.branch})")
+            else:
+                print(r.name)
+        return 0
+
+    if subcmd == "add":
+        entry = mgr.add(name=args.name, url=args.url, branch=args.branch)
+        print(f"Added remote '{entry.name}' -> {entry.url} (branch: {entry.branch})")
+        return 0
+
+    if subcmd in ("remove", "rm"):
+        mgr.remove(args.name)
+        print(f"Removed remote '{args.name}'")
+        return 0
+
+    if subcmd == "rename":
+        updated = mgr.rename(args.old_name, args.new_name)
+        print(f"Renamed remote '{args.old_name}' -> '{updated.name}'")
+        return 0
+
+    if subcmd == "set-url":
+        updated = mgr.set_url(args.name, args.url)
+        if args.branch:
+            updated = mgr.set_branch(args.name, args.branch)
+        print(f"Updated remote '{updated.name}': {updated.url} (branch: {updated.branch})")
+        return 0
+
+    if subcmd == "show":
+        r = mgr.get(args.name)
+        print(f"name:   {r.name}")
+        print(f"url:    {r.url}")
+        print(f"branch: {r.branch}")
+        return 0
+
+    logging.error("Unknown remotes sub-command: %s", subcmd)
+    return 1
+
+
+# =============================================================================
+# Completions sub-command dispatcher (no registry loading required)
+# =============================================================================
+
+
+def _dispatch_completions(args) -> int:
+    """Handle ``bsp completions [shell]``.
+
+    Prints the shell-specific snippet that activates tab completions for the
+    ``bsp`` command.  The user pastes (or eval-sources) this into their shell
+    configuration file.
+
+    Returns an integer exit code (0 = success).
+    """
+    try:
+        import argcomplete  # noqa: F401
+    except ImportError:
+        print(
+            "Error: argcomplete is not installed.\n"
+            "Install it with:  pip install 'bsp-registry-tools[completions]'",
+            file=__import__("sys").stderr,
+        )
+        return 1
+
+    # Detect shell from $SHELL when none given on the CLI
+    import os as _os
+    shell = getattr(args, "shell", None)
+    if not shell:
+        shell_bin = _os.environ.get("SHELL", "")
+        shell_name = shell_bin.rsplit("/", 1)[-1].lower()
+        if shell_name in ("bash", "zsh", "fish", "tcsh"):
+            shell = shell_name
+        else:
+            shell = "bash"  # sane default
+
+    if shell == "bash":
+        print('eval "$(register-python-argcomplete bsp)"')
+    elif shell == "zsh":
+        print("autoload -U bashcompinit && bashcompinit")
+        print('eval "$(register-python-argcomplete bsp)"')
+    elif shell == "fish":
+        print("register-python-argcomplete --shell fish bsp | source")
+    elif shell == "tcsh":
+        print("eval `register-python-argcomplete --shell tcsh bsp`")
+    else:
+        print(f"Unsupported shell: {shell}", file=__import__("sys").stderr)
+        return 1
+
+    return 0
+
+# =============================================================================
 # Main Entry Point with Enhanced Commands (v2.0)
 # =============================================================================
 
@@ -106,10 +225,22 @@ def main() -> int:
         parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
         parser.add_argument("--registry", "-r", default=None, help="BSP Registry file (local path)")
         parser.add_argument("--no-color", action="store_true", help="Disable colored output")
-        parser.add_argument("--remote", default=DEFAULT_REMOTE_URL,
-                            help="Remote registry git URL (default: %(default)s)")
+        parser.add_argument(
+            "--remote",
+            action="append",
+            dest="remote",
+            metavar="URL[@BRANCH][@name=NAME]",
+            default=None,
+            help=(
+                "Remote registry git URL.  May be specified multiple times for "
+                "multi-registry mode.  Each value may embed a branch and an "
+                "optional display name using the format "
+                "``URL@BRANCH@name=NAME``.  "
+                "(default: %(const)s)"
+            ),
+        )
         parser.add_argument("--branch", default=DEFAULT_BRANCH,
-                            help="Remote registry branch (default: %(default)s)")
+                            help="Remote registry branch for a single --remote (default: %(default)s)")
         parser.add_argument("--update", dest="update", action="store_true", default=True,
                             help="Update the cached registry clone before use (default)")
         parser.add_argument("--no-update", dest="update", action="store_false",
@@ -138,27 +269,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to build (mutually exclusive with --device/--release)"
-        )
+            help="BSP preset to build, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
         build_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug (use with --release for component-based build)"
-        )
+        ).completer = DevicesCompleter()
         build_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug (use with --device for component-based build)"
-        )
+        ).completer = ReleasesCompleter()
         build_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug to enable (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         build_parser.add_argument(
             "--clean",
             action="store_true",
@@ -287,7 +418,15 @@ def main() -> int:
             type=str,
             dest="device",
             help='Filter releases by device slug (only used with "releases")'
-        )
+        ).completer = DevicesCompleter()
+        list_parser.add_argument(
+            "--remote",
+            type=str,
+            dest="filter_remote",
+            metavar="NAME",
+            default=None,
+            help="Show only entries from the named remote registry"
+        ).completer = RemotesCompleter()
 
         # List containers command
         subparsers.add_parser("containers", help="List available containers")
@@ -307,6 +446,14 @@ def main() -> int:
             action="store_true",
             help="Show compact output with names/slugs only"
         )
+        tree_parser.add_argument(
+            "--remote",
+            type=str,
+            dest="filter_remote",
+            metavar="NAME",
+            default=None,
+            help="Show only entries from the named remote registry"
+        ).completer = RemotesCompleter()
 
         # ----------------------------------------------------------------
         # Export command
@@ -316,27 +463,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to export (mutually exclusive with --device/--release)"
-        )
+            help="BSP preset to export, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
         export_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug"
-        )
+        ).completer = DevicesCompleter()
         export_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug"
-        )
+        ).completer = ReleasesCompleter()
         export_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug to enable (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         export_parser.add_argument(
             "--output", "-o",
             type=str,
@@ -374,27 +521,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset (mutually exclusive with --device/--release)"
-        )
+            help="BSP preset, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
         shell_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug"
-        )
+        ).completer = DevicesCompleter()
         shell_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug"
-        )
+        ).completer = ReleasesCompleter()
         shell_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug to enable (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         shell_parser.add_argument(
             "--command", "-c",
             type=str,
@@ -412,27 +559,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset whose artifacts to deploy"
-        )
+            help="BSP preset whose artifacts to deploy, optionally prefixed with registry name (registry:preset)."
+        ).completer = PresetsCompleter()
         deploy_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug (use with --release for component-based deployment)"
-        )
+        ).completer = DevicesCompleter()
         deploy_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug (use with --device for component-based deployment)"
-        )
+        ).completer = ReleasesCompleter()
         deploy_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         deploy_parser.add_argument(
             "--provider",
             type=str,
@@ -534,27 +681,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset whose artifacts to download (mutually exclusive with --device/--release)"
-        )
+            help="BSP preset whose artifacts to download, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
         gather_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug (use with --release for component-based gather)"
-        )
+        ).completer = DevicesCompleter()
         gather_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug (use with --device for component-based gather)"
-        )
+        ).completer = ReleasesCompleter()
         gather_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         gather_parser.add_argument(
             "--dest-dir",
             type=str,
@@ -623,27 +770,27 @@ def main() -> int:
             "bsp_name",
             nargs="?",
             type=str,
-            help="Name of the BSP preset to test (mutually exclusive with --device/--release)"
-        )
+            help="BSP preset to test, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
         test_parser.add_argument(
             "--device", "-d",
             type=str,
             dest="device",
             help="Device slug (use with --release for component-based test)"
-        )
+        ).completer = DevicesCompleter()
         test_parser.add_argument(
             "--release",
             type=str,
             dest="release",
             help="Release slug (use with --device for component-based test)"
-        )
+        ).completer = ReleasesCompleter()
         test_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
             metavar="FEATURE",
             help="Feature slug to enable (can be specified multiple times)"
-        )
+        ).completer = FeaturesCompleter()
         test_parser.add_argument(
             "--wait",
             action="store_true",
@@ -670,6 +817,101 @@ def main() -> int:
             metavar="URL",
             help="Base URL where build artifacts are served to the LAVA lab"
         )
+
+        # ----------------------------------------------------------------
+        # Remotes command  (git-remote-style management of named remote
+        # registries persisted in ~/.config/bsp/remotes.yaml)
+        # ----------------------------------------------------------------
+        remotes_parser = subparsers.add_parser(
+            "remotes",
+            help="Manage named remote BSP registry sources (like git remote)",
+        )
+        remotes_parser.add_argument(
+            "-v", "--verbose-list",
+            dest="remotes_verbose",
+            action="store_true",
+            help="Show URL and branch alongside each remote name when listing",
+        )
+        remotes_subparsers = remotes_parser.add_subparsers(
+            dest="remotes_command",
+            help="Remotes sub-command",
+        )
+
+        # bsp remotes add <name> <url> [--branch BRANCH]
+        remotes_add = remotes_subparsers.add_parser(
+            "add",
+            help="Register a new named remote registry",
+        )
+        remotes_add.add_argument("name", help="Unique name for the remote (e.g. 'advantech')")
+        remotes_add.add_argument("url", help="Git repository URL of the remote registry")
+        remotes_add.add_argument(
+            "--branch", "-b",
+            default=DEFAULT_BRANCH,
+            help="Branch to fetch from (default: %(default)s)",
+        )
+
+        # bsp remotes remove <name>
+        remotes_remove = remotes_subparsers.add_parser(
+            "remove",
+            aliases=["rm"],
+            help="Remove a named remote",
+        )
+        remotes_remove.add_argument("name", help="Name of the remote to remove").completer = RemotesCompleter()
+
+        # bsp remotes rename <old> <new>
+        remotes_rename = remotes_subparsers.add_parser(
+            "rename",
+            help="Rename a remote",
+        )
+        remotes_rename.add_argument("old_name", metavar="old-name", help="Current name of the remote").completer = RemotesCompleter()
+        remotes_rename.add_argument("new_name", metavar="new-name", help="New name for the remote")
+
+        # bsp remotes set-url <name> <url>
+        remotes_set_url = remotes_subparsers.add_parser(
+            "set-url",
+            help="Change the URL of an existing remote",
+        )
+        remotes_set_url.add_argument("name", help="Name of the remote to update").completer = RemotesCompleter()
+        remotes_set_url.add_argument("url", help="New Git repository URL")
+        remotes_set_url.add_argument(
+            "--branch", "-b",
+            default=None,
+            help="Also update the branch",
+        )
+
+        # bsp remotes show <name>
+        remotes_show = remotes_subparsers.add_parser(
+            "show",
+            help="Show details about a named remote",
+        )
+        remotes_show.add_argument("name", help="Name of the remote to show").completer = RemotesCompleter()
+
+        # ----------------------------------------------------------------
+        # Completions command
+        # ----------------------------------------------------------------
+        completions_parser = subparsers.add_parser(
+            "completions",
+            help="Print the shell completion registration snippet",
+        )
+        completions_parser.add_argument(
+            "shell",
+            nargs="?",
+            choices=["bash", "zsh", "fish", "tcsh"],
+            default=None,
+            help=(
+                "Shell to generate completions for "
+                "(default: auto-detected from $SHELL). "
+                "Choices: bash, zsh, fish, tcsh."
+            ),
+        )
+
+        # Activate argcomplete (exits immediately when shell is completing;
+        # no-ops when argcomplete is not installed).
+        try:
+            import argcomplete
+            argcomplete.autocomplete(parser)
+        except ImportError:
+            pass
 
         args = parser.parse_args()
 
@@ -704,29 +946,84 @@ def main() -> int:
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             ))
 
+        # ----------------------------------------------------------------
+        # Dispatch remotes commands — these do NOT need a loaded registry.
+        # ----------------------------------------------------------------
+        if args.command == "remotes":
+            return _dispatch_remotes(args)
+
+        if args.command == "completions":
+            return _dispatch_completions(args)
+
         # Resolve registry file path
         LOCAL_DEFAULTS = ["bsp-registry.yaml", "bsp-registry.yml"]
         local_registry = next((name for name in LOCAL_DEFAULTS if Path(name).is_file()), None)
         if args.registry is not None:
             registry_path = args.registry
             logging.info("Using explicitly provided registry: %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         elif args.local:
             registry_path = local_registry or LOCAL_DEFAULTS[0]
             logging.info("Using local registry (--local): %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         elif local_registry is not None:
             registry_path = local_registry
             logging.info("Using local registry: %s", registry_path)
+            bsp_mgr = BspManager(registry_path, verbose=args.verbose)
         else:
+            from .registry_fetcher import RemoteRegistrySpec
             fetcher = RegistryFetcher()
-            registry_path = str(fetcher.fetch_registry(
-                repo_url=args.remote,
-                branch=args.branch,
-                update=args.update,
-            ))
-            logging.info("Using remote registry cached at: %s", registry_path)
 
-        # Initialize and run BSP manager
-        bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            # If no --remote flags given on the CLI, fall back to configured remotes
+            if args.remote:
+                remotes_raw = args.remote
+            else:
+                stored = RemotesManager().load()
+                if stored:
+                    # Encode stored remotes as URL@BRANCH@name=NAME strings so the
+                    # existing parse / fetch_multiple path handles them uniformly.
+                    remotes_raw = [
+                        f"{r.url}@{r.branch}@name={r.name}" for r in stored
+                    ]
+                    logging.info(
+                        "Using %d configured remote(s): %s",
+                        len(stored),
+                        [r.name for r in stored],
+                    )
+                else:
+                    remotes_raw = [DEFAULT_REMOTE_URL]
+
+            if len(remotes_raw) == 1 and remotes_raw[0] == DEFAULT_REMOTE_URL and not args.remote:
+                # Single default remote — use the legacy single-registry path for backward compat
+                registry_path = str(fetcher.fetch_registry(
+                    repo_url=DEFAULT_REMOTE_URL,
+                    branch=args.branch,
+                    update=args.update,
+                ))
+                logging.info("Using remote registry cached at: %s", registry_path)
+                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            elif len(remotes_raw) == 1:
+                # Single explicit remote — backward-compat single-registry path
+                spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=args.branch)
+                registry_path = str(fetcher.fetch_registry(
+                    repo_url=spec.url,
+                    branch=spec.branch,
+                    update=args.update,
+                ))
+                logging.info("Using remote registry cached at: %s", registry_path)
+                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
+            else:
+                # Multiple remotes — multi-registry mode
+                specs = [RemoteRegistrySpec.parse(r, default_branch=args.branch) for r in remotes_raw]
+                registry_pairs = fetcher.fetch_multiple(specs, update=args.update)
+                logging.info(
+                    "Loaded %d remote registries: %s",
+                    len(registry_pairs),
+                    [name for name, _ in registry_pairs],
+                )
+                config_paths = [(name, str(path)) for name, path in registry_pairs]
+                bsp_mgr = BspManager(config_paths=config_paths, verbose=args.verbose)
+
         bsp_mgr.initialize()
 
         # ----------------------------------------------------------------
@@ -771,6 +1068,7 @@ def main() -> int:
                     target=target,
                     task=task,
                     build_path_override=build_path,
+                    feature_slugs=features,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -814,17 +1112,18 @@ def main() -> int:
         elif args.command == "list":
             list_type = getattr(args, "list_type", None)
             device = getattr(args, "device", None)
+            registry_filter = getattr(args, "filter_remote", None)
             use_color = not args.no_color
             if list_type == "devices":
-                bsp_mgr.list_devices(use_color=use_color)
+                bsp_mgr.list_devices(use_color=use_color, registry_filter=registry_filter)
             elif list_type == "releases":
-                bsp_mgr.list_releases(device_slug=device, use_color=use_color)
+                bsp_mgr.list_releases(device_slug=device, use_color=use_color, registry_filter=registry_filter)
             elif list_type == "features":
-                bsp_mgr.list_features(use_color=use_color)
+                bsp_mgr.list_features(use_color=use_color, registry_filter=registry_filter)
             elif list_type == "distros":
-                bsp_mgr.list_distros(use_color=use_color)
+                bsp_mgr.list_distros(use_color=use_color, registry_filter=registry_filter)
             else:
-                bsp_mgr.list_bsp(use_color=use_color)
+                bsp_mgr.list_bsp(use_color=use_color, registry_filter=registry_filter)
 
         elif args.command == "containers":
             bsp_mgr.list_containers(use_color=not args.no_color)
@@ -833,7 +1132,8 @@ def main() -> int:
             full = getattr(args, "full", False)
             compact = getattr(args, "compact", False)
             mode = "full" if full else ("compact" if compact else "default")
-            bsp_mgr.tree_bsp(use_color=not args.no_color, mode=mode)
+            registry_filter = getattr(args, "filter_remote", None)
+            bsp_mgr.tree_bsp(use_color=not args.no_color, mode=mode, registry_filter=registry_filter)
 
         elif args.command == "export":
             device = getattr(args, "device", None)
