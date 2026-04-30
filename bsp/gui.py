@@ -1138,6 +1138,8 @@ if TEXTUAL_AVAILABLE:
                     release_labels.setdefault(r.slug, r.description or r.slug)
 
                 # Build per-registry tree data
+                # vdr: vendor_slug → device_slug → release_slug → [preset_name]
+                # nvp: device_slug → release_slug → [preset_name] (no vendor assigned)
                 vdr: dict[str, dict[str, dict[str, list]]] = {}
                 nvp: dict[str, dict[str, list]] = {}
                 for bsp in reg_resolver.list_presets():

@@ -399,8 +399,7 @@ class TestMultipleRemotesSupport:
                 def start(self): pass
             return FakeThread()
 
-        import threading
-        with patch("threading.Thread", fake_thread):
+        with patch("bsp.gui.threading.Thread", fake_thread):
             app._log = lambda msg: None
             app._set_status = lambda msg: None
             app._set_cancel_button = lambda *, disabled: None
