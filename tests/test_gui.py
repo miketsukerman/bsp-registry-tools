@@ -193,6 +193,21 @@ class TestBspTreeFilter:
         #   no-vendor device: generic
         #       release: "" → preset "generic-preset"
 
+        vendor_device_release = {
+            "acme": {
+                "board-a": {
+                    "scarthgap": ["acme-board-a-scarthgap"],
+                    "styhead": ["acme-board-a-styhead"],
+                },
+                "board-b": {
+                    "scarthgap": ["acme-board-b-scarthgap"],
+                },
+            },
+        }
+        no_vendor_presets = {
+            "generic": {"": ["generic-preset"]},
+        }
+
         app._tree_data = {
             "vendor_names": {"acme": "Acme Corp"},
             "device_display": lambda slug: {
@@ -204,20 +219,8 @@ class TestBspTreeFilter:
                 "scarthgap": "Scarthgap",
                 "styhead": "Styhead",
             },
-            "vendor_device_release": {
-                "acme": {
-                    "board-a": {
-                        "scarthgap": ["acme-board-a-scarthgap"],
-                        "styhead": ["acme-board-a-styhead"],
-                    },
-                    "board-b": {
-                        "scarthgap": ["acme-board-b-scarthgap"],
-                    },
-                },
-            },
-            "no_vendor_presets": {
-                "generic": {"": ["generic-preset"]},
-            },
+            "per_registry_data": [("default", vendor_device_release, no_vendor_presets)],
+            "is_multi": False,
         }
 
         # Provide a minimal tree widget backed by a real Tree instance,
@@ -266,6 +269,198 @@ class TestBspTreeFilter:
         app = BspLauncherApp.__new__(BspLauncherApp)
         app._tree_data = None
         assert app._render_tree("anything") == 0
+
+    def test_multi_registry_mode_shows_registry_nodes(self):
+        """In multi-registry mode the tree has a top-level node per registry."""
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Tree
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+
+        # Two registries: reg-a has Acme/board-a, reg-b has OtherVendor/board-x
+        app._tree_data = {
+            "vendor_names": {"acme": "Acme Corp", "other": "Other Vendor"},
+            "device_display": lambda slug: {
+                "board-a": "Board Alpha",
+                "board-x": "Board X",
+            }.get(slug, slug),
+            "release_labels": {"scarthgap": "Scarthgap"},
+            "per_registry_data": [
+                (
+                    "reg-a",
+                    {"acme": {"board-a": {"scarthgap": ["acme-board-a-scarthgap"]}}},
+                    {},
+                ),
+                (
+                    "reg-b",
+                    {"other": {"board-x": {"scarthgap": ["other-board-x-scarthgap"]}}},
+                    {},
+                ),
+            ],
+            "is_multi": True,
+        }
+
+        _tree = Tree("root")
+        app.query_one = lambda selector, widget_type=None: _tree
+
+        count = app._render_tree("")
+        # One preset per registry = 2 total
+        assert count == 2
+        # Root should have two children (one per registry)
+        assert len(list(_tree.root.children)) == 2
+
+    def test_multi_registry_filter_works_across_registries(self):
+        """Filter in multi-registry mode still hides non-matching presets."""
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Tree
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+
+        app._tree_data = {
+            "vendor_names": {"acme": "Acme Corp", "other": "Other Vendor"},
+            "device_display": lambda slug: {
+                "board-a": "Board Alpha",
+                "board-x": "Board X",
+            }.get(slug, slug),
+            "release_labels": {"scarthgap": "Scarthgap"},
+            "per_registry_data": [
+                (
+                    "reg-a",
+                    {"acme": {"board-a": {"scarthgap": ["acme-board-a-scarthgap"]}}},
+                    {},
+                ),
+                (
+                    "reg-b",
+                    {"other": {"board-x": {"scarthgap": ["other-board-x-scarthgap"]}}},
+                    {},
+                ),
+            ],
+            "is_multi": True,
+        }
+
+        _tree = Tree("root")
+        app.query_one = lambda selector, widget_type=None: _tree
+
+        # Filter to only show Acme — should return 1 from reg-a, 0 from reg-b
+        count = app._render_tree("Acme")
+        assert count == 1
+
+
+# =============================================================================
+# Multiple remotes support in TUI
+# =============================================================================
+
+class TestMultipleRemotesSupport:
+    """Tests for multiple remotes support in BspLauncherApp."""
+
+    def _make_minimal_app(self):
+        """Return a BspLauncherApp with UI calls stubbed out."""
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._remote = None
+        app._branch = None
+        app._no_update = False
+        app._registry_path = None
+        app._stored_remotes = None
+        app._running_process = None
+
+        def fake_call_from_thread(fn, *a, **kw):
+            fn(*a, **kw)
+
+        app.call_from_thread = fake_call_from_thread
+        app._log = lambda msg: None
+        app._set_status = lambda msg: None
+        app._set_cancel_button = lambda *, disabled: None
+        return app
+
+    def test_run_bsp_command_includes_multiple_remotes(self, tmp_path):
+        """_run_bsp_command passes --remote for each stored remote in multi-registry mode."""
+        from bsp.gui import BspLauncherApp
+        from bsp.remotes_manager import RemoteEntry
+        import sys
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._registry_path = None
+        app._remote = None
+        app._branch = None
+        app._no_update = False
+        app._running_process = None
+        app._stored_remotes = [
+            RemoteEntry(name="reg-a", url="https://example.com/reg-a.git", branch="main"),
+            RemoteEntry(name="reg-b", url="https://example.com/reg-b.git", branch="develop"),
+        ]
+
+        captured_cmd = []
+
+        def fake_thread(target, args, daemon):
+            captured_cmd.extend(args[0])
+            class FakeThread:
+                def start(self): pass
+            return FakeThread()
+
+        import threading
+        with patch("threading.Thread", fake_thread):
+            app._log = lambda msg: None
+            app._set_status = lambda msg: None
+            app._set_cancel_button = lambda *, disabled: None
+            app._clear_log = lambda: None
+            try:
+                app._run_bsp_command("list")
+            except Exception:
+                pass
+
+        assert "--remote" in captured_cmd
+        remote_args = [
+            captured_cmd[i + 1]
+            for i, v in enumerate(captured_cmd)
+            if v == "--remote"
+        ]
+        assert any("reg-a" in r for r in remote_args), f"reg-a not in {remote_args}"
+        assert any("reg-b" in r for r in remote_args), f"reg-b not in {remote_args}"
+
+    def test_stored_remotes_initialized_to_none(self):
+        """BspLauncherApp._stored_remotes starts as None."""
+        from bsp.gui import BspLauncherApp
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app.__init__()
+        assert app._stored_remotes is None
+
+    def test_load_registry_uses_remotes_manager_when_multiple_remotes(self, tmp_path):
+        """_load_registry falls back to RemotesManager when no explicit remote is given and multiple remotes are stored."""
+        from bsp.gui import BspLauncherApp
+        from bsp.remotes_manager import RemoteEntry
+
+        app = self._make_minimal_app()
+
+        stored_remotes = [
+            RemoteEntry(name="reg-a", url="https://example.com/reg-a.git", branch="main"),
+            RemoteEntry(name="reg-b", url="https://example.com/reg-b.git", branch="main"),
+        ]
+
+        fake_bsp_manager = MagicMock()
+        fake_bsp_manager.registries = [("reg-a", MagicMock()), ("reg-b", MagicMock())]
+
+        populate_calls = []
+
+        with patch("bsp.remotes_manager.RemotesManager.load", return_value=stored_remotes):
+            with patch("bsp.registry_fetcher.RegistryFetcher.fetch_multiple", return_value=[
+                ("reg-a", tmp_path / "reg-a-registry.yaml"),
+                ("reg-b", tmp_path / "reg-b-registry.yaml"),
+            ]):
+                with patch("bsp.bsp_manager.BspManager") as MockBspManager:
+                    MockBspManager.return_value = fake_bsp_manager
+                    app._populate_bsp_tree = lambda path: populate_calls.append(path)
+                    app._is_loading = False
+                    app._load_lock = __import__("threading").Lock()
+
+                    app._load_registry()
+
+        # BspManager should have been created with config_paths for multi-registry
+        call_kwargs = MockBspManager.call_args
+        assert call_kwargs is not None
+        assert "config_paths" in call_kwargs.kwargs
+        assert app._stored_remotes == stored_remotes
 
 
 # =============================================================================

@@ -198,10 +198,19 @@ def launch_gui(
         cmd = [sys.executable, "-m", "bsp.cli_runner"]
         if registry_path:
             cmd += ["--registry", registry_path]
-        if remote:
+        elif app._stored_remotes and len(app._stored_remotes) > 1:
+            # Multi-registry mode: forward each stored remote
+            for r in app._stored_remotes:
+                cmd += ["--remote", f"{r.url}@{r.branch}@name={r.name}"]
+        elif app._stored_remotes and len(app._stored_remotes) == 1:
+            r = app._stored_remotes[0]
+            cmd += ["--remote", r.url]
+            if r.branch:
+                cmd += ["--branch", r.branch]
+        elif remote:
             cmd += ["--remote", remote]
-        if branch:
-            cmd += ["--branch", branch]
+            if branch:
+                cmd += ["--branch", branch]
         if no_update:
             cmd.append("--no-update")
         cmd += ["shell", bsp_name]
@@ -885,6 +894,9 @@ if TEXTUAL_AVAILABLE:
             # Double-click tracking for build artifacts panel
             self._artifact_last_click_time: float = 0.0
             self._artifact_last_click_item: Optional[str] = None
+            # Stored remotes used when multiple remotes are loaded from RemotesManager.
+            # Each entry is a RemoteEntry with .url, .branch, .name attributes.
+            self._stored_remotes: Optional[list] = None
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -978,7 +990,9 @@ if TEXTUAL_AVAILABLE:
                     DEFAULT_REMOTE_URL,
                     DEFAULT_BRANCH,
                     RegistryFetcher,
+                    RemoteRegistrySpec,
                 )
+                from .remotes_manager import RemotesManager
 
                 registry_path = self._registry_path
 
@@ -989,15 +1003,56 @@ if TEXTUAL_AVAILABLE:
                     )
                     if local_registry is not None:
                         registry_path = local_registry
-                    else:
+                    elif self._remote:
+                        # Explicit single remote — legacy single-registry path
                         fetcher = RegistryFetcher()
                         registry_path = str(
                             fetcher.fetch_registry(
-                                repo_url=self._remote or DEFAULT_REMOTE_URL,
+                                repo_url=self._remote,
                                 branch=self._branch or DEFAULT_BRANCH,
                                 update=not self._no_update,
                             )
                         )
+                    else:
+                        # No local registry, no explicit remote — check RemotesManager
+                        fetcher = RegistryFetcher()
+                        stored_remotes = RemotesManager().load()
+                        if len(stored_remotes) > 1:
+                            # Multi-registry mode: fetch all stored remotes
+                            specs = [
+                                RemoteRegistrySpec(url=r.url, branch=r.branch, name=r.name)
+                                for r in stored_remotes
+                            ]
+                            registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                            config_paths = [(name, str(path)) for name, path in registry_pairs]
+                            bsp_manager = BspManager(config_paths=config_paths)
+                            bsp_manager.initialize()
+                            self._bsp_manager = bsp_manager
+                            self._stored_remotes = stored_remotes
+                            # Provide first path for the label; subtitle shows all remote names
+                            first_path = str(registry_pairs[0][1]) if registry_pairs else ""
+                            self.call_from_thread(self._populate_bsp_tree, first_path)
+                            return
+                        elif len(stored_remotes) == 1:
+                            # Single stored remote — use single-registry path
+                            r = stored_remotes[0]
+                            registry_path = str(
+                                fetcher.fetch_registry(
+                                    repo_url=r.url,
+                                    branch=r.branch,
+                                    update=not self._no_update,
+                                )
+                            )
+                            self._stored_remotes = stored_remotes
+                        else:
+                            # No configured remotes — use default URL
+                            registry_path = str(
+                                fetcher.fetch_registry(
+                                    repo_url=DEFAULT_REMOTE_URL,
+                                    branch=DEFAULT_BRANCH,
+                                    update=not self._no_update,
+                                )
+                            )
 
                 bsp_manager = BspManager(registry_path)
                 bsp_manager.initialize()
@@ -1020,75 +1075,90 @@ if TEXTUAL_AVAILABLE:
                     self._is_loading = False
 
         def _populate_bsp_tree(self, registry_path: str) -> None:
-            """Rebuild the BSP tree with Vendor → Device → Release → Preset hierarchy."""
+            """Rebuild the BSP tree with Vendor → Device → Release → Preset hierarchy.
+
+            In multi-registry mode (when multiple remotes are configured), each
+            registry contributes its own vendors, devices, releases, and presets.
+            """
             from .models import Device as DeviceModel
             from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
 
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
 
-            # Build registry label showing path only; URL/branch goes to subtitle
-            remote_url = self._remote or DEFAULT_REMOTE_URL
-            branch = self._branch or DEFAULT_BRANCH
-            registry_label_text = f"Registry: {registry_path}"
+            # Build registry label and subtitle
+            is_multi = self._bsp_manager and len(self._bsp_manager.registries) > 1
             if self._registry_path:
                 subtitle = registry_path
+            elif self._stored_remotes and len(self._stored_remotes) > 1:
+                subtitle = " | ".join(
+                    f"{r.name} ({r.url})" for r in self._stored_remotes
+                )
+            elif self._stored_remotes and len(self._stored_remotes) == 1:
+                r = self._stored_remotes[0]
+                subtitle = f"{r.url} @ {r.branch}"
+            elif self._remote:
+                subtitle = f"{self._remote} @ {self._branch or DEFAULT_BRANCH}"
             else:
-                subtitle = f"{remote_url} @ {branch}"
+                subtitle = f"{DEFAULT_REMOTE_URL} @ {DEFAULT_BRANCH}"
 
+            registry_label_text = f"Registry: {registry_path}"
             label = self.query_one("#registry-label", Label)
             label.update(registry_label_text)
-
-            # Update subtitle to include URL + branch
             self.sub_title = subtitle
 
-            if not (self._bsp_manager and self._bsp_manager.model
-                    and self._bsp_manager.resolver):
+            if not self._bsp_manager:
                 self._set_status("No BSPs found in registry")
                 self._log("[yellow]No BSPs found in registry[/yellow]")
                 return
 
-            registry = self._bsp_manager.model.registry
+            # Collect vendor/device/release metadata and presets from ALL registries
+            vendor_names: dict[str, str] = {}
+            devices: dict[str, DeviceModel] = {}
+            release_labels: dict[str, str] = {}
 
-            # vendor_slug → display name
-            vendor_names: dict[str, str] = {
-                v.slug: (v.name or v.slug) for v in (registry.vendors or [])
-            }
-            # device_slug → Device object
-            devices: dict[str, DeviceModel] = {
-                d.slug: d for d in (registry.devices or [])
-            }
-            # release_slug → display label (description or slug)
-            release_labels: dict[str, str] = {
-                r.slug: (r.description or r.slug)
-                for r in (registry.releases or [])
-            }
+            # In multi-registry mode we collect presets per registry to allow
+            # grouping under a registry-level tree node.
+            # registry_label → (vendor_device_release, no_vendor_presets)
+            # where vendor_device_release: {vendor_slug: {device_slug: {release_slug: [preset_name]}}}
+            # and no_vendor_presets: {device_slug: {release_slug: [preset_name]}}
+            per_registry_data: List[Tuple[str, dict, dict]] = []
+
+            for reg_name, reg_model, reg_resolver, _ in self._bsp_manager._iter_registries():
+                if reg_model is None or reg_resolver is None:
+                    continue
+                reg = reg_model.registry
+
+                # Accumulate global lookup tables
+                for v in (reg.vendors or []):
+                    vendor_names.setdefault(v.slug, v.name or v.slug)
+                for d in (reg.devices or []):
+                    devices.setdefault(d.slug, d)
+                for r in (reg.releases or []):
+                    release_labels.setdefault(r.slug, r.description or r.slug)
+
+                # Build per-registry tree data
+                vdr: dict[str, dict[str, dict[str, list]]] = {}
+                nvp: dict[str, dict[str, list]] = {}
+                for bsp in reg_resolver.list_presets():
+                    device_obj = devices.get(bsp.device)
+                    vendor_slug = device_obj.vendor if device_obj else None
+                    release_slug = bsp.release or ""
+                    if vendor_slug:
+                        vdr.setdefault(vendor_slug, {}).setdefault(bsp.device, {}).setdefault(release_slug, []).append(bsp.name)
+                    else:
+                        nvp.setdefault(bsp.device, {}).setdefault(release_slug, []).append(bsp.name)
+
+                per_registry_data.append((reg_name, vdr, nvp))
+
+            if not any(vdr or nvp for _, vdr, nvp in per_registry_data):
+                self._set_status("No BSPs found in registry")
+                self._log("[yellow]No BSPs found in registry[/yellow]")
+                return
 
             def device_display(device_slug: str) -> str:
                 d: Optional[DeviceModel] = devices.get(device_slug)
                 return (d.description if d and d.description else device_slug)
-
-            # Use the resolver so multi-release presets are expanded into
-            # concrete entries (e.g. poky-qemuarm64 → poky-qemuarm64-scarthgap,
-            # poky-qemuarm64-styhead) each carrying their single release slug.
-            expanded_presets = self._bsp_manager.resolver.list_presets()
-
-            # vendor_slug → device_slug → release_slug → [full preset name]
-            vendor_device_release: dict[str, dict[str, dict[str, list]]] = {}
-            no_vendor_presets: dict[str, dict[str, list]] = {}
-
-            for bsp in expanded_presets:
-                device = devices.get(bsp.device)
-                vendor_slug = device.vendor if device else None
-                release_slug = bsp.release or ""
-
-                if vendor_slug:
-                    vd = vendor_device_release.setdefault(vendor_slug, {})
-                    dr = vd.setdefault(bsp.device, {})
-                    dr.setdefault(release_slug, []).append(bsp.name)
-                else:
-                    dr = no_vendor_presets.setdefault(bsp.device, {})
-                    dr.setdefault(release_slug, []).append(bsp.name)
 
             # Cache the registry data so the filter can re-render without
             # reloading everything from disk.
@@ -1096,8 +1166,8 @@ if TEXTUAL_AVAILABLE:
                 "vendor_names": vendor_names,
                 "device_display": device_display,
                 "release_labels": release_labels,
-                "vendor_device_release": vendor_device_release,
-                "no_vendor_presets": no_vendor_presets,
+                "per_registry_data": per_registry_data,
+                "is_multi": is_multi,
             }
 
             filter_text = self.query_one("#filter-input", Input).value
@@ -1116,6 +1186,10 @@ if TEXTUAL_AVAILABLE:
             Each token in *filter_text* (whitespace-separated) must appear in
             at least one of the vendor name, device label, or release label for
             a preset to be included.  Returns the number of visible presets.
+
+            In multi-registry mode each top-level node is the registry name,
+            followed by the usual Vendor → Device → Release → Preset hierarchy.
+            In single-registry mode the hierarchy starts directly at Vendor.
             """
             if self._tree_data is None:
                 return 0
@@ -1124,8 +1198,8 @@ if TEXTUAL_AVAILABLE:
             vendor_names = self._tree_data["vendor_names"]
             device_display = self._tree_data["device_display"]
             release_labels = self._tree_data["release_labels"]
-            vendor_device_release = self._tree_data["vendor_device_release"]
-            no_vendor_presets = self._tree_data["no_vendor_presets"]
+            per_registry_data = self._tree_data["per_registry_data"]
+            is_multi = self._tree_data["is_multi"]
 
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
@@ -1170,41 +1244,64 @@ if TEXTUAL_AVAILABLE:
                         added += 1
                 return added
 
-            # Add vendor → device → release → preset sub-trees.
-            # Pre-check each vendor to avoid inserting an empty vendor node.
-            for vendor_slug, device_map in sorted(vendor_device_release.items()):
-                display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
-                # Check whether any device/release under this vendor passes the filter
-                has_match = any(
-                    _matches(display_name, dev_slug, rel_slug)
-                    for dev_slug, release_map in device_map.items()
+            def _add_vendor_subtrees(parent_node, vendor_device_release: dict, no_vendor_presets: dict) -> int:
+                """Add Vendor → Device → Release → Preset sub-trees under *parent_node*.
+
+                Returns the total number of preset leaves added.
+                """
+                added = 0
+                # Add vendor → device → release → preset sub-trees.
+                # Pre-check each vendor to avoid inserting an empty vendor node.
+                for vendor_slug, device_map in sorted(vendor_device_release.items()):
+                    display_name = vendor_names.get(vendor_slug, vendor_slug.capitalize())
+                    has_match = any(
+                        _matches(display_name, dev_slug, rel_slug)
+                        for dev_slug, release_map in device_map.items()
+                        for rel_slug in release_map
+                    )
+                    if not has_match:
+                        continue
+                    vendor_node = parent_node.add(
+                        f"[bold yellow]{display_name}[/bold yellow]", expand=True
+                    )
+                    for device_slug, release_map in sorted(device_map.items()):
+                        added += _add_device_subtree(
+                            vendor_node, display_name, device_slug, release_map
+                        )
+
+                # Devices that had no matching vendor go under "Other"
+                other_label = "Other"
+                has_other = any(
+                    _matches(other_label, dev_slug, rel_slug)
+                    for dev_slug, release_map in no_vendor_presets.items()
                     for rel_slug in release_map
                 )
-                if not has_match:
-                    continue
-                vendor_node = tree.root.add(
-                    f"[bold yellow]{display_name}[/bold yellow]", expand=True
-                )
-                for device_slug, release_map in sorted(device_map.items()):
-                    preset_count += _add_device_subtree(
-                        vendor_node, display_name, device_slug, release_map
+                if no_vendor_presets and has_other:
+                    other_node = parent_node.add(
+                        f"[bold yellow]{other_label}[/bold yellow]", expand=True
                     )
+                    for device_slug, release_map in sorted(no_vendor_presets.items()):
+                        added += _add_device_subtree(
+                            other_node, other_label, device_slug, release_map
+                        )
+                return added
 
-            # Devices that had no matching vendor go under "Other"
-            other_label = "Other"
-            has_other = any(
-                _matches(other_label, dev_slug, rel_slug)
-                for dev_slug, release_map in no_vendor_presets.items()
-                for rel_slug in release_map
-            )
-            if no_vendor_presets and has_other:
-                other_node = tree.root.add(
-                    f"[bold yellow]{other_label}[/bold yellow]", expand=True
-                )
-                for device_slug, release_map in sorted(no_vendor_presets.items()):
-                    preset_count += _add_device_subtree(
-                        other_node, other_label, device_slug, release_map
+            if is_multi:
+                # Multi-registry: add a top-level node per registry
+                for reg_name, vendor_device_release, no_vendor_presets in per_registry_data:
+                    reg_node = tree.root.add(
+                        f"[bold magenta]{reg_name}[/bold magenta]", expand=True
                     )
+                    reg_count = _add_vendor_subtrees(reg_node, vendor_device_release, no_vendor_presets)
+                    if reg_count == 0:
+                        reg_node.remove()
+                    else:
+                        preset_count += reg_count
+            else:
+                # Single registry: start directly with vendors
+                if per_registry_data:
+                    _, vendor_device_release, no_vendor_presets = per_registry_data[0]
+                    preset_count = _add_vendor_subtrees(tree.root, vendor_device_release, no_vendor_presets)
 
             return preset_count
 
@@ -1576,6 +1673,7 @@ if TEXTUAL_AVAILABLE:
             """Reload the BSP registry."""
             self._bsp_manager = None
             self._selected_bsp_name = None
+            self._stored_remotes = None
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-deploy", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
@@ -1747,10 +1845,19 @@ if TEXTUAL_AVAILABLE:
             cmd = [sys.executable, "-u", "-m", "bsp.cli_runner"]
             if self._registry_path:
                 cmd += ["--registry", self._registry_path]
-            if self._remote:
+            elif self._stored_remotes and len(self._stored_remotes) > 1:
+                # Multi-registry mode: pass each stored remote as --remote URL@BRANCH@name=NAME
+                for r in self._stored_remotes:
+                    cmd += ["--remote", f"{r.url}@{r.branch}@name={r.name}"]
+            elif self._stored_remotes and len(self._stored_remotes) == 1:
+                r = self._stored_remotes[0]
+                cmd += ["--remote", r.url]
+                if r.branch:
+                    cmd += ["--branch", r.branch]
+            elif self._remote:
                 cmd += ["--remote", self._remote]
-            if self._branch:
-                cmd += ["--branch", self._branch]
+                if self._branch:
+                    cmd += ["--branch", self._branch]
             if self._no_update:
                 cmd.append("--no-update")
             cmd += list(args)
