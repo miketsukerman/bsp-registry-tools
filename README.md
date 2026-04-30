@@ -321,15 +321,15 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 ## CLI Reference
 
 ```
-usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
-           [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
-           [--local]
-           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
+usage: bsp [-h] [--version] [--verbose] [--registry REGISTRY] [--no-color]
+           [--remote URL[@BRANCH][@name=NAME]] [--branch BRANCH]
+           [--update | --no-update] [--local]
+           {build,list,containers,tree,export,server,shell,deploy,gather,test,remotes,completions,registry} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
+  {build,list,containers,tree,export,server,shell,deploy,gather,test,remotes,completions,registry}
                         Command to execute
     build               Build an image for BSP
     list                List available BSPs and components
@@ -340,18 +340,23 @@ positional arguments:
     server              Start a GraphQL / REST HTTP server
     deploy              Deploy build artifacts to cloud storage
     gather              Download BSP build artifacts from cloud storage
-    test                Submit a LAVA HIL test job for a BSP
-    remotes             Manage named remote BSP registry sources
+    test                Submit a LAVA HIL test job for a BSP preset or component combination
+    remotes             Manage named remote BSP registry sources (like git remote)
+    completions         Print the shell completion registration snippet
+    registry            Manage the BSP registry file (CRUD for entities)
 
 options:
   -h, --help            show this help message and exit
+  --version             Show program version and supported model description version
   --verbose, -v         Verbose output
   --registry REGISTRY, -r REGISTRY
-                        BSP Registry file (local path; skips remote fetch)
+                        BSP Registry file (local path)
   --no-color            Disable colored output
-  --remote REMOTE       Remote registry git URL
-                        (default: https://github.com/Advantech-EECC/bsp-registry.git)
-  --branch BRANCH       Remote registry branch (default: main)
+  --remote URL[@BRANCH][@name=NAME]
+                        Remote registry git URL. May be specified multiple times for
+                        multi-registry mode. Each value may embed a branch and an optional
+                        display name using the format ``URL@BRANCH@name=NAME``.
+  --branch BRANCH       Remote registry branch for a single --remote (default: main)
   --update              Update the cached registry clone before use (default)
   --no-update           Skip updating the cached registry clone
   --local               Force local registry lookup only (do not use remote)
@@ -832,6 +837,131 @@ branch: develop
 
 > **Config file location** — `~/.config/bsp/remotes.yaml`  (override with
 > `BSP_REMOTES_CONFIG=/path/to/remotes.yaml bsp remotes ...`)
+
+#### `registry` — Manage the BSP registry file
+
+`bsp registry` provides full CRUD access to every entity in a local BSP
+registry YAML file.  It is backed by `RegistryWriter`, which performs atomic
+writes (write to `.tmp` → `os.replace()`), auto-creates a `.bak` backup before
+overwriting, and maintains an undo stack.  All mutating sub-commands accept
+`--git-stage` and `--git-commit` flags for convenient VCS integration.
+
+> **Note** — `bsp registry` always operates on a **local** registry file.
+> Pass `--registry <path>` (global flag) to select the file, or rely on
+> auto-detection (`bsp-registry.yaml` / `bsp-registry.yml` in the current
+> directory).
+
+**Create a new registry**
+
+```bash
+bsp registry init [--output FILE] [--force]
+```
+
+Writes a minimal v2.0 registry skeleton (specification block, empty
+`registry:` section, empty `containers:` dict) to `bsp-registry.yaml`
+(or the path given by `--output`).  Fails if the file already exists unless
+`--force` is passed.
+
+**Validate**
+
+```bash
+bsp registry validate
+```
+
+Checks required fields, slug uniqueness within each entity list, broken
+cross-references (device → vendor, preset → device/release/features), and that
+the specification version is `"2.0"`.  Prints a table of issues grouped by
+severity (`error` / `warning`) and exits non-zero when errors are found.
+
+**Diff**
+
+```bash
+bsp registry diff <other-file>
+```
+
+Serialises both registry files to YAML strings and prints a unified diff
+(`---` / `+++` headers show the two file paths).
+
+**Add an entity**
+
+```bash
+bsp registry add {device,vendor,release,feature,preset,distro,framework,container} [OPTIONS]
+```
+
+| Entity | Required flags | Notable optional flags |
+|--------|---------------|----------------------|
+| `device` | `--slug` | `--vendor`, `--soc-vendor`, `--soc-family`, `--architecture`, `--includes` |
+| `vendor` | `--slug` | `--name`, `--description`, `--includes` |
+| `release` | `--slug` | `--yocto-version`, `--description`, `--includes` |
+| `feature` | `--slug` | `--description`, `--includes` |
+| `preset` | `--name`, `--device` | `--release`, `--releases`, `--features`, `--description` |
+| `distro` | `--slug` | `--vendor`, `--description`, `--includes` |
+| `framework` | `--slug` | `--vendor`, `--description`, `--includes` |
+| `container` | `--name` | `--image`, `--file` |
+
+All `add` variants also accept `--git-stage` and `--git-commit MESSAGE`.
+
+Examples:
+
+```bash
+# Add a new device
+bsp registry add device --slug imx8mp-myboard --vendor myvendor \
+  --soc-vendor nxp --soc-family imx8 --architecture arm64 \
+  --includes kas/devices/imx8mp-myboard.yaml
+
+# Add a BSP preset
+bsp registry add preset --name myboard-scarthgap \
+  --device imx8mp-myboard --release scarthgap \
+  --features systemd ssh --git-commit "registry: add myboard-scarthgap preset"
+```
+
+**Edit an entity**
+
+```bash
+bsp registry edit {device,vendor,release,feature,preset,distro,framework,container} --slug SLUG [OPTIONS]
+```
+
+Accepts the same optional flags as `add`.  Only the fields explicitly provided
+are updated; everything else is left unchanged.
+
+```bash
+# Update a device's SoC family
+bsp registry edit device --slug imx8mp-myboard --soc-family imx8mp
+```
+
+**Remove an entity**
+
+```bash
+bsp registry remove {device,vendor,release,feature,preset,distro,framework,container} --slug SLUG [--force]
+```
+
+Removes the entity identified by `--slug` (or `--name` for presets and
+containers).  If other entities reference the slug being removed, the command
+refuses and prints the referencing paths unless `--force` is passed.
+
+```bash
+bsp registry remove device --slug imx8mp-myboard
+```
+
+**Show entity details**
+
+```bash
+bsp registry show {device,vendor,release,feature,preset,distro,framework,container} [--slug SLUG]
+```
+
+Prints the YAML block for the matching entity (or all entities of that type
+when `--slug` is omitted).
+
+```bash
+bsp registry show preset --slug myboard-scarthgap
+```
+
+**Git integration flags (all mutating commands)**
+
+| Flag | Description |
+|------|-------------|
+| `--git-stage` | Run `git add <registry-file>` after saving |
+| `--git-commit MESSAGE` | Run `git commit -m MESSAGE` after saving (implies `--git-stage`) |
 
 
 
@@ -1675,12 +1805,13 @@ bsp-registry-tools/
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
 │   ├── remotes_manager.py    # Persistent named-remote CRUD (bsp remotes)
+│   ├── completions.py        # Shell tab-completion support (bsp completions)
+│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
 │   ├── models.py             # Dataclass models (v2.0 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
-│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
 │   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
 │   ├── gatherer.py           # ArtifactGatherer: download build artifacts from cloud
@@ -1722,6 +1853,8 @@ bsp-registry-tools/
 │   ├── test_environment.py
 │   ├── test_path_resolver.py
 │   ├── test_registry_fetcher.py
+│   ├── test_registry_writer.py  # RegistryWriter unit tests (CRUD, validate, diff, undo)
+│   ├── test_cli_registry.py     # bsp registry CLI end-to-end tests
 │   └── test_utils.py
 ├── examples/
 │   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
