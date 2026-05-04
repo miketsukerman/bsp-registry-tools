@@ -18,6 +18,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
+- 📥 **Manifest import** — convert a Google Repo Yocto manifest into KAS + BSP registry YAML with `bsp import`
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
@@ -833,6 +834,97 @@ branch: develop
 > **Config file location** — `~/.config/bsp/remotes.yaml`  (override with
 > `BSP_REMOTES_CONFIG=/path/to/remotes.yaml bsp remotes ...`)
 
+
+
+## Importing Repo Manifests (`bsp import`)
+
+`bsp import` converts a **Google Repo Yocto manifest** (`.xml`) into a KAS
+YAML file and a `bsp-registry.yml` entry.  It is the fastest way to bootstrap
+a registry from an existing vendor BSP manifest tree.
+
+```
+bsp import <manifest.xml> [options]
+```
+
+### Key options
+
+| Flag | Description |
+|---|---|
+| `--output-dir PATH` | Directory to write files (default: current directory) |
+| `--vendor SLUG` | Board / software vendor slug, e.g. `advantech` |
+| `--soc-vendor SLUG` | SoC vendor slug, e.g. `nxp` (adds nested `soc_vendors` block) |
+| `--vendor-release SLUG` | BSP release slug, e.g. `imx-6.6.52-2.2.0` |
+| `--release SLUG` | Yocto codename override (auto-detected from manifest revisions) |
+| `--distro SLUG` | Distro slug, e.g. `fsl-imx-xwayland` |
+| `--merge` | Merge into an existing `bsp-registry.yml` instead of creating a new one |
+| `--dry-run` | Print what would be generated without writing any files |
+| `--hints PATH` | YAML hints file for skipping projects and injecting device entries |
+
+### `<include>` directives
+
+The importer follows all `<include name="…"/>` directives recursively,
+depth-first.  Cycles are detected and silently skipped.  This means you can
+pass a `default.xml` that delegates to multiple sub-manifests and still get
+every project in a single KAS file.
+
+### SHA pinning
+
+When a `<project revision="…">` contains a 40-character SHA-1 (or 64-char
+SHA-256) the importer emits `commit:` in the KAS repo entry, faithfully
+preserving the pin.  If the project also has an `upstream` attribute (the
+branch that was current when the SHA was pinned), it is emitted as `branch:`
+alongside `commit:`.
+
+### Merge vs. create
+
+* **Create** (default) — writes a minimal `bsp-registry.yml` skeleton; fails
+  if the file already exists.
+* **Merge** (`--merge`) — reads the existing registry and appends new
+  vendor / release / device entries without removing anything.
+  All operations are idempotent: running the same import twice with `--merge`
+  produces a single set of entries.
+
+### Board detection and hints
+
+Board / machine names are highly vendor-specific and cannot be inferred from
+the manifest alone.  Use a **hints file** to skip proprietary projects and to
+inject device entries that point to hand-crafted machine KAS files:
+
+```yaml
+# hints.yml
+projects:
+  meta-proprietary:
+    role: skip          # exclude from KAS output
+
+devices:
+  - slug: imx8mprsb3720a1
+    description: "RSB-3720 (i.MX8MP)"
+    vendor: advantech
+    soc_vendor: nxp
+    includes:
+      - vendors/advantech/nxp/machine/imx8/imx8mprsb3720a1.yml
+```
+
+### Example — populate the Advantech BSP registry
+
+```bash
+# Clone the registry
+git clone https://github.com/Advantech-EECC/bsp-registry.git
+cd bsp-registry
+
+# Import an NXP manifest with merge
+bsp import /path/to/imx-manifest/default.xml \
+    --output-dir . \
+    --vendor advantech \
+    --soc-vendor nxp \
+    --vendor-release imx-6.6.52-2.2.0 \
+    --distro fsl-imx-xwayland \
+    --hints hints.yml \
+    --merge
+```
+
+See [`docs/bsp-import.md`](docs/bsp-import.md) for the full mapping reference,
+post-import manual steps, and the complete hints file format.
 
 
 ## HTTP Server (REST + GraphQL)

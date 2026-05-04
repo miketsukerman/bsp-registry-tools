@@ -144,6 +144,67 @@ def _dispatch_remotes(args) -> int:
 
 
 # =============================================================================
+# Import sub-command dispatcher (no registry loading required)
+# =============================================================================
+
+
+def _dispatch_import(args) -> int:
+    """Handle ``bsp import <manifest.xml> [options]``.
+
+    Converts a Google Repo Yocto manifest into KAS YAML + BSP registry YAML
+    artefacts.  Does **not** require a pre-existing BSP registry.
+
+    Returns an integer exit code (0 = success).
+    """
+    from pathlib import Path
+    from .manifest_importer import ManifestImporter
+
+    manifest_path = Path(args.manifest)
+    if not manifest_path.exists():
+        logging.error("Manifest file not found: %s", manifest_path)
+        return 1
+
+    output_dir = Path(args.output_dir)
+    hints_path = Path(args.hints) if getattr(args, "hints", None) else None
+    if hints_path and not hints_path.exists():
+        logging.error("Hints file not found: %s", hints_path)
+        return 1
+
+    importer = ManifestImporter()
+    try:
+        result = importer.run(
+            manifest_path=manifest_path,
+            output_dir=output_dir,
+            vendor_slug=getattr(args, "vendor", None),
+            soc_vendor_slug=getattr(args, "soc_vendor", None),
+            vendor_release_slug=getattr(args, "vendor_release", None),
+            release_slug=getattr(args, "release", None),
+            distro_slug=getattr(args, "distro", None),
+            dry_run=getattr(args, "dry_run", False),
+            merge=getattr(args, "merge", False),
+            hints_path=hints_path,
+        )
+    except FileExistsError as exc:
+        logging.error("%s", exc)
+        return 1
+    except ValueError as exc:
+        logging.error("Import failed: %s", exc)
+        return 1
+
+    for warning in result.warnings:
+        print(f"Warning: {warning}")
+
+    if not getattr(args, "dry_run", False):
+        for kas_path, _ in result.kas_files:
+            print(f"  wrote  {output_dir / kas_path}")
+        if result.registry_path:
+            action = "updated" if getattr(args, "merge", False) else "created"
+            print(f"  {action} {result.registry_path}")
+
+    return 0
+
+
+# =============================================================================
 # Completions sub-command dispatcher (no registry loading required)
 # =============================================================================
 
@@ -849,6 +910,93 @@ def main() -> int:
         remotes_show.add_argument("name", help="Name of the remote to show").completer = RemotesCompleter()
 
         # ----------------------------------------------------------------
+        # Import command
+        # ----------------------------------------------------------------
+        import_parser = subparsers.add_parser(
+            "import",
+            help="Convert a Google Repo Yocto manifest into KAS + BSP registry YAML",
+        )
+        import_parser.add_argument(
+            "manifest",
+            metavar="MANIFEST",
+            help="Path to the repo manifest XML file (e.g. default.xml)",
+        )
+        import_parser.add_argument(
+            "--output-dir", "-o",
+            default=".",
+            metavar="PATH",
+            help="Directory to write generated files into (default: current directory)",
+        )
+        import_parser.add_argument(
+            "--vendor",
+            default=None,
+            metavar="SLUG",
+            help="Board / software vendor slug, e.g. 'advantech' (default: 'imported')",
+        )
+        import_parser.add_argument(
+            "--soc-vendor",
+            default=None,
+            metavar="SLUG",
+            help=(
+                "SoC vendor slug, e.g. 'nxp'.  When set the KAS file is placed "
+                "under vendors/<vendor>/<soc-vendor>/ and a nested soc_vendors "
+                "block is added to the release vendor_overrides"
+            ),
+        )
+        import_parser.add_argument(
+            "--vendor-release",
+            default=None,
+            metavar="SLUG",
+            help=(
+                "Vendor BSP release slug, e.g. 'imx-6.6.52-2.2.0' "
+                "(default: manifest file stem)"
+            ),
+        )
+        import_parser.add_argument(
+            "--release",
+            default=None,
+            metavar="SLUG",
+            help=(
+                "Yocto codename to use as the release slug, e.g. 'scarthgap' "
+                "(auto-detected from manifest revisions when omitted)"
+            ),
+        )
+        import_parser.add_argument(
+            "--distro",
+            default=None,
+            metavar="SLUG",
+            help=(
+                "Distro slug to attach to the vendor override entry, "
+                "e.g. 'fsl-imx-xwayland'"
+            ),
+        )
+        import_parser.add_argument(
+            "--merge",
+            action="store_true",
+            default=False,
+            help=(
+                "Merge into an existing bsp-registry.yml instead of creating a "
+                "new one.  Existing entries are left untouched; new entries are "
+                "appended."
+            ),
+        )
+        import_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            default=False,
+            help="Print what would be generated without writing any files",
+        )
+        import_parser.add_argument(
+            "--hints",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Path to a YAML hints file for layer classification overrides "
+                "and extra device definitions (see docs/bsp-import.md)"
+            ),
+        )
+
+        # ----------------------------------------------------------------
         # Completions command
         # ----------------------------------------------------------------
         completions_parser = subparsers.add_parser(
@@ -902,6 +1050,9 @@ def main() -> int:
 
         if args.command == "completions":
             return _dispatch_completions(args)
+
+        if args.command == "import":
+            return _dispatch_import(args)
 
         # Resolve registry file path
         LOCAL_DEFAULTS = ["bsp-registry.yaml", "bsp-registry.yml"]
