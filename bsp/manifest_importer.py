@@ -315,7 +315,7 @@ class ManifestParser:
 # Hints loader
 # =============================================================================
 
-def load_hints(hints_path: Path) -> ImportHints:
+def load_hints(hints_path: Optional[Path]) -> ImportHints:
     """Load an optional classification hints YAML file.
 
     Returns an empty :class:`ImportHints` if *hints_path* is ``None`` or the
