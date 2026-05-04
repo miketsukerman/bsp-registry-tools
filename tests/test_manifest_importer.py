@@ -11,7 +11,13 @@ Covers:
 * _detect_codename — codename auto-detection
 * ManifestImporter — create mode, merge mode, dry-run, file-exists guard,
                      hints-driven device injection, soc-vendor nesting
-* CLI             — ``bsp import`` subcommand (via sys.argv patching)
+* _looks_like_url  — URL vs local-path discrimination
+* ManifestFetcher  — clone-dir naming, fresh clone, cached-clone update,
+                     --no-update bypass, missing manifest file error,
+                     git failure propagation, cache clearing
+* CLI             — ``bsp import`` subcommand (via sys.argv patching),
+                    remote-URL routing through ManifestFetcher, --branch /
+                    --manifest-file / --no-update flag forwarding
 """
 
 import os
