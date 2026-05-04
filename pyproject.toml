@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bsp-registry-tools"
-version = "0.1.0.0"
+version = "1.0.0.1"
 description = "Advantech Board Support Package (BSP) Registry Manager"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -68,7 +68,7 @@ Repository = "https://github.com/Advantech-EECC/bsp-registry-tools"
 Issues = "https://github.com/Advantech-EECC/bsp-registry-tools/issues"
 
 [tool.setuptools]
-packages = ["bsp", "bsp.server"]
+packages = ["bsp", "bsp.server", "bsp.storage"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
