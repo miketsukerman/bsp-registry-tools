@@ -67,8 +67,9 @@ Homepage = "https://github.com/Advantech-EECC/bsp-registry-tools"
 Repository = "https://github.com/Advantech-EECC/bsp-registry-tools"
 Issues = "https://github.com/Advantech-EECC/bsp-registry-tools/issues"
 
-[tool.setuptools]
-packages = ["bsp", "bsp.server"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bsp*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
