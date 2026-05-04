@@ -149,20 +149,43 @@ def _dispatch_remotes(args) -> int:
 
 
 def _dispatch_import(args) -> int:
-    """Handle ``bsp import <manifest.xml> [options]``.
+    """Handle ``bsp import <manifest.xml|git-url> [options]``.
 
     Converts a Google Repo Yocto manifest into KAS YAML + BSP registry YAML
-    artefacts.  Does **not** require a pre-existing BSP registry.
+    artefacts.  The manifest source may be a **local file path** or a **remote
+    Git repository URL** (``https://``, ``git://``, ``git@``, …).  When a URL
+    is given the repository is cloned (or updated from cache) before the
+    import runs.
+
+    Does **not** require a pre-existing BSP registry.
 
     Returns an integer exit code (0 = success).
     """
     from pathlib import Path
-    from .manifest_importer import ManifestImporter
+    from .manifest_importer import ManifestFetcher, ManifestImporter, _looks_like_url
 
-    manifest_path = Path(args.manifest)
-    if not manifest_path.exists():
-        logging.error("Manifest file not found: %s", manifest_path)
-        return 1
+    source = args.manifest
+    branch = getattr(args, "branch", None) or "main"
+    manifest_file = getattr(args, "manifest_file", None) or "default.xml"
+
+    if _looks_like_url(source):
+        fetcher = ManifestFetcher()
+        try:
+            manifest_path = fetcher.fetch(
+                url=source,
+                branch=branch,
+                manifest_file=manifest_file,
+                update=not getattr(args, "no_update", False),
+            )
+        except (ValueError, RuntimeError) as exc:
+            logging.error("Failed to fetch manifest repository: %s", exc)
+            return 1
+        logging.info("Using cloned manifest: %s", manifest_path)
+    else:
+        manifest_path = Path(source)
+        if not manifest_path.exists():
+            logging.error("Manifest file not found: %s", manifest_path)
+            return 1
 
     output_dir = Path(args.output_dir)
     hints_path = Path(args.hints) if getattr(args, "hints", None) else None
@@ -919,7 +942,40 @@ def main() -> int:
         import_parser.add_argument(
             "manifest",
             metavar="MANIFEST",
-            help="Path to the repo manifest XML file (e.g. default.xml)",
+            help=(
+                "Path to a local repo manifest XML file (e.g. default.xml) "
+                "OR a remote Git repository URL "
+                "(e.g. https://github.com/nxp-imx/imx-manifest).  "
+                "When a URL is given the repository is cloned / updated "
+                "automatically and the file named by --manifest-file is used."
+            ),
+        )
+        import_parser.add_argument(
+            "--branch", "-b",
+            default=None,
+            metavar="BRANCH",
+            help=(
+                "Branch or tag to check out when MANIFEST is a remote Git URL "
+                "(default: 'main').  Ignored for local file paths."
+            ),
+        )
+        import_parser.add_argument(
+            "--manifest-file",
+            default=None,
+            metavar="FILENAME",
+            help=(
+                "Name of the manifest XML file within the cloned repository "
+                "(default: 'default.xml').  Ignored for local file paths."
+            ),
+        )
+        import_parser.add_argument(
+            "--no-update",
+            action="store_true",
+            default=False,
+            help=(
+                "When MANIFEST is a remote URL, use the cached clone without "
+                "running 'git fetch'.  Speeds up repeated invocations."
+            ),
         )
         import_parser.add_argument(
             "--output-dir", "-o",

@@ -18,7 +18,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📤 **Configuration export** for sharing and archiving build configs
 - ✅ **Comprehensive validation** of configurations before building
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
-- 📥 **Manifest import** — convert a Google Repo Yocto manifest into KAS + BSP registry YAML with `bsp import`
+- 📥 **Manifest import** — convert a Google Repo Yocto manifest into KAS + BSP registry YAML with `bsp import`; supports local files and **remote Git URLs** (auto-cloned, cached)
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
@@ -839,17 +839,21 @@ branch: develop
 ## Importing Repo Manifests (`bsp import`)
 
 `bsp import` converts a **Google Repo Yocto manifest** (`.xml`) into a KAS
-YAML file and a `bsp-registry.yml` entry.  It is the fastest way to bootstrap
-a registry from an existing vendor BSP manifest tree.
+YAML file and a `bsp-registry.yml` entry.  The manifest source may be a
+**local file path** or a **remote Git repository URL** — the repository is
+cloned automatically and cached under `~/.cache/bsp/manifests/`.
 
 ```
-bsp import <manifest.xml> [options]
+bsp import <manifest-or-url> [options]
 ```
 
 ### Key options
 
 | Flag | Description |
 |---|---|
+| `--branch BRANCH` | Branch / tag to check out when MANIFEST is a URL (default: `main`) |
+| `--manifest-file FILENAME` | Manifest XML file within the cloned repo (default: `default.xml`) |
+| `--no-update` | Use cached clone without fetching (speeds up offline / repeated runs) |
 | `--output-dir PATH` | Directory to write files (default: current directory) |
 | `--vendor SLUG` | Board / software vendor slug, e.g. `advantech` |
 | `--soc-vendor SLUG` | SoC vendor slug, e.g. `nxp` (adds nested `soc_vendors` block) |
@@ -859,6 +863,23 @@ bsp import <manifest.xml> [options]
 | `--merge` | Merge into an existing `bsp-registry.yml` instead of creating a new one |
 | `--dry-run` | Print what would be generated without writing any files |
 | `--hints PATH` | YAML hints file for skipping projects and injecting device entries |
+
+### Remote Git URL support
+
+When `MANIFEST` starts with `https://`, `http://`, `git://`, `ssh://`, or
+`git@`, the repository is cloned with `--depth 1` on first use and cached
+locally.  Subsequent runs reuse the cache (with a fast `git fetch`); pass
+`--no-update` to skip the network round-trip entirely.
+
+```bash
+# Import directly from GitHub
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
+    --output-dir ./my-registry \
+    --vendor advantech --soc-vendor nxp \
+    --vendor-release imx-6.6.52-2.2.0
+```
 
 ### `<include>` directives
 
@@ -912,8 +933,10 @@ devices:
 git clone https://github.com/Advantech-EECC/bsp-registry.git
 cd bsp-registry
 
-# Import an NXP manifest with merge
-bsp import /path/to/imx-manifest/default.xml \
+# Import an NXP manifest directly from GitHub with merge
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
     --output-dir . \
     --vendor advantech \
     --soc-vendor nxp \

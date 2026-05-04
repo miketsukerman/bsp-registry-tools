@@ -17,7 +17,7 @@ Covers:
 import os
 import textwrap
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import yaml
@@ -25,6 +25,7 @@ import yaml
 import bsp
 from bsp.manifest_importer import (
     ImportHints,
+    ManifestFetcher,
     ManifestImporter,
     ManifestParser,
     RegistryMerger,
@@ -33,6 +34,7 @@ from bsp.manifest_importer import (
     _detect_codename,
     _dump_yaml,
     _is_sha,
+    _looks_like_url,
     _project_to_kas_repo,
     _repo_key,
     load_hints,
@@ -1095,3 +1097,318 @@ class TestCliImportCommand:
         svo = vo["soc_vendors"][0]
         assert svo["vendor"] == "nxp"
         assert svo["distro"] == "fsl-imx-xwayland"
+
+
+# =============================================================================
+# _looks_like_url
+# =============================================================================
+
+class TestLooksLikeUrl:
+    def test_https_is_url(self):
+        assert _looks_like_url("https://github.com/nxp-imx/imx-manifest")
+
+    def test_http_is_url(self):
+        assert _looks_like_url("http://example.com/repo.git")
+
+    def test_git_scheme_is_url(self):
+        assert _looks_like_url("git://example.com/repo")
+
+    def test_ssh_scheme_is_url(self):
+        assert _looks_like_url("ssh://git@github.com/org/repo.git")
+
+    def test_git_at_is_url(self):
+        assert _looks_like_url("git@github.com:org/repo.git")
+
+    def test_local_path_is_not_url(self):
+        assert not _looks_like_url("/home/user/manifest/default.xml")
+
+    def test_relative_path_is_not_url(self):
+        assert not _looks_like_url("default.xml")
+
+    def test_windows_path_is_not_url(self):
+        assert not _looks_like_url(r"C:\manifests\default.xml")
+
+
+# =============================================================================
+# ManifestFetcher unit tests  (git calls are always mocked)
+# =============================================================================
+
+class TestManifestFetcher:
+    """All git subprocess calls are replaced with no-op mocks."""
+
+    @pytest.fixture
+    def fetcher(self, tmp_path):
+        return ManifestFetcher(cache_dir=tmp_path / "cache")
+
+    # ── _clone_dir determinism ─────────────────────────────────────────────
+
+    def test_clone_dir_is_deterministic(self, fetcher):
+        d1 = fetcher._clone_dir("https://example.com/repo", "main")
+        d2 = fetcher._clone_dir("https://example.com/repo", "main")
+        assert d1 == d2
+
+    def test_clone_dir_differs_by_branch(self, fetcher):
+        d1 = fetcher._clone_dir("https://example.com/repo", "main")
+        d2 = fetcher._clone_dir("https://example.com/repo", "dev")
+        assert d1 != d2
+
+    def test_clone_dir_differs_by_url(self, fetcher):
+        d1 = fetcher._clone_dir("https://example.com/repo-a", "main")
+        d2 = fetcher._clone_dir("https://example.com/repo-b", "main")
+        assert d1 != d2
+
+    def test_clone_dir_contains_repo_name(self, fetcher):
+        d = fetcher._clone_dir("https://github.com/nxp-imx/imx-manifest", "main")
+        assert "imx-manifest" in d.name
+
+    def test_clone_dir_strips_dot_git(self, fetcher):
+        d = fetcher._clone_dir("https://example.com/repo.git", "main")
+        assert ".git" not in d.name
+
+    # ── Fresh clone ────────────────────────────────────────────────────────
+
+    def test_fetch_clones_when_not_cached(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "main"
+        clone_dir = fetcher._clone_dir(url, branch)
+
+        # Simulate git clone creating the repo with default.xml
+        def fake_run(cmd):
+            clone_dir.mkdir(parents=True, exist_ok=True)
+            (clone_dir / ".git").mkdir()
+            (clone_dir / "default.xml").write_text("<manifest/>")
+
+        with patch.object(fetcher, "_run", side_effect=fake_run) as mock_run:
+            result = fetcher.fetch(url, branch=branch)
+
+        mock_run.assert_called_once()
+        assert result == clone_dir / "default.xml"
+
+    def test_fetch_uses_specified_manifest_file(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "scarthgap"
+        clone_dir = fetcher._clone_dir(url, branch)
+
+        def fake_run(cmd):
+            clone_dir.mkdir(parents=True, exist_ok=True)
+            (clone_dir / ".git").mkdir()
+            (clone_dir / "custom.xml").write_text("<manifest/>")
+
+        with patch.object(fetcher, "_run", side_effect=fake_run):
+            result = fetcher.fetch(url, branch=branch, manifest_file="custom.xml")
+
+        assert result.name == "custom.xml"
+
+    def test_fetch_raises_if_manifest_file_missing(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "main"
+        clone_dir = fetcher._clone_dir(url, branch)
+
+        def fake_run(cmd):
+            clone_dir.mkdir(parents=True, exist_ok=True)
+            (clone_dir / ".git").mkdir()
+            # deliberately do NOT create default.xml
+
+        with patch.object(fetcher, "_run", side_effect=fake_run):
+            with pytest.raises(ValueError, match="not found in cloned repo"):
+                fetcher.fetch(url, branch=branch)
+
+    # ── Update (already cached) ────────────────────────────────────────────
+
+    def test_fetch_updates_existing_clone(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "main"
+        clone_dir = fetcher._clone_dir(url, branch)
+
+        # Pre-create a "cached" clone
+        clone_dir.mkdir(parents=True)
+        (clone_dir / ".git").mkdir()
+        (clone_dir / "default.xml").write_text("<manifest/>")
+
+        with patch.object(fetcher, "_run") as mock_run, \
+             patch.object(fetcher, "_update") as mock_update:
+            result = fetcher.fetch(url, branch=branch, update=True)
+
+        mock_update.assert_called_once_with(clone_dir, branch)
+        mock_run.assert_not_called()
+
+    def test_fetch_skips_update_when_no_update(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "main"
+        clone_dir = fetcher._clone_dir(url, branch)
+
+        clone_dir.mkdir(parents=True)
+        (clone_dir / ".git").mkdir()
+        (clone_dir / "default.xml").write_text("<manifest/>")
+
+        with patch.object(fetcher, "_run") as mock_run, \
+             patch.object(fetcher, "_update") as mock_update:
+            fetcher.fetch(url, branch=branch, update=False)
+
+        mock_update.assert_not_called()
+        mock_run.assert_not_called()
+
+    # ── _run error propagation ─────────────────────────────────────────────
+
+    def test_run_raises_runtime_error_on_failure(self, fetcher):
+        import subprocess
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
+                128, ["git", "clone", "url"], stderr="fatal: repo not found"
+            )
+            with pytest.raises(RuntimeError, match="Git command failed"):
+                fetcher._run(["git", "clone", "https://example.com/repo", "/tmp/x"])
+
+    # ── clear_cache ────────────────────────────────────────────────────────
+
+    def test_clear_cache_removes_directory(self, fetcher, tmp_path):
+        url = "https://example.com/repo"
+        branch = "main"
+        clone_dir = fetcher._clone_dir(url, branch)
+        clone_dir.mkdir(parents=True)
+        (clone_dir / ".git").mkdir()
+
+        fetcher.clear_cache(url, branch)
+        assert not clone_dir.exists()
+
+    def test_clear_cache_noop_if_not_cached(self, fetcher):
+        # Should not raise
+        fetcher.clear_cache("https://example.com/nevercloned", "main")
+
+
+# =============================================================================
+# CLI — remote URL support
+# =============================================================================
+
+class TestCliImportRemoteUrl:
+    """Test that a remote Git URL is routed through ManifestFetcher."""
+
+    def _make_simple_manifest(self, path: Path) -> None:
+        path.write_text(
+            "<manifest>"
+            "<remote name='r' fetch='https://example.com'/>"
+            "<default revision='scarthgap'/>"
+            "<project name='meta-layer'/>"
+            "</manifest>"
+        )
+
+    def test_url_triggers_fetcher(self, tmp_path):
+        """When MANIFEST is a URL the fetcher is called, not a local open."""
+        out = tmp_path / "out"
+        manifest_xml = tmp_path / "default.xml"
+        self._make_simple_manifest(manifest_xml)
+
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch",
+            return_value=manifest_xml,
+        ) as mock_fetch, \
+        patch("sys.argv", [
+            "bsp", "import",
+            "https://github.com/nxp-imx/imx-manifest",
+            "--branch", "imx-linux-scarthgap",
+            "--manifest-file", "imx-6.6.52-2.2.0.xml",
+            "--output-dir", str(out),
+            "--vendor", "advantech",
+            "--soc-vendor", "nxp",
+            "--vendor-release", "imx-6.6.52-2.2.0",
+        ]):
+            exit_code = bsp.main()
+
+        assert exit_code == 0
+        mock_fetch.assert_called_once_with(
+            url="https://github.com/nxp-imx/imx-manifest",
+            branch="imx-linux-scarthgap",
+            manifest_file="imx-6.6.52-2.2.0.xml",
+            update=True,
+        )
+
+    def test_local_path_does_not_trigger_fetcher(self, tmp_path):
+        """When MANIFEST is a local path the fetcher is NOT called."""
+        out = tmp_path / "out"
+        manifest_xml = tmp_path / "default.xml"
+        self._make_simple_manifest(manifest_xml)
+
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch"
+        ) as mock_fetch, \
+        patch("sys.argv", [
+            "bsp", "import", str(manifest_xml),
+            "--output-dir", str(out),
+        ]):
+            exit_code = bsp.main()
+
+        assert exit_code == 0
+        mock_fetch.assert_not_called()
+
+    def test_no_update_flag_passed_to_fetcher(self, tmp_path):
+        out = tmp_path / "out"
+        manifest_xml = tmp_path / "default.xml"
+        self._make_simple_manifest(manifest_xml)
+
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch",
+            return_value=manifest_xml,
+        ) as mock_fetch, \
+        patch("sys.argv", [
+            "bsp", "import",
+            "https://github.com/nxp-imx/imx-manifest",
+            "--no-update",
+            "--output-dir", str(out),
+        ]):
+            bsp.main()
+
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("update") is False
+
+    def test_url_default_branch_is_main(self, tmp_path):
+        out = tmp_path / "out"
+        manifest_xml = tmp_path / "default.xml"
+        self._make_simple_manifest(manifest_xml)
+
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch",
+            return_value=manifest_xml,
+        ) as mock_fetch, \
+        patch("sys.argv", [
+            "bsp", "import",
+            "https://example.com/repo",
+            "--output-dir", str(out),
+        ]):
+            bsp.main()
+
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("branch") == "main"
+
+    def test_url_default_manifest_file_is_default_xml(self, tmp_path):
+        out = tmp_path / "out"
+        manifest_xml = tmp_path / "default.xml"
+        self._make_simple_manifest(manifest_xml)
+
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch",
+            return_value=manifest_xml,
+        ) as mock_fetch, \
+        patch("sys.argv", [
+            "bsp", "import",
+            "https://example.com/repo",
+            "--output-dir", str(out),
+        ]):
+            bsp.main()
+
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("manifest_file") == "default.xml"
+
+    def test_fetcher_error_returns_nonzero(self, tmp_path):
+        out = tmp_path / "out"
+        with patch(
+            "bsp.manifest_importer.ManifestFetcher.fetch",
+            side_effect=RuntimeError("git clone failed"),
+        ), \
+        patch("sys.argv", [
+            "bsp", "import",
+            "https://example.com/broken-repo",
+            "--output-dir", str(out),
+        ]):
+            exit_code = bsp.main()
+
+        assert exit_code != 0

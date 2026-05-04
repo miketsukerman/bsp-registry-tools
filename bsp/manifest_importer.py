@@ -53,8 +53,11 @@ Hints file format::
           - vendors/myvendor/nxp/machine/myboard.yml
 """
 
+import hashlib
 import logging
 import re
+import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,6 +66,164 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Remote manifest fetcher
+# =============================================================================
+
+DEFAULT_MANIFEST_CACHE_DIR = Path.home() / ".cache" / "bsp" / "manifests"
+_URL_SCHEMES = ("http://", "https://", "git://", "ssh://", "git@")
+
+
+def _looks_like_url(source: str) -> bool:
+    """Return True if *source* looks like a remote Git URL."""
+    return any(source.startswith(scheme) for scheme in _URL_SCHEMES)
+
+
+class ManifestFetcher:
+    """Clone or update a remote Git repository hosting a repo manifest.
+
+    The clone is cached under *cache_dir* (default:
+    ``~/.cache/bsp/manifests/``) so that subsequent invocations only need a
+    lightweight ``git fetch``.  Each ``(url, branch)`` pair maps to a unique
+    subdirectory so multiple remotes never collide.
+
+    Example::
+
+        fetcher = ManifestFetcher()
+        manifest_path = fetcher.fetch(
+            "https://github.com/nxp-imx/imx-manifest",
+            branch="imx-linux-scarthgap",
+            manifest_file="imx-6.6.52-2.2.0.xml",
+        )
+        # manifest_path is a Path to the local .xml file
+    """
+
+    def __init__(self, cache_dir: Path = DEFAULT_MANIFEST_CACHE_DIR) -> None:
+        self.cache_dir = Path(cache_dir)
+
+    # ------------------------------------------------------------------
+
+    def fetch(
+        self,
+        url: str,
+        branch: str = "main",
+        manifest_file: str = "default.xml",
+        update: bool = True,
+    ) -> Path:
+        """Ensure a local clone of the manifest repository is up-to-date.
+
+        If the repository has not been cloned before it is cloned with
+        ``--depth 1`` for speed.  If it has been cloned and *update* is
+        ``True``, the branch is fetched and reset to the remote HEAD.
+
+        Args:
+            url:           Git repository URL.
+            branch:        Branch (or tag) to check out.
+            manifest_file: Name of the manifest XML file within the repo root
+                           (default: ``"default.xml"``).
+            update:        When ``True`` (default) synchronise an existing
+                           clone with the remote.
+
+        Returns:
+            Path to the local copy of *manifest_file*.
+
+        Raises:
+            ValueError: If *manifest_file* is not found in the cloned repo.
+            RuntimeError: If any git operation fails.
+        """
+        clone_dir = self._clone_dir(url, branch)
+
+        if self._is_cloned(clone_dir):
+            if update:
+                logger.info(
+                    "Updating manifest repo %s (branch: %s)", url, branch
+                )
+                self._update(clone_dir, branch)
+            else:
+                logger.info(
+                    "Using cached manifest repo %s (branch: %s)", url, branch
+                )
+        else:
+            logger.info(
+                "Cloning manifest repo %s (branch: %s)", url, branch
+            )
+            self._clone(url, branch, clone_dir)
+
+        manifest_path = clone_dir / manifest_file
+        if not manifest_path.is_file():
+            raise ValueError(
+                f"Manifest file '{manifest_file}' not found in cloned repo "
+                f"at {clone_dir}.  "
+                f"Use --manifest-file to specify the correct file name."
+            )
+        return manifest_path
+
+    def clear_cache(self, url: str, branch: str = "main") -> None:
+        """Remove the cached clone for *(url, branch)*."""
+        clone_dir = self._clone_dir(url, branch)
+        if clone_dir.exists():
+            shutil.rmtree(clone_dir)
+            logger.info("Removed cached clone: %s", clone_dir)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _clone_dir(self, url: str, branch: str) -> Path:
+        """Return the deterministic cache subdirectory for *(url, branch)*."""
+        key = f"{url}#{branch}"
+        url_hash = hashlib.sha1(key.encode()).hexdigest()[:12]
+        # Derive a human-readable prefix from the repo name
+        clean_url = url.rstrip("/")
+        if clean_url.endswith(".git"):
+            clean_url = clean_url[:-4]
+        repo_name = clean_url.rsplit("/", 1)[-1] or "manifest"
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", repo_name)
+        return self.cache_dir / f"{safe_name}-{url_hash}"
+
+    def _is_cloned(self, clone_dir: Path) -> bool:
+        return (clone_dir / ".git").is_dir()
+
+    def _clone(self, url: str, branch: str, clone_dir: Path) -> None:
+        clone_dir.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "git", "clone",
+            "--depth", "1",
+            "--branch", branch,
+            url,
+            str(clone_dir),
+        ]
+        self._run(cmd)
+
+    def _update(self, clone_dir: Path, branch: str) -> None:
+        """Fetch and reset the clone to the remote HEAD of *branch*."""
+        cmds = [
+            ["git", "-C", str(clone_dir), "fetch", "--depth", "1",
+             "origin", branch],
+            ["git", "-C", str(clone_dir), "checkout", branch],
+            ["git", "-C", str(clone_dir), "reset", "--hard",
+             f"origin/{branch}"],
+        ]
+        for cmd in cmds:
+            self._run(cmd)
+
+    @staticmethod
+    def _run(cmd: List[str]) -> None:
+        logger.debug("Running: %s", " ".join(cmd))
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"Git command failed ({' '.join(cmd[:3])}, exit {exc.returncode}):\n"
+                f"{exc.stderr.strip()}"
+            ) from exc
+
 
 # =============================================================================
 # Constants

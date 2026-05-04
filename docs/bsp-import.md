@@ -12,12 +12,25 @@ The command does **not** require an existing registry; it can bootstrap a
 complete registry from a manifest or add to one that is already partially
 populated.
 
+The manifest source may be a **local file path** or a **remote Git repository
+URL**.  When a URL is given the repository is cloned automatically (shallow,
+one-time) and kept in a local cache for fast subsequent runs.
+
 ---
 
 ## Quick Start
 
 ```bash
-# Create a new registry from an NXP manifest
+# Import directly from the NXP imx-manifest GitHub repo
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
+    --output-dir ./my-registry \
+    --vendor advantech \
+    --soc-vendor nxp \
+    --vendor-release imx-6.6.52-2.2.0
+
+# Import from a local file
 bsp import default.xml \
     --output-dir ./my-registry \
     --vendor advantech \
@@ -25,7 +38,9 @@ bsp import default.xml \
     --vendor-release imx-6.6.52-2.2.0
 
 # Merge into the Advantech BSP registry
-bsp import default.xml \
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
     --output-dir /path/to/bsp-registry \
     --vendor advantech \
     --soc-vendor nxp \
@@ -36,9 +51,40 @@ bsp import default.xml \
 
 ---
 
+## Remote Git Repository Support
+
+When `MANIFEST` starts with `https://`, `http://`, `git://`, `ssh://`, or
+`git@`, it is treated as a **remote Git repository URL**.  The importer:
+
+1. Runs `git clone --depth 1 --branch <branch> <url>` on first use.
+2. Caches the clone under `~/.cache/bsp/manifests/` so subsequent runs only
+   need a lightweight `git fetch`.
+3. Reads the file named by `--manifest-file` (default: `default.xml`) from
+   the root of the cloned repository.
+4. Follows any `<include>` directives relative to the clone root, exactly as
+   for local manifests.
+
+To avoid a network round-trip when working offline or iterating quickly, pass
+`--no-update`:
+
+```bash
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
+    --no-update \
+    --output-dir ./my-registry
+```
+
+---
+
 ## How It Works
 
-### Step 1 — Parse the manifest
+### Step 1 — Fetch or locate the manifest
+
+If the manifest source is a URL the repository is cloned / updated (see
+above).  If it is a local path the file is used directly.
+
+### Step 2 — Parse the manifest
 
 The parser reads the manifest XML and follows **every `<include>` directive
 recursively** (depth-first, cycle-safe).  All `<remote>`, `<default>`, and
@@ -56,7 +102,7 @@ Resolution rules:
 | `<project revision="<sha>" upstream="…">` | both `commit:` and `branch:` |
 | `<default revision="…">` | fallback `branch:` for all projects without their own revision |
 
-### Step 2 — Detect the Yocto codename
+### Step 3 — Detect the Yocto codename
 
 The importer inspects every `revision`, `upstream`, and the manifest-level
 `<default revision="…">` value for a known Yocto codename
@@ -66,7 +112,7 @@ release slug.
 Use `--release` to override this when the codename cannot be detected
 automatically (e.g. when all revisions are pinned SHAs).
 
-### Step 3 — Generate the KAS file
+### Step 4 — Generate the KAS file
 
 A single self-contained KAS YAML file is generated containing every repo
 from the manifest.  The file is placed at:
@@ -124,7 +170,10 @@ When `--soc-vendor` is omitted the `soc_vendors` nesting is skipped:
 
 | Flag | Default | Description |
 |---|---|---|
-| `MANIFEST` | *(required)* | Path to the repo manifest XML file |
+| `MANIFEST` | *(required)* | Local path **or** remote Git URL for the manifest |
+| `--branch BRANCH` | `main` | Branch / tag to check out when MANIFEST is a URL |
+| `--manifest-file FILENAME` | `default.xml` | Manifest XML file within the cloned repo (URL mode only) |
+| `--no-update` | `false` | Use cached clone without fetching (URL mode only) |
 | `--output-dir PATH` | `.` | Directory to write generated files |
 | `--vendor SLUG` | `imported` | Board / software vendor slug |
 | `--soc-vendor SLUG` | *(none)* | SoC vendor slug; enables nested `soc_vendors` in vendor_overrides |
@@ -229,8 +278,10 @@ devices:
       - vendors/advantech/nxp/machine/imx8/imx8mprsb3720a1.yml
 EOF
 
-# 3. Import the NXP manifest
-bsp import /path/to/imx-manifest/default.xml \
+# 3. Import the NXP manifest directly from GitHub
+bsp import https://github.com/nxp-imx/imx-manifest \
+    --branch imx-linux-scarthgap \
+    --manifest-file imx-6.6.52-2.2.0.xml \
     --output-dir . \
     --vendor advantech \
     --soc-vendor nxp \
@@ -244,6 +295,10 @@ git diff
 git add vendors/advantech/nxp/imx-6.6.52-2.2.0-scarthgap.yml bsp-registry.yml
 git commit -m "feat: add imx-6.6.52-2.2.0 scarthgap via bsp import"
 ```
+
+> **Tip:** The manifest repository is cloned once into
+> `~/.cache/bsp/manifests/`.  Pass `--no-update` on subsequent runs to skip
+> the network fetch if you are iterating locally.
 
 ### After import — manual steps
 
