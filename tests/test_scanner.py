@@ -16,6 +16,7 @@ Covers:
 
 import json
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -1571,3 +1572,353 @@ registry:
         assert resolved.scan_config.tool == "syft+grype"
         assert resolved.scan_config.severity == "CRITICAL"
         assert resolved.scan_config.fail_on == "NONE"
+
+
+# =============================================================================
+# EMBA backend tests
+# =============================================================================
+
+import csv as _csv
+
+EMBA_CVE_CSV = """\
+PACKAGE;VERSION;CVE_ID;CVSS_SCORE;SEVERITY;EXPLOIT
+busybox;1.35.0;CVE-2022-28391;9.8;CRITICAL;no
+openssl;1.1.1k;CVE-2022-0778;7.5;HIGH;yes
+libpng;1.6.37;CVE-2018-14048;3.1;LOW;no
+"""
+
+EMBA_CVE_CSV_NUMERIC_SEVERITY = """\
+PACKAGE;VERSION;CVE_ID;CVSS_SCORE;SEVERITY
+zlib;1.2.11;CVE-2018-25032;7.5;
+curl;7.64.0;CVE-2019-3823;9.1;
+libgcc;10.0;NOT-A-CVE;0.0;
+"""
+
+EMBA_SBOM_JSON = json.dumps({
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.5",
+    "components": [
+        {"name": "busybox", "version": "1.35.0"},
+        {"name": "openssl", "version": "1.1.1k"},
+        {"name": "libpng", "version": "1.6.37"},
+    ],
+})
+
+
+class TestParseEmbaCsv:
+    def _make_scanner(self, tmp_path, **cfg_kwargs):
+        cfg = ScanConfig(tool="emba", **cfg_kwargs)
+        return ImageScanner(cfg, str(tmp_path))
+
+    def _write_csv(self, tmp_path, content, name="f20_vul_aggregator.csv"):
+        p = tmp_path / name
+        p.write_text(content)
+        return p
+
+    def test_parses_findings(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        csv_file = self._write_csv(tmp_path, EMBA_CVE_CSV)
+        findings = scanner._parse_emba_csv(csv_file)
+        ids = {f.cve_id for f in findings}
+        assert "CVE-2022-28391" in ids
+        assert "CVE-2022-0778" in ids
+        assert "CVE-2018-14048" in ids
+
+    def test_filters_below_severity_threshold(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="HIGH")
+        csv_file = self._write_csv(tmp_path, EMBA_CVE_CSV)
+        findings = scanner._parse_emba_csv(csv_file)
+        ids = {f.cve_id for f in findings}
+        assert "CVE-2022-28391" in ids   # CRITICAL >= HIGH
+        assert "CVE-2022-0778" in ids    # HIGH >= HIGH
+        assert "CVE-2018-14048" not in ids  # LOW < HIGH
+
+    def test_skips_header_row(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        csv_file = self._write_csv(tmp_path, EMBA_CVE_CSV)
+        findings = scanner._parse_emba_csv(csv_file)
+        # Header row must not appear as a finding
+        assert not any(f.cve_id == "CVE_ID" for f in findings)
+
+    def test_severity_from_numeric_cvss(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        csv_file = self._write_csv(tmp_path, EMBA_CVE_CSV_NUMERIC_SEVERITY)
+        findings = scanner._parse_emba_csv(csv_file)
+        by_id = {f.cve_id: f for f in findings}
+        # 7.5 → HIGH
+        assert by_id["CVE-2018-25032"].severity == "HIGH"
+        # 9.1 → CRITICAL
+        assert by_id["CVE-2019-3823"].severity == "CRITICAL"
+        # NOT-A-CVE has CVE_ID and score 0.0 (NONE), but no valid CVE id is
+        # not a filter criterion — it will be included unless filtered by severity
+
+    def test_skips_rows_without_cve_id(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        no_cve = "pkg;1.0;;\n"
+        csv_file = self._write_csv(tmp_path, "PACKAGE;VERSION;CVE_ID;CVSS_SCORE\n" + no_cve)
+        findings = scanner._parse_emba_csv(csv_file)
+        assert findings == []
+
+    def test_handles_missing_file(self, tmp_path, caplog):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        missing = tmp_path / "nonexistent.csv"
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            findings = scanner._parse_emba_csv(missing)
+        assert findings == []
+        assert any("Could not read" in r.message for r in caplog.records)
+
+    def test_package_name_and_version_populated(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, severity="LOW")
+        csv_file = self._write_csv(tmp_path, EMBA_CVE_CSV)
+        findings = scanner._parse_emba_csv(csv_file)
+        by_id = {f.cve_id: f for f in findings}
+        assert by_id["CVE-2022-28391"].package_name == "busybox"
+        assert by_id["CVE-2022-28391"].package_version == "1.35.0"
+
+
+class TestEmbaResolveSeverity:
+    def test_textual_critical(self):
+        assert ImageScanner._emba_resolve_severity("CRITICAL", "") == "CRITICAL"
+
+    def test_textual_high(self):
+        assert ImageScanner._emba_resolve_severity("HIGH", "") == "HIGH"
+
+    def test_textual_takes_priority_over_score(self):
+        assert ImageScanner._emba_resolve_severity("LOW", "9.9") == "LOW"
+
+    def test_numeric_critical(self):
+        assert ImageScanner._emba_resolve_severity("", "9.5") == "CRITICAL"
+
+    def test_numeric_high(self):
+        assert ImageScanner._emba_resolve_severity("", "7.0") == "HIGH"
+
+    def test_numeric_medium(self):
+        assert ImageScanner._emba_resolve_severity("", "5.5") == "MEDIUM"
+
+    def test_numeric_low(self):
+        assert ImageScanner._emba_resolve_severity("", "3.0") == "LOW"
+
+    def test_numeric_none(self):
+        assert ImageScanner._emba_resolve_severity("", "0.0") == "NONE"
+
+    def test_unknown_when_no_info(self):
+        assert ImageScanner._emba_resolve_severity("", "") == "UNKNOWN"
+
+
+class TestRunEmba:
+    def _make_scanner(self, tmp_path, emba_dir, **cfg_kwargs):
+        cfg = ScanConfig(
+            tool="emba",
+            emba_path=str(emba_dir),
+            severity="LOW",
+            **cfg_kwargs,
+        )
+        return ImageScanner(cfg, str(tmp_path))
+
+    def _setup_emba_dir(self, tmp_path):
+        """Create a minimal fake EMBA directory with the emba script."""
+        emba_dir = tmp_path / "emba"
+        emba_dir.mkdir()
+        emba_script = emba_dir / "emba"
+        emba_script.write_text("#!/bin/bash\necho 'fake emba'\n")
+        emba_script.chmod(0o755)
+        return emba_dir
+
+    def _setup_emba_output(self, emba_log_dir):
+        """Populate a fake EMBA log directory with expected output files."""
+        csv_dir = emba_log_dir / "csv_logs"
+        csv_dir.mkdir(parents=True)
+        csv_file = csv_dir / "f20_vul_aggregator.csv"
+        csv_file.write_text(EMBA_CVE_CSV)
+
+        sbom_dir = emba_log_dir / "sbom"
+        sbom_dir.mkdir()
+        (sbom_dir / "EMBA_cyclonedx_sbom.json").write_text(EMBA_SBOM_JSON)
+        return csv_file
+
+    def test_run_emba_parses_findings_and_sbom(self, tmp_path):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        scanner = self._make_scanner(tmp_path, emba_dir)
+
+        artifact = tmp_path / "firmware.tar.gz"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            # Derive the emba_log_dir from the command (-l argument)
+            l_idx = cmd.index("-l")
+            log_dir = Path(cmd[l_idx + 1])
+            self._setup_emba_output(log_dir)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            findings, sbom, report_files = scanner._run_emba(artifact, output_dir)
+
+        assert len(findings) > 0
+        assert any(f.cve_id == "CVE-2022-28391" for f in findings)
+        assert sbom is not None
+        assert sbom.component_count == 3
+        assert sbom.sbom_format == "cyclonedx"
+
+    def test_exits_when_emba_path_not_set(self, tmp_path):
+        cfg = ScanConfig(tool="emba", emba_path=None)
+        scanner = ImageScanner(cfg, str(tmp_path))
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        with pytest.raises(SystemExit):
+            scanner._run_emba(artifact, tmp_path)
+
+    def test_exits_when_emba_script_missing(self, tmp_path):
+        emba_dir = tmp_path / "emba-missing"
+        emba_dir.mkdir()
+        cfg = ScanConfig(tool="emba", emba_path=str(emba_dir))
+        scanner = ImageScanner(cfg, str(tmp_path))
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        with pytest.raises(SystemExit):
+            scanner._run_emba(artifact, tmp_path)
+
+    def test_uses_sudo_when_configured(self, tmp_path):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        scanner = self._make_scanner(tmp_path, emba_dir, emba_use_sudo=True)
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            l_idx = cmd.index("-l")
+            log_dir = Path(cmd[l_idx + 1])
+            self._setup_emba_output(log_dir)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_emba(artifact, output_dir)
+
+        assert captured_cmd[0] == "sudo"
+
+    def test_no_docker_flag_added_when_configured(self, tmp_path):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        scanner = self._make_scanner(tmp_path, emba_dir, emba_no_docker=True)
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            l_idx = cmd.index("-l")
+            log_dir = Path(cmd[l_idx + 1])
+            self._setup_emba_output(log_dir)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_emba(artifact, output_dir)
+
+        assert "-D" in captured_cmd
+
+    def test_profile_flag_added_when_configured(self, tmp_path):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        profile_path = str(emba_dir / "scan-profiles" / "default-scan.emba")
+        scanner = self._make_scanner(tmp_path, emba_dir, emba_profile=profile_path)
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            l_idx = cmd.index("-l")
+            log_dir = Path(cmd[l_idx + 1])
+            self._setup_emba_output(log_dir)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_emba(artifact, output_dir)
+
+        assert "-p" in captured_cmd
+        assert profile_path in captured_cmd
+
+    def test_timeout_returns_empty_on_expiry(self, tmp_path, caplog):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        scanner = self._make_scanner(tmp_path, emba_dir, emba_timeout_minutes=1)
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="emba", timeout=60)):
+            with caplog.at_level(logging.ERROR, logger="ImageScanner"):
+                findings, sbom, report_files = scanner._run_emba(artifact, output_dir)
+
+        assert findings == []
+        assert sbom is None
+        assert report_files == []
+        assert any("timed out" in r.message for r in caplog.records)
+
+    def test_warns_when_no_csv_produced(self, tmp_path, caplog):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        scanner = self._make_scanner(tmp_path, emba_dir)
+        artifact = tmp_path / "fw.tar.gz"
+        artifact.write_bytes(b"x")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            # Do NOT create any output files — simulate no CSV
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            with patch("subprocess.run", side_effect=fake_run):
+                findings, sbom, report_files = scanner._run_emba(artifact, output_dir)
+
+        assert findings == []
+        assert any("no CVE CSV" in r.message for r in caplog.records)
+
+    def test_scan_dispatch_calls_run_emba(self, tmp_path):
+        emba_dir = self._setup_emba_dir(tmp_path)
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        artifact = images_dir / "fw.rootfs.tar.gz"
+        artifact.write_bytes(b"x")
+
+        cfg = ScanConfig(
+            tool="emba",
+            emba_path=str(emba_dir),
+            artifact_dirs=["tmp/deploy/images"],
+            artifact_patterns=["**/*.rootfs.tar.gz"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch.object(scanner, "_run_emba", return_value=(
+            [ScanFinding("CVE-1", "HIGH", "pkg", "1.0")],
+            SbomResult(path=tmp_path / "sbom.json", sbom_format="cyclonedx", component_count=2),
+            [tmp_path / "report.csv"],
+        )) as mock_emba:
+            result = scanner.scan()
+
+        mock_emba.assert_called_once()
+        assert result.total_count == 1
