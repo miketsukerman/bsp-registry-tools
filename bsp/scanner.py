@@ -482,7 +482,15 @@ class ImageScanner:
         # 2. Auto-infer --os-family so Trivy activates OS-package analyzers
         #    even when the image lacks standard OS-detection markers.
         pkgdb = _TarballPkgDbInfo(present=[], indicator_only=[])
-        if artifact_path.suffix in (".gz", ".bz2", ".xz"):
+        # Check for compound tarball extensions (.tar.gz, .rootfs.tar.gz, etc.)
+        # by looking for a .tar component anywhere before the compression suffix.
+        _name = artifact_path.name
+        _is_tarball = (
+            _name.endswith(".tar.gz")
+            or _name.endswith(".tar.bz2")
+            or _name.endswith(".tar.xz")
+        )
+        if _is_tarball:
             pkgdb = self._inspect_tarball_pkgdb(artifact_path)
             self._warn_pkgdb(artifact_path, pkgdb)
 
