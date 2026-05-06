@@ -657,6 +657,22 @@ class ScanConfig:
         upload: When ``True``, upload scan reports to the same cloud
                 storage as ``deploy`` (uses the active ``DeployConfig``).
                 Default: ``False``.
+        trivy_os_family: Override Trivy's OS-family detection.  Yocto
+                         images often lack the standard ``/etc/os-release``
+                         markers that Trivy uses to identify the
+                         distribution and activate OS-package analyzers
+                         (dpkg, rpm, apk).  Without this override, Trivy
+                         skips OS-package scanning and the SBOM is empty
+                         even when ``/var/lib/dpkg/status`` is present.
+                         The scanner auto-infers this value from the
+                         package database found in the rootfs (``"debian"``
+                         for dpkg, ``"alpine"`` for apk, ``"centos"`` for
+                         rpm); set it explicitly only to override the
+                         inferred value.  Example: ``"debian"``.
+        trivy_os_version: Override Trivy's OS-version detection.  Only
+                          needed together with ``trivy_os_family`` when
+                          Trivy's CVE-to-package mapping requires a specific
+                          distribution version.  Example: ``"12"``.
     """
     tool: str = "trivy"
     severity: str = "HIGH"
@@ -676,6 +692,8 @@ class ScanConfig:
         "tmp/deploy/images",
     ])
     upload: bool = False
+    trivy_os_family: Optional[str] = None
+    trivy_os_version: Optional[str] = None
 
 
 @dataclass

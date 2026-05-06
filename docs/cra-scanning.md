@@ -146,39 +146,53 @@ Even when the format is correct (e.g. `.rootfs.tar.gz`), you may see an SBOM wit
 **`"components": []`**.  The scanner performs a lightweight pre-scan inspection of the
 tarball and emits a targeted `WARNING` explaining the exact cause.
 
-#### Case 1 — `dpkg/info` present, `dpkg/status` absent or empty
+#### Case 1 — `dpkg/status` present but Trivy still produces an empty SBOM
+
+**Why it happens:**  Trivy requires OS detection (reading `/etc/os-release` or
+similar) to decide which package-manager analyzers to activate.  Standard Yocto
+images do not include the Debian/Ubuntu OS markers that Trivy expects, so the dpkg
+analyzer is never invoked — even when `/var/lib/dpkg/status` is fully populated.
+
+**Fix (automatic):**  The scanner automatically detects which package database is
+present in the tarball and passes `--os-family debian` (or `alpine`/`centos` for apk/
+rpm) to Trivy.  No configuration change is needed.
+
+**Manual override** (if the auto-inferred family is wrong):
+```yaml
+scan:
+  tool: trivy
+  trivy_os_family: debian   # force Trivy to use the dpkg analyzer
+  trivy_os_version: "12"    # optional: also pin the distro version for CVE matching
+```
+
+#### Case 2 — `dpkg/info` present, `dpkg/status` absent or empty
 
 **Symptom (scanner warning):**
 ```
 WARNING: The rootfs 'imx-image-core.rootfs.tar.gz' contains the dpkg package directory
 (var/lib/dpkg/info) but the package database (var/lib/dpkg/status) is absent or empty.
-Trivy reads only var/lib/dpkg/status to enumerate packages; without it the SBOM will
-be empty.
 ```
 
-**Why it happens:**  Trivy enumerates dpkg-managed packages exclusively from
-`/var/lib/dpkg/status`.  The `info/` directory contains per-package scripts and file
-lists, but **not** the package index.  Yocto assembles `status` from per-package
-fragments during the `do_rootfs` task.  If the build is incremental or partially
-cached, this merge step can be skipped, leaving `status` absent or zero-byte while
-`info/` is still populated from an earlier run.
+**Why it happens:**  Yocto assembles `status` from per-package fragments during
+`do_rootfs`.  If the build is incremental or partially cached, this merge step can be
+skipped, leaving `status` absent or zero-byte while `info/` is still populated.
 
 **Fix:**  Perform a clean build to force Yocto to regenerate `status`:
 ```bash
 bitbake -c clean <image-recipe>
 bitbake <image-recipe>
 ```
-If the problem recurs, also verify that `IMAGE_FEATURES += "package-management"` is
-present in your image recipe — this ensures Yocto retains the dpkg database in the
-final rootfs rather than stripping it during image assembly.
+Also verify that `IMAGE_FEATURES += "package-management"` is present so Yocto retains
+the dpkg database in the final rootfs.
 
-#### Case 2 — opkg database stripped (no `var/lib/opkg/status`)
+#### Case 3 — opkg database stripped (no `var/lib/opkg/status`)
 
 **Why it happens:**  Yocto images using `opkg` often strip `/var/lib/opkg/status` to
 save space.  Add `IMAGE_FEATURES += "package-management"` to your image recipe to
-retain it.
+retain it.  Note that Trivy has no opkg support regardless of `trivy_os_family`; use
+`tool: syft+grype` for opkg-based images.
 
-#### Case 3 — No recognisable package-manager database at all
+#### Case 4 — No recognisable package-manager database at all
 
 The scanner checks for dpkg, opkg, apk, and rpm databases.  If none are found it
 emits a generic warning and recommends switching to `syft+grype`, which has broader

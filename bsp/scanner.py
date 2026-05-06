@@ -76,6 +76,18 @@ _PKGDB_INDICATORS: Dict[str, str] = {
     "opkg": "var/lib/opkg/info",
 }
 
+# Trivy's --os-family value to auto-apply when the corresponding package
+# manager database is detected but no OS markers (e.g. /etc/os-release) are
+# present.  Without this, Trivy skips OS-package analyzers entirely and
+# produces an empty SBOM even when the database file is readable.
+# opkg is intentionally absent: Trivy has no opkg support regardless of
+# --os-family, so switch to syft+grype for opkg images.
+_PKGDB_TO_OS_FAMILY: Dict[str, str] = {
+    "dpkg": "debian",
+    "apk":  "alpine",
+    "rpm":  "centos",
+}
+
 
 @dataclass
 class _TarballPkgDbInfo:
@@ -306,19 +318,6 @@ class ImageScanner:
                 return suffix
         return None
 
-    # ------------------------------------------------------------------
-    # Trivy backend
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _trivy_unsupported_suffix(artifact_path: Path) -> Optional[str]:
-        """Return the matched unsupported suffix string, or ``None`` if the format is fine."""
-        name = artifact_path.name
-        for suffix in _TRIVY_UNSUPPORTED_SUFFIXES:
-            if name.endswith(suffix):
-                return suffix
-        return None
-
     @staticmethod
     def _inspect_tarball_pkgdb(artifact_path: Path) -> "_TarballPkgDbInfo":
         """
@@ -414,6 +413,43 @@ class ImageScanner:
                 ", ".join(_PKGDB_REQUIRED.keys()),
             )
 
+    def _resolve_trivy_os_family(
+        self,
+        pkgdb: "_TarballPkgDbInfo",
+    ) -> Optional[str]:
+        """
+        Determine the ``--os-family`` value to pass to Trivy.
+
+        Trivy requires OS detection (typically via ``/etc/os-release``) to
+        activate OS-package analyzers (dpkg, apk, rpm).  Yocto images usually
+        lack standard Debian/Alpine/RPM OS markers, so Trivy never runs the
+        analyzer and the SBOM is empty even when the package database is
+        present and fully populated.
+
+        Resolution order:
+        1. Explicit ``scan.trivy_os_family`` in the registry config.
+        2. Auto-inferred from the package database detected in the tarball.
+        3. ``None`` (no flag added — Trivy relies on its own OS detection).
+
+        Returns the resolved os-family string, or ``None`` if nothing could
+        be determined.
+        """
+        if self.config.trivy_os_family:
+            return self.config.trivy_os_family
+
+        for mgr in pkgdb.present:
+            inferred = _PKGDB_TO_OS_FAMILY.get(mgr)
+            if inferred:
+                self.logger.info(
+                    "Auto-inferred '--os-family %s' from detected %s package database. "
+                    "Set 'trivy_os_family' in the scan config to override.",
+                    inferred,
+                    mgr,
+                )
+                return inferred
+
+        return None
+
     def _run_trivy(
         self,
         artifact_path: Path,
@@ -440,12 +476,19 @@ class ImageScanner:
             return [], None, []
 
         # Inspect the tarball for package-manager databases before invoking
-        # Trivy.  This allows us to emit a precise, actionable warning when
-        # a required database file is absent (e.g. dpkg info/ present but
-        # status file missing) rather than silently producing an empty SBOM.
+        # Trivy.  This allows us to:
+        # 1. Emit a precise, actionable warning when a required database file
+        #    is absent (e.g. dpkg info/ present but status file missing).
+        # 2. Auto-infer --os-family so Trivy activates OS-package analyzers
+        #    even when the image lacks standard OS-detection markers.
+        pkgdb = _TarballPkgDbInfo(present=[], indicator_only=[])
         if artifact_path.suffix in (".gz", ".bz2", ".xz"):
             pkgdb = self._inspect_tarball_pkgdb(artifact_path)
             self._warn_pkgdb(artifact_path, pkgdb)
+
+        # Resolve OS family — may be explicit (config) or auto-inferred.
+        os_family = self._resolve_trivy_os_family(pkgdb)
+        os_version = self.config.trivy_os_version or None
 
         stem = artifact_path.stem.replace(".", "_")
         report_path = output_dir / f"trivy-{stem}.json"
@@ -465,6 +508,15 @@ class ImageScanner:
         report_files: List[Path] = []
         sbom_result: Optional[SbomResult] = None
 
+        def _os_flags() -> List[str]:
+            """Return ``--os-family`` / ``--os-version`` flags when set."""
+            flags: List[str] = []
+            if os_family:
+                flags += ["--os-family", os_family]
+            if os_version:
+                flags += ["--os-version", os_version]
+            return flags
+
         # -- CVE scan -------------------------------------------------------
         scan_cmd = [
             "trivy",
@@ -473,6 +525,7 @@ class ImageScanner:
             "--severity", self._severity_filter_str(),
             "--output", str(report_path),
             "--quiet",
+            *_os_flags(),
             str(artifact_path),
         ]
         self.logger.info("Running Trivy CVE scan: %s", " ".join(scan_cmd))
@@ -508,6 +561,7 @@ class ImageScanner:
             # requirements for a full Software Bill of Materials.
             "--list-all-pkgs",
             "--quiet",
+            *_os_flags(),
             str(artifact_path),
         ]
         self.logger.info("Running Trivy SBOM generation: %s", " ".join(sbom_cmd))
