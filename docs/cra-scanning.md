@@ -79,8 +79,8 @@ scan:
                                   # (default: <build_path>/reports/)
   artifact_patterns:              # glob patterns to select image files
     - "**/*.rootfs.tar.gz"
-    - "**/*.wic"
-    - "**/*.wic.gz"
+    - "**/*.rootfs.tar.bz2"
+    - "**/*.ext4"
   artifact_dirs:                  # subdirs under build_path to search
     - "tmp/deploy/images"
   upload: false                   # upload reports to cloud storage (optional)
@@ -109,9 +109,36 @@ registry:
 | `fail_on` | `CRITICAL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `sbom_format` | `cyclonedx` | SBOM format: `cyclonedx`, `spdx-json`, `spdx-tag-value` |
 | `output_dir` | `<build_path>/reports/` | Directory for scan reports and SBOMs |
-| `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.wic`, `**/*.wic.gz`, … | Glob patterns to select image files to scan |
+| `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.rootfs.tar.bz2`, … | Glob patterns to select image files to scan |
 | `artifact_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search |
 | `upload` | `false` | Upload reports to cloud storage (same as `deploy`) |
+
+### Supported artifact formats
+
+`trivy rootfs` (the Trivy scanner backend) can only extract **rootfs tarballs** and
+**raw ext4 images**. Several Yocto output formats are structurally incompatible and
+produce an empty SBOM and zero CVE findings when passed to Trivy.
+
+| Format | Scannable? | Notes |
+|---|---|---|
+| `*.rootfs.tar.gz` / `*.rootfs.tar.bz2` | ✅ Yes | Recommended scan target |
+| `*.tar.gz` / `*.tar.bz2` | ✅ Yes | Generic tarballs |
+| `*.ext4` | ✅ Yes | Raw ext4 filesystem image |
+| `*.sdimg` / `*.rpi-sdimg` | ✅ Yes | Depends on Trivy version |
+| `*.rootfs.tar.zst` / `*.tar.zst` | ❌ No | Zstd not supported by Trivy's archive extractor; silent empty result |
+| `*.wic` and `*.wic.*` | ❌ No | Raw disk image with partition table; Trivy has no WIC/GPT parser |
+
+> **WIC and compressed WIC images** (`.wic`, `.wic.gz`, `.wic.bz2`, `.wic.xz`,
+> `.wic.zst`) can **never** be scanned directly by `trivy rootfs`.  They are raw disk
+> images containing a partition table; Trivy has no partition extractor.  The scanner
+> will log a warning and skip these files automatically.
+>
+> **Zstd-compressed tarballs** (`.tar.zst`, `.rootfs.tar.zst`) are silently accepted
+> by Trivy but yield an empty SBOM because the archive extractor does not support
+> zstd.  The scanner will log a warning and skip them.  Decompress with
+> `zstd -d image.rootfs.tar.zst -o image.rootfs.tar` and add `**/*.rootfs.tar` to
+> `artifact_patterns`, or configure Yocto to produce `.tar.gz` output
+> (`IMAGE_FSTYPES += "tar.gz"`).
 
 ---
 

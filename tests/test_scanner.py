@@ -264,6 +264,18 @@ class TestFindArtifacts:
         cfg = ScanConfig()
         assert all(p.startswith("**/") for p in cfg.artifact_patterns)
 
+    def test_default_patterns_exclude_wic(self):
+        """WIC disk images must not appear in the default patterns (trivy rootfs cannot scan them)."""
+        cfg = ScanConfig()
+        wic_patterns = [p for p in cfg.artifact_patterns if ".wic" in p]
+        assert wic_patterns == [], f"Unexpected WIC patterns in defaults: {wic_patterns}"
+
+    def test_default_patterns_exclude_tar_zst(self):
+        """Zstd-compressed tarballs must not appear in the default patterns."""
+        cfg = ScanConfig()
+        zst_patterns = [p for p in cfg.artifact_patterns if ".zst" in p]
+        assert zst_patterns == [], f"Unexpected .zst patterns in defaults: {zst_patterns}"
+
 
 # =============================================================================
 # ImageScanner._check_tool_availability tests
@@ -328,7 +340,7 @@ class TestRunTrivy:
 
     def test_parses_trivy_findings(self, tmp_path):
         scanner = self._make_scanner(tmp_path)
-        artifact = tmp_path / "core-image.wic"
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
         artifact.write_bytes(b"fake")
         output_dir = tmp_path / "reports"
         output_dir.mkdir()
@@ -356,7 +368,7 @@ class TestRunTrivy:
 
     def test_trivy_sbom_component_count(self, tmp_path):
         scanner = self._make_scanner(tmp_path)
-        artifact = tmp_path / "core-image.wic"
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
         artifact.write_bytes(b"fake")
         output_dir = tmp_path / "reports"
         output_dir.mkdir()
@@ -382,7 +394,7 @@ class TestRunTrivy:
     def test_trivy_handles_missing_report(self, tmp_path):
         """When Trivy doesn't write a report file, parsing returns empty list."""
         scanner = self._make_scanner(tmp_path)
-        artifact = tmp_path / "core-image.wic"
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
         artifact.write_bytes(b"fake")
         output_dir = tmp_path / "reports"
         output_dir.mkdir()
@@ -399,8 +411,62 @@ class TestRunTrivy:
 
 
 # =============================================================================
-# ImageScanner._parse_trivy_json tests
+# ImageScanner._run_trivy — unsupported format skip tests
 # =============================================================================
+
+
+class TestRunTrivyUnsupportedFormats:
+    """Trivy silently produces empty output for WIC and .tar.zst; the scanner
+    must skip them with a WARNING rather than running Trivy and hiding the issue.
+    """
+
+    UNSUPPORTED = [
+        "image.wic",
+        "image.wic.gz",
+        "image.wic.bz2",
+        "image.wic.xz",
+        "image.wic.zst",
+        "image.rootfs.tar.zst",
+        "image.tar.zst",
+    ]
+
+    def _make_scanner(self, tmp_path):
+        return ImageScanner(ScanConfig(), str(tmp_path))
+
+    @pytest.mark.parametrize("filename", UNSUPPORTED)
+    def test_skips_unsupported_format_without_calling_trivy(self, tmp_path, filename):
+        """_run_trivy must return empty results and never invoke subprocess.run."""
+        scanner = self._make_scanner(tmp_path)
+        artifact = tmp_path / filename
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        with patch("subprocess.run") as mock_run:
+            findings, sbom, report_files = scanner._run_trivy(artifact, output_dir)
+
+        mock_run.assert_not_called()
+        assert findings == []
+        assert sbom is None
+        assert report_files == []
+
+    @pytest.mark.parametrize("filename", UNSUPPORTED)
+    def test_logs_warning_for_unsupported_format(self, tmp_path, filename, caplog):
+        """A WARNING log must be emitted explaining why the artifact is skipped."""
+        import logging
+        scanner = self._make_scanner(tmp_path)
+        artifact = tmp_path / filename
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        with patch("subprocess.run"):
+            with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+                scanner._run_trivy(artifact, output_dir)
+
+        assert any("Skipping" in r.message for r in caplog.records), (
+            f"Expected a 'Skipping' warning for {filename}, got: {[r.message for r in caplog.records]}"
+        )
 
 
 class TestParseTrivyJson:
@@ -609,7 +675,7 @@ class TestImageScannerScan:
         cfg = ScanConfig(tool="unknown-tool")
         images_dir = tmp_path / "tmp" / "deploy" / "images"
         images_dir.mkdir(parents=True)
-        (images_dir / "image.wic").write_bytes(b"data")
+        (images_dir / "image.rootfs.tar.gz").write_bytes(b"data")
 
         scanner = ImageScanner(cfg, str(tmp_path))
         with pytest.raises(SystemExit):
@@ -954,7 +1020,8 @@ class TestScanConfigModel:
         assert cfg.sbom_format == "cyclonedx"
         assert cfg.output_dir is None
         assert cfg.upload is False
-        assert "**/*.wic" in cfg.artifact_patterns
+        assert "**/*.rootfs.tar.gz" in cfg.artifact_patterns
+        assert "**/*.rootfs.tar.bz2" in cfg.artifact_patterns
 
     def test_registry_root_has_scan_field(self):
         from bsp.models import RegistryRoot
