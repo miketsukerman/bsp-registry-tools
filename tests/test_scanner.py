@@ -15,6 +15,7 @@ Covers:
 """
 
 import json
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -411,7 +412,6 @@ class TestRunTrivy:
 
     def test_trivy_warns_on_empty_sbom(self, tmp_path, caplog):
         """A WARNING must be emitted when Trivy produces an SBOM with 0 components."""
-        import logging
         scanner = self._make_scanner(tmp_path)
         artifact = tmp_path / "core-image.rootfs.tar.gz"
         artifact.write_bytes(b"fake")
@@ -518,7 +518,6 @@ class TestRunTrivyUnsupportedFormats:
     @pytest.mark.parametrize("filename", UNSUPPORTED)
     def test_logs_warning_for_unsupported_format(self, tmp_path, filename, caplog):
         """A WARNING log must be emitted explaining why the artifact is skipped."""
-        import logging
         scanner = self._make_scanner(tmp_path)
         artifact = tmp_path / filename
         artifact.write_bytes(b"fake")
@@ -658,7 +657,6 @@ class TestRunSyftGrype:
 
     def test_syft_warns_on_empty_sbom(self, tmp_path, caplog):
         """A WARNING must be emitted when Syft produces an SBOM with 0 components."""
-        import logging
         scanner = self._make_scanner(tmp_path)
         artifact = tmp_path / "core-image.rootfs.tar.gz"
         artifact.write_bytes(b"fake")

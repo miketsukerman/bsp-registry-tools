@@ -356,7 +356,9 @@ class ImageScanner:
             "rootfs",
             "--format", trivy_sbom_format,
             "--output", str(sbom_path),
-            # Include all detected packages, not only those with known CVEs.
+            # Without --list-all-pkgs Trivy omits packages that have no known
+            # CVEs, producing an incomplete SBOM that does not meet CRA
+            # requirements for a full Software Bill of Materials.
             "--list-all-pkgs",
             "--quiet",
             str(artifact_path),
