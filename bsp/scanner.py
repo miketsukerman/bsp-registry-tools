@@ -1,27 +1,36 @@
 """
-CRA image scanner: runs Trivy or Syft+Grype against Yocto build artifacts.
+CRA image scanner: runs Trivy, Syft+Grype, or EMBA against Yocto build artifacts.
 
 This module supports the EU Cyber Resilience Act (CRA) requirements for:
 - Software Bill of Materials (SBOM) generation
 - CVE/vulnerability assessment of embedded Linux images
 
-Two scanner backends are supported:
+Three scanner backends are supported:
 - **Trivy** (default): ``trivy fs``/``trivy rootfs`` for CVE scanning plus
   ``trivy sbom`` for SBOM generation.
 - **Syft + Grype**: ``syft`` for SBOM generation and ``grype`` for CVE
   matching against the generated SBOM.
+- **EMBA**: comprehensive firmware security analyser that performs binary-level
+  CVE detection without requiring a package-manager database.  Produces a
+  CycloneDX SBOM and CSV CVE reports.
 
-Both backends are external CLI tools; neither is a Python dependency.
+Trivy and Syft/Grype are external CLI tools; neither is a Python dependency.
 Install instructions for Trivy: https://trivy.dev/latest/getting-started/installation/
 Install instructions for Syft/Grype: https://github.com/anchore/syft / https://github.com/anchore/grype
+
+EMBA must be cloned from GitHub and set up separately; it is not a pip package.
+Install instructions: https://github.com/e-m-b-a/emba/wiki/Installation
+Docker image: embeddedanalyzer/emba
 """
 
+import csv
 import json
 import logging
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -245,9 +254,16 @@ class ImageScanner:
                 if sbom:
                     result.sboms.append(sbom)
                 result.report_files.extend(report_files)
+        elif tool == "emba":
+            for artifact in artifacts:
+                findings, sbom, report_files = self._run_emba(artifact, output_dir)
+                result.findings.extend(findings)
+                if sbom:
+                    result.sboms.append(sbom)
+                result.report_files.extend(report_files)
         else:
             self.logger.error(
-                "Unknown scan tool '%s'. Supported tools: trivy, syft+grype.",
+                "Unknown scan tool '%s'. Supported tools: trivy, syft+grype, emba.",
                 self.config.tool,
             )
             sys.exit(1)
@@ -783,6 +799,282 @@ class ImageScanner:
                 return len(data.get("components", data.get("packages", [])))
             # spdx-tag-value
             return text.count("PackageName:")
+        except (OSError, json.JSONDecodeError):
+            return 0
+
+    # ------------------------------------------------------------------
+    # EMBA backend
+    # ------------------------------------------------------------------
+
+    def _run_emba(
+        self,
+        artifact_path: Path,
+        output_dir: Path,
+    ) -> tuple:
+        """
+        Run EMBA against *artifact_path*.
+
+        EMBA is a comprehensive Bash-based firmware security analyser
+        (https://github.com/e-m-b-a/emba) that performs binary-level CVE
+        detection without requiring a package-manager database in the image.
+
+        Unlike Trivy and Grype, EMBA:
+        - Is **not** available as a ``$PATH`` tool; its install path must be
+          configured via ``scan.emba_path``.
+        - Produces output in a **log directory** (``-l``), not a single
+          report file.  The CycloneDX SBOM is at
+          ``<log_dir>/sbom/EMBA_cyclonedx_sbom.json`` and CVE findings are
+          in ``<log_dir>/csv_logs/f20_vul_aggregator.csv``.
+        - Takes significantly longer than Trivy (15–60+ minutes for a full
+          scan).
+
+        Returns:
+            Tuple of ``(findings, sbom_result_or_None, report_files)``.
+        """
+        emba_path = self.config.emba_path
+        if not emba_path:
+            self.logger.error(
+                "EMBA backend requires 'emba_path' to be set in the scan config. "
+                "Example: scan:\n"
+                "  tool: emba\n"
+                "  emba_path: /opt/emba"
+            )
+            sys.exit(1)
+
+        emba_script = Path(emba_path) / "emba"
+        if not emba_script.is_file():
+            self.logger.error(
+                "EMBA script not found at '%s'. "
+                "Clone EMBA from https://github.com/e-m-b-a/emba and set "
+                "'emba_path' to the directory containing the 'emba' script.",
+                emba_script,
+            )
+            sys.exit(1)
+
+        # EMBA writes all output to its own log directory; use a
+        # per-artifact subdirectory under output_dir.
+        stem = artifact_path.stem.replace(".", "_")
+        emba_log_dir = output_dir / f"emba-{stem}"
+        emba_log_dir.mkdir(parents=True, exist_ok=True)
+
+        cmd: List[str] = []
+        if self.config.emba_use_sudo:
+            cmd.append("sudo")
+        cmd += [
+            str(emba_script),
+            "-f", str(artifact_path),
+            "-l", str(emba_log_dir),
+            # Suppress interactive output
+            "-z",
+            # Generate grepable log (used internally for diagnostics)
+            "-g",
+        ]
+        if self.config.emba_no_docker:
+            cmd.append("-D")
+        if self.config.emba_profile:
+            cmd += ["-p", str(self.config.emba_profile)]
+        if self.config.emba_extra_args:
+            cmd += self.config.emba_extra_args.split()
+
+        self.logger.info("Running EMBA firmware scan: %s", " ".join(cmd))
+        timeout_seconds = self.config.emba_timeout_minutes * 60
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+            if proc.returncode not in (0, 1):
+                self.logger.warning(
+                    "EMBA exited with code %d for %s.\nstderr: %s",
+                    proc.returncode,
+                    artifact_path,
+                    proc.stderr,
+                )
+        except subprocess.TimeoutExpired:
+            self.logger.error(
+                "EMBA scan timed out after %d minutes for '%s'. "
+                "Increase 'emba_timeout_minutes' in the scan config or use "
+                "a lighter scan profile.",
+                self.config.emba_timeout_minutes,
+                artifact_path.name,
+            )
+            return [], None, []
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.logger.error("Failed to run EMBA: %s", exc)
+            return [], None, []
+
+        findings: List[ScanFinding] = []
+        report_files: List[Path] = []
+        sbom_result: Optional[SbomResult] = None
+
+        # -- Parse CVE findings from EMBA's vulnerability aggregator CSV ------
+        # EMBA writes f20_vul_aggregator.csv (primary) or falls back to
+        # f17_cve_bin_tool.csv for binary-level findings.
+        cve_csv_candidates = [
+            emba_log_dir / "csv_logs" / "f20_vul_aggregator.csv",
+            emba_log_dir / "csv_logs" / "f17_cve_bin_tool.csv",
+        ]
+        for cve_csv in cve_csv_candidates:
+            if cve_csv.exists() and cve_csv.stat().st_size > 0:
+                findings = self._parse_emba_csv(cve_csv)
+                report_files.append(cve_csv)
+                self.logger.info(
+                    "Parsed %d CVE findings from '%s'.",
+                    len(findings),
+                    cve_csv.name,
+                )
+                break
+        else:
+            self.logger.warning(
+                "EMBA produced no CVE CSV report under '%s'. "
+                "The scan may have completed without findings, or the chosen "
+                "profile does not include the vulnerability aggregator module.",
+                emba_log_dir / "csv_logs",
+            )
+
+        # -- Parse SBOM from EMBA's CycloneDX output --------------------------
+        sbom_path = emba_log_dir / "sbom" / "EMBA_cyclonedx_sbom.json"
+        if sbom_path.exists() and sbom_path.stat().st_size > 0:
+            component_count = self._count_emba_sbom_components(sbom_path)
+            # Copy the SBOM into the output_dir alongside other reports.
+            dest_sbom = output_dir / f"sbom-emba-{stem}.cdx.json"
+            try:
+                dest_sbom.write_bytes(sbom_path.read_bytes())
+                sbom_result = SbomResult(
+                    path=dest_sbom,
+                    sbom_format="cyclonedx",
+                    component_count=component_count,
+                )
+                report_files.append(dest_sbom)
+            except OSError as exc:
+                self.logger.warning("Could not copy EMBA SBOM to output dir: %s", exc)
+        else:
+            self.logger.warning(
+                "EMBA did not produce a CycloneDX SBOM at '%s'. "
+                "Ensure the scan profile includes the F15 SBOM module.",
+                sbom_path,
+            )
+
+        return findings, sbom_result, report_files
+
+    def _parse_emba_csv(self, csv_path: Path) -> List[ScanFinding]:
+        """
+        Parse an EMBA vulnerability CSV report into :class:`ScanFinding` objects.
+
+        EMBA writes two relevant CSV files:
+
+        * ``f20_vul_aggregator.csv`` — consolidated aggregator.  The columns
+          used here are (in order): ``PACKAGE``, ``VERSION``, ``CVE_ID``,
+          ``CVSS_SCORE``, ``SEVERITY``, ``EXPLOIT``.  All fields after the
+          first six are ignored.
+        * ``f17_cve_bin_tool.csv`` — binary-level findings from cve-bin-tool.
+          Same column layout.
+
+        Severity values in EMBA CSVs may be textual (``"HIGH"``, ``"MEDIUM"``,
+        etc.) or numeric CVSS scores.  Numeric scores are converted using the
+        standard CVSS v3 ranges:
+
+        * 0.0 → ``"NONE"``
+        * 0.1–3.9 → ``"LOW"``
+        * 4.0–6.9 → ``"MEDIUM"``
+        * 7.0–8.9 → ``"HIGH"``
+        * 9.0–10.0 → ``"CRITICAL"``
+
+        Findings below the configured minimum severity are filtered out.
+        """
+        min_severity_idx = (
+            _SEVERITY_ORDER.index(self.config.severity.upper())
+            if self.config.severity.upper() in _SEVERITY_ORDER
+            else 0
+        )
+
+        findings: List[ScanFinding] = []
+        try:
+            text = csv_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            self.logger.warning("Could not read EMBA CSV report %s: %s", csv_path, exc)
+            return []
+
+        try:
+            reader = csv.reader(text.splitlines(), delimiter=";")
+            for row in reader:
+                if not row:
+                    continue
+                # Skip header rows: first cell is "PACKAGE" / "package" / etc.
+                if row[0].strip().upper() in ("PACKAGE", "BINARY", "#"):
+                    continue
+                if len(row) < 3:
+                    continue
+
+                package_name = row[0].strip()
+                package_version = row[1].strip() if len(row) > 1 else ""
+                cve_id = row[2].strip() if len(row) > 2 else ""
+
+                # Column 4 (index 3) is CVSS score; column 5 (index 4) is
+                # textual severity.  Either or both may be absent.
+                cvss_raw = row[3].strip() if len(row) > 3 else ""
+                sev_raw = row[4].strip().upper() if len(row) > 4 else ""
+
+                severity = self._emba_resolve_severity(sev_raw, cvss_raw)
+
+                sev_idx = (
+                    _SEVERITY_ORDER.index(severity)
+                    if severity in _SEVERITY_ORDER
+                    else 0
+                )
+                if sev_idx < min_severity_idx:
+                    continue
+
+                if not cve_id:
+                    continue
+
+                findings.append(ScanFinding(
+                    cve_id=cve_id,
+                    severity=severity,
+                    package_name=package_name,
+                    package_version=package_version,
+                ))
+        except csv.Error as exc:
+            self.logger.warning("CSV parse error in %s: %s", csv_path, exc)
+
+        return findings
+
+    @staticmethod
+    def _emba_resolve_severity(sev_text: str, cvss_raw: str) -> str:
+        """
+        Resolve a textual or numeric CVSS severity to a canonical level.
+
+        Prefers the textual severity when it is a recognised level.  Falls
+        back to deriving the level from the numeric CVSS score.
+        """
+        canonical = {"NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+        if sev_text in canonical:
+            return sev_text
+
+        # Try to parse a numeric CVSS score.
+        try:
+            score = float(cvss_raw)
+        except (ValueError, TypeError):
+            return "UNKNOWN"
+
+        if score >= 9.0:
+            return "CRITICAL"
+        if score >= 7.0:
+            return "HIGH"
+        if score >= 4.0:
+            return "MEDIUM"
+        if score > 0.0:
+            return "LOW"
+        return "NONE"
+
+    def _count_emba_sbom_components(self, sbom_path: Path) -> int:
+        """Return the number of components in an EMBA CycloneDX SBOM (best-effort)."""
+        try:
+            data = json.loads(sbom_path.read_text(encoding="utf-8"))
+            return len(data.get("components", []))
         except (OSError, json.JSONDecodeError):
             return 0
 

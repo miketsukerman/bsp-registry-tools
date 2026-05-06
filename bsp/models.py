@@ -635,7 +635,7 @@ class ScanConfig:
 
     Attributes:
         tool: Scanner backend to use.  Supported values: ``"trivy"``
-              (default), ``"syft+grype"``.
+              (default), ``"syft+grype"``, ``"emba"``.
         severity: Minimum CVE severity to include in the report.
                   Supported values (inclusive): ``"LOW"``, ``"MEDIUM"``,
                   ``"HIGH"`` (default), ``"CRITICAL"``.
@@ -673,6 +673,31 @@ class ScanConfig:
                           needed together with ``trivy_os_family`` when
                           Trivy's CVE-to-package mapping requires a specific
                           distribution version.  Example: ``"12"``.
+        emba_path: Path to the EMBA installation directory (the directory
+                   containing the ``emba`` script).  Required when
+                   ``tool: emba``; EMBA is not available as a ``$PATH``
+                   tool.  Example: ``"/opt/emba"``.
+        emba_profile: Path to an EMBA scan profile file (``*.emba``).
+                      When ``None``, EMBA runs with its built-in defaults.
+                      Use EMBA's bundled profiles such as
+                      ``scan-profiles/default-scan.emba`` for a balanced
+                      run.  Example: ``"/opt/emba/scan-profiles/default-scan.emba"``.
+        emba_extra_args: Additional command-line arguments forwarded
+                         verbatim to EMBA (e.g. ``"-t"`` for multi-thread
+                         mode or ``"-Y vendor-name"``).  Arguments are
+                         split by whitespace.  Default: ``None``.
+        emba_timeout_minutes: Maximum number of minutes to wait for an
+                              EMBA scan to complete before aborting with
+                              an error.  EMBA full scans can take
+                              15–60+ minutes.  Default: ``120``.
+        emba_use_sudo: Run EMBA under ``sudo``.  Some EMBA modules
+                       (QEMU emulation, bind mounts) require root
+                       privileges.  Default: ``False``.
+        emba_no_docker: Pass the ``-D`` flag to EMBA, which disables
+                        EMBA's built-in Docker wrapper and runs all
+                        modules directly on the host.  Required in CI
+                        environments that cannot run nested Docker
+                        containers.  Default: ``False``.
     """
     tool: str = "trivy"
     severity: str = "HIGH"
@@ -694,6 +719,12 @@ class ScanConfig:
     upload: bool = False
     trivy_os_family: Optional[str] = None
     trivy_os_version: Optional[str] = None
+    emba_path: Optional[str] = None
+    emba_profile: Optional[str] = None
+    emba_extra_args: Optional[str] = None
+    emba_timeout_minutes: int = 120
+    emba_use_sudo: bool = False
+    emba_no_docker: bool = False
 
 
 @dataclass

@@ -15,8 +15,11 @@ The primary tool for this in the embedded / Yocto ecosystem is
 [**Trivy**](https://trivy.dev/) (Aqua Security), which can scan Yocto rootfs
 tarballs and WIC images, generate SBOMs (CycloneDX, SPDX), and report CVEs.  A
 secondary option is [**Syft + Grype**](https://github.com/anchore/) (Anchore).
+A third option is [**EMBA**](https://github.com/e-m-b-a/emba) (Siemens Energy),
+a comprehensive firmware security analyser that performs binary-level CVE
+detection without requiring a package-manager database in the image.
 
-Both tools are **external CLI programs** — they are not Python packages.  See
+All tools are **external CLI programs** — they are not Python packages.  See
 [Prerequisites](#prerequisites) for installation instructions.
 
 ---
@@ -51,6 +54,38 @@ curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
   | sh -s -- -b /usr/local/bin
 ```
 
+### EMBA (binary-level firmware analyser)
+
+EMBA is a Bash-based firmware security framework developed by Siemens Energy.
+Unlike Trivy and Syft+Grype, EMBA analyses binaries directly and does **not**
+require a package-manager database (dpkg/opkg/rpm/apk) to be present in the
+image.  This makes it the right choice for stripped Yocto images where the
+package database has been removed to save space.
+
+EMBA is **not** available as a package or binary release; it must be cloned and
+set up with its installer:
+
+```bash
+# Clone EMBA
+git clone https://github.com/e-m-b-a/emba /opt/emba
+cd /opt/emba
+
+# Install dependencies (Kali Linux recommended; uses Docker internally)
+sudo ./installer.sh -d
+
+# Verify
+sudo /opt/emba/emba -V
+```
+
+> **Note:** EMBA is tested primarily on Kali Linux.  It can also run in its own
+> Docker container (`embeddedanalyzer/emba`) — see the
+> [EMBA wiki](https://github.com/e-m-b-a/emba/wiki/Installation) for details.
+
+**Scan time:** A full EMBA scan takes 15–60+ minutes per image (it performs
+static analysis, binary extraction, optional QEMU emulation, and CVE matching
+against multiple databases).  Use EMBA as a **scheduled nightly deep-scan**
+rather than a fast CI gate.
+
 ---
 
 ## Registry YAML configuration
@@ -69,7 +104,7 @@ specification:
 # Global scan defaults (applied to every preset unless overridden)
 # -------------------------------------------------------------------
 scan:
-  tool: trivy                     # "trivy" (default) | "syft+grype"
+  tool: trivy                     # "trivy" (default) | "syft+grype" | "emba"
   severity: HIGH                  # minimum CVE severity to report
                                   # LOW | MEDIUM | HIGH (default) | CRITICAL
   fail_on: CRITICAL               # exit non-zero at this severity level
@@ -104,7 +139,7 @@ registry:
 
 | Field | Default | Description |
 |---|---|---|
-| `tool` | `trivy` | Scanner backend: `trivy` or `syft+grype` |
+| `tool` | `trivy` | Scanner backend: `trivy`, `syft+grype`, or `emba` |
 | `severity` | `HIGH` | Minimum CVE severity included in report: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `fail_on` | `CRITICAL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `sbom_format` | `cyclonedx` | SBOM format: `cyclonedx`, `spdx-json`, `spdx-tag-value` |
@@ -112,6 +147,51 @@ registry:
 | `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.rootfs.tar.bz2`, … | Glob patterns to select image files to scan |
 | `artifact_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search |
 | `upload` | `false` | Upload reports to cloud storage (same as `deploy`) |
+| `trivy_os_family` | *(auto)* | Force Trivy OS-family (e.g. `debian`). See [Empty SBOM](#empty-sbom-package-database-missing-or-empty). |
+| `trivy_os_version` | *(none)* | Pin Trivy OS version (e.g. `"12"`). Used with `trivy_os_family`. |
+| `emba_path` | *(required for emba)* | Path to the EMBA installation directory (containing the `emba` script). |
+| `emba_profile` | *(none)* | Path to an EMBA scan profile file (e.g. `/opt/emba/scan-profiles/default-scan.emba`). |
+| `emba_extra_args` | *(none)* | Additional EMBA command-line flags (split by whitespace, e.g. `"-t -Y myvendor"`). |
+| `emba_timeout_minutes` | `120` | Maximum minutes to wait for an EMBA scan before aborting. |
+| `emba_use_sudo` | `false` | Run EMBA under `sudo` (needed for QEMU emulation and bind mounts). |
+| `emba_no_docker` | `false` | Pass `-D` to EMBA (host-only mode, no Docker wrapper). Required in CI with nested Docker restrictions. |
+
+### Configuring the EMBA backend
+
+```yaml
+scan:
+  tool: emba
+  emba_path: /opt/emba                           # required: path to EMBA checkout
+  emba_profile: /opt/emba/scan-profiles/default-scan.emba  # optional but recommended
+  emba_no_docker: true                           # recommended in most CI environments
+  emba_timeout_minutes: 120                      # full scans can take 15–60+ min
+  severity: HIGH
+  fail_on: CRITICAL
+```
+
+> **When to use EMBA instead of Trivy:**
+>
+> | Situation | Recommended tool |
+> |---|---|
+> | Image has dpkg/opkg/rpm database | Trivy or Syft+Grype |
+> | Image strips the package database (`IMAGE_FEATURES` without `package-management`) | **EMBA** |
+> | Fast CI gate (< 5 min) | Trivy |
+> | Nightly deep-scan with binary-level CVE detection | **EMBA** |
+> | Proprietary binary firmware (`.bin`, raw flash) | **EMBA** |
+
+EMBA writes its outputs to a per-artifact subdirectory under `output_dir`:
+
+```
+<output_dir>/
+  emba-<stem>/                       # EMBA log directory for this artifact
+    csv_logs/
+      f20_vul_aggregator.csv         # consolidated CVE findings (parsed by bsp)
+      f17_cve_bin_tool.csv           # binary-level CVE findings (fallback)
+    sbom/
+      EMBA_cyclonedx_sbom.json       # CycloneDX 1.5 SBOM (copied to output_dir)
+    html_report/index.html           # optional HTML web report (if -W was passed)
+  sbom-emba-<stem>.cdx.json         # SBOM copied here for uniform access
+```
 
 ### Supported artifact formats
 
@@ -301,9 +381,12 @@ Files written to `output_dir` (default: `<build_path>/reports/`):
 |---|---|
 | `trivy-<stem>.json` | Trivy CVE vulnerability report (JSON) |
 | `grype-<stem>.json` | Grype CVE vulnerability report (JSON) |
-| `sbom-<stem>.cdx.json` | CycloneDX SBOM |
+| `sbom-<stem>.cdx.json` | CycloneDX SBOM (Trivy, Syft, or EMBA) |
 | `sbom-<stem>.spdx.json` | SPDX-JSON SBOM |
 | `sbom-<stem>.spdx` | SPDX tag-value SBOM |
+| `emba-<stem>/csv_logs/f20_vul_aggregator.csv` | EMBA consolidated CVE findings (CSV) |
+| `emba-<stem>/csv_logs/f17_cve_bin_tool.csv` | EMBA binary-level CVE findings (CSV, fallback) |
+| `sbom-emba-<stem>.cdx.json` | EMBA CycloneDX SBOM (copy of EMBA's output) |
 
 ---
 
