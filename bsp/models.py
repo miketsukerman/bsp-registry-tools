@@ -665,10 +665,7 @@ class ScanConfig:
     output_dir: Optional[str] = None
     artifact_patterns: List[str] = field(default_factory=lambda: [
         "**/*.rootfs.tar.gz",
-        "**/*.wic",
-        "**/*.wic.gz",
-        "**/*.wic.bz2",
-        "**/*.wic.xz",
+        "**/*.rootfs.tar.bz2",
         "**/*.tar.gz",
         "**/*.tar.bz2",
         "**/*.ext4",

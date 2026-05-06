@@ -36,6 +36,26 @@ from .models import ScanConfig
 # Severity levels in increasing order (used for threshold comparisons).
 _SEVERITY_ORDER = ["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
+# Artifact name suffixes that ``trivy rootfs`` cannot extract.
+#
+# WIC images (.wic and any compressed variant) are raw disk images containing a
+# partition table; ``trivy rootfs`` has no partition-table parser and produces an
+# empty SBOM without any error or warning.
+#
+# Zstd-compressed tarballs (.tar.zst, .rootfs.tar.zst) are not supported by the
+# archive extractor shipped with Trivy ≤ 0.70; the file is treated as a plain
+# filesystem path rather than an archive, again yielding empty results.
+#
+# Use ``**/*.rootfs.tar.gz`` or ``**/*.rootfs.tar.bz2`` as the scan target instead.
+_TRIVY_UNSUPPORTED_SUFFIXES: frozenset = frozenset([
+    ".wic",
+    ".wic.gz",
+    ".wic.bz2",
+    ".wic.xz",
+    ".wic.zst",
+    ".tar.zst",
+])
+
 
 @dataclass
 class ScanFinding:
@@ -245,6 +265,15 @@ class ImageScanner:
     # Trivy backend
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _trivy_unsupported_suffix(artifact_path: Path) -> Optional[str]:
+        """Return the matched unsupported suffix string, or ``None`` if the format is fine."""
+        name = artifact_path.name
+        for suffix in _TRIVY_UNSUPPORTED_SUFFIXES:
+            if name.endswith(suffix):
+                return suffix
+        return None
+
     def _run_trivy(
         self,
         artifact_path: Path,
@@ -258,6 +287,18 @@ class ImageScanner:
         Returns:
             Tuple of ``(findings, sbom_result_or_None, report_files)``.
         """
+        bad_suffix = self._trivy_unsupported_suffix(artifact_path)
+        if bad_suffix is not None:
+            self.logger.warning(
+                "Skipping '%s': 'trivy rootfs' cannot scan '*%s' artifacts "
+                "(WIC disk images require partition extraction; zstd-compressed "
+                "tarballs are not supported by the Trivy archive extractor). "
+                "Use a '**/*.rootfs.tar.gz' or '**/*.rootfs.tar.bz2' artifact instead.",
+                artifact_path.name,
+                bad_suffix,
+            )
+            return [], None, []
+
         stem = artifact_path.stem.replace(".", "_")
         report_path = output_dir / f"trivy-{stem}.json"
         sbom_path = output_dir / f"sbom-{stem}.{self._sbom_extension()}"
