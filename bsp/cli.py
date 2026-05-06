@@ -82,6 +82,32 @@ def _collect_gather_overrides(args) -> dict:
     return overrides
 
 
+def _collect_scan_overrides(args) -> dict:
+    """
+    Extract scan-related CLI arguments into a flat scan-override dict.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    tool = getattr(args, "scan_tool", None)
+    if tool is not None:
+        overrides["tool"] = tool
+    severity = getattr(args, "scan_severity", None)
+    if severity is not None:
+        overrides["severity"] = severity
+    fail_on = getattr(args, "scan_fail_on", None)
+    if fail_on is not None:
+        overrides["fail_on"] = fail_on
+    sbom_format = getattr(args, "scan_sbom_format", None)
+    if sbom_format is not None:
+        overrides["sbom_format"] = sbom_format
+    output_dir = getattr(args, "scan_output_dir", None)
+    if output_dir is not None:
+        overrides["output_dir"] = output_dir
+    return overrides
+
+
 # =============================================================================
 # Remotes sub-command dispatcher (no registry loading required)
 # =============================================================================
@@ -390,6 +416,47 @@ def main() -> int:
             dest='build_path',
             metavar='PATH',
             help='Override output build directory path'
+        )
+        build_parser.add_argument(
+            "--scan",
+            action="store_true",
+            dest="scan_after_build",
+            help="Scan built artifacts for CVEs (CRA) after a successful build"
+        )
+        build_parser.add_argument(
+            "--scan-tool",
+            type=str,
+            dest="scan_tool",
+            metavar="TOOL",
+            choices=["trivy", "syft+grype"],
+            default=None,
+            help="Scanner backend to use: trivy (default) or syft+grype"
+        )
+        build_parser.add_argument(
+            "--scan-severity",
+            type=str,
+            dest="scan_severity",
+            metavar="LEVEL",
+            choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Minimum CVE severity to report (default: HIGH)"
+        )
+        build_parser.add_argument(
+            "--scan-fail-on",
+            type=str,
+            dest="scan_fail_on",
+            metavar="LEVEL",
+            choices=["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Exit non-zero if any finding at this severity (default: CRITICAL)"
+        )
+        build_parser.add_argument(
+            "--scan-output-dir",
+            type=str,
+            dest="scan_output_dir",
+            metavar="PATH",
+            default=None,
+            help="Directory to write scan reports and SBOMs into"
         )
 
         # ----------------------------------------------------------------
@@ -722,6 +789,100 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
+        # Scan command (CRA image vulnerability scanning)
+        # ----------------------------------------------------------------
+        scan_parser = subparsers.add_parser(
+            "scan",
+            help="Scan built artifacts for CVEs and generate an SBOM (CRA compliance)"
+        )
+        scan_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset whose artifacts to scan, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        scan_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based scan)"
+        ).completer = DevicesCompleter()
+        scan_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based scan)"
+        ).completer = ReleasesCompleter()
+        scan_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        scan_parser.add_argument(
+            "--tool",
+            type=str,
+            dest="scan_tool",
+            metavar="TOOL",
+            choices=["trivy", "syft+grype"],
+            default=None,
+            help="Scanner backend: trivy (default) or syft+grype"
+        )
+        scan_parser.add_argument(
+            "--severity",
+            type=str,
+            dest="scan_severity",
+            metavar="LEVEL",
+            choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Minimum CVE severity to report (default: HIGH)"
+        )
+        scan_parser.add_argument(
+            "--fail-on",
+            type=str,
+            dest="scan_fail_on",
+            metavar="LEVEL",
+            choices=["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Exit non-zero if any finding at this severity (default: CRITICAL)"
+        )
+        scan_parser.add_argument(
+            "--sbom-format",
+            type=str,
+            dest="scan_sbom_format",
+            metavar="FORMAT",
+            choices=["cyclonedx", "spdx-json", "spdx-tag-value"],
+            default=None,
+            help="SBOM output format (default: cyclonedx)"
+        )
+        scan_parser.add_argument(
+            "--output-dir",
+            type=str,
+            dest="scan_output_dir",
+            metavar="PATH",
+            default=None,
+            help="Directory to write scan reports and SBOMs into"
+        )
+        scan_parser.add_argument(
+            "--image-path",
+            action="append",
+            dest="scan_image_paths",
+            metavar="PATH",
+            default=None,
+            help=(
+                "Explicit artifact file to scan (can be specified multiple times). "
+                "Overrides auto-discovery when provided."
+            )
+        )
+        scan_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="List what would be scanned without actually scanning"
+        )
+
+        # ----------------------------------------------------------------
         # Test command
         # ----------------------------------------------------------------
         test_parser = subparsers.add_parser(
@@ -997,6 +1158,8 @@ def main() -> int:
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
             run_test = getattr(args, "run_test", False)
+            scan_after_build = getattr(args, "scan_after_build", False)
+            scan_overrides = _collect_scan_overrides(args)
             wait = getattr(args, "wait", False)
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
@@ -1017,6 +1180,8 @@ def main() -> int:
                     task=task,
                     build_path_override=build_path,
                     feature_slugs=features,
+                    scan_after_build=scan_after_build,
+                    scan_overrides=scan_overrides,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -1037,6 +1202,8 @@ def main() -> int:
                     target=target,
                     task=task,
                     build_path_override=build_path,
+                    scan_after_build=scan_after_build,
+                    scan_overrides=scan_overrides,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
@@ -1209,6 +1376,38 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 gather_parser.print_help()
+                return 1
+
+        elif args.command == "scan":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            dry_run = getattr(args, "dry_run", False)
+            scan_overrides = _collect_scan_overrides(args)
+            image_paths = getattr(args, "scan_image_paths", None)
+
+            if _check_exclusive(bsp_name, device, release, scan_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.scan_bsp(
+                    bsp_name,
+                    scan_overrides=scan_overrides,
+                    dry_run=dry_run,
+                    image_paths=image_paths,
+                )
+            elif device and release:
+                bsp_mgr.scan_by_components(
+                    device, release, features,
+                    scan_overrides=scan_overrides,
+                    dry_run=dry_run,
+                    image_paths=image_paths,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                scan_parser.print_help()
                 return 1
 
         elif args.command == "test":

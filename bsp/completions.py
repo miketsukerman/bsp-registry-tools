@@ -216,3 +216,22 @@ class RemotesCompleter:
             return [r.name for r in RemotesManager().load()]
         except (Exception, SystemExit):  # pylint: disable=broad-except
             return []
+
+
+
+class ScanToolCompleter:
+    """Complete scanner backend names for ``--tool`` / ``--scan-tool``."""
+
+    _TOOLS = ["trivy", "syft+grype"]
+
+    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
+        return [t for t in self._TOOLS if t.startswith(prefix)]
+
+
+class SeverityCompleter:
+    """Complete CVE severity level names for ``--severity``, ``--fail-on``, etc."""
+
+    _LEVELS = ["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
+        return [lvl for lvl in self._LEVELS if lvl.startswith(prefix.upper())]

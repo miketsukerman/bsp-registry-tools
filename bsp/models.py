@@ -625,6 +625,63 @@ class Feature:
 
 
 @dataclass
+class ScanConfig:
+    """
+    CRA (Cyber Resilience Act) image scanning configuration.
+
+    A ``ScanConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        tool: Scanner backend to use.  Supported values: ``"trivy"``
+              (default), ``"syft+grype"``.
+        severity: Minimum CVE severity to include in the report.
+                  Supported values (inclusive): ``"LOW"``, ``"MEDIUM"``,
+                  ``"HIGH"`` (default), ``"CRITICAL"``.
+        fail_on: Minimum severity that triggers a non-zero exit code.
+                 Supported values: ``"NONE"`` (never fail), ``"LOW"``,
+                 ``"MEDIUM"``, ``"HIGH"``, ``"CRITICAL"`` (default).
+        sbom_format: SBOM output format.  Supported values:
+                     ``"cyclonedx"`` (default), ``"spdx-json"``,
+                     ``"spdx-tag-value"``.
+        output_dir: Directory to write scan reports and SBOMs into.
+                    Defaults to ``"reports"`` relative to the build path
+                    when ``None``.
+        artifact_patterns: Glob patterns (relative to each artifact
+                           directory) that select image files to scan.
+                           Defaults to common Yocto image formats.
+        artifact_dirs: Subdirectories under the build output path to
+                       search for artifacts.  Mirrors
+                       :attr:`DeployConfig.artifact_dirs`.
+        upload: When ``True``, upload scan reports to the same cloud
+                storage as ``deploy`` (uses the active ``DeployConfig``).
+                Default: ``False``.
+    """
+    tool: str = "trivy"
+    severity: str = "HIGH"
+    fail_on: str = "CRITICAL"
+    sbom_format: str = "cyclonedx"
+    output_dir: Optional[str] = None
+    artifact_patterns: List[str] = field(default_factory=lambda: [
+        "*.rootfs.tar.gz",
+        "*.wic",
+        "*.wic.gz",
+        "*.wic.bz2",
+        "*.wic.xz",
+        "*.tar.gz",
+        "*.tar.bz2",
+        "*.ext4",
+        "*.sdimg",
+        "*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+    ])
+    upload: bool = False
+
+
+@dataclass
 class LavaServerConfig:
     """
     LAVA server connection settings (top-level ``lava:`` block in the registry).
@@ -820,6 +877,7 @@ class BspPreset:
     build: Optional[BspBuild] = None
     deploy: Optional["DeployConfig"] = None
     testing: Optional[TestingConfig] = None
+    scan: Optional["ScanConfig"] = None
 
 
 @dataclass
@@ -963,6 +1021,8 @@ class RegistryRoot:
         lava: Optional top-level LAVA server connection settings shared across
               all presets in this registry.  Individual preset ``testing.lava``
               blocks inherit these settings and can override them on the CLI.
+        scan: Optional global CRA image scanning configuration.  Applied to
+              all builds unless overridden by a preset-level ``scan`` block.
     """
     specification: Specification
     registry: Registry
@@ -971,3 +1031,4 @@ class RegistryRoot:
     environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
     deploy: Optional[DeployConfig] = None
     lava: Optional[LavaServerConfig] = None
+    scan: Optional[ScanConfig] = None
