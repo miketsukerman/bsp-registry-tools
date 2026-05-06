@@ -242,6 +242,28 @@ class TestFindArtifacts:
         assert "a.wic" in names
         assert "b.wic" in names
 
+    def test_finds_artifacts_in_machine_subdirectory(self, tmp_path):
+        """Recursive **/* patterns find images in Yocto per-machine subdirs."""
+        machine_dir = tmp_path / "tmp" / "deploy" / "images" / "rsb3720-6g"
+        machine_dir.mkdir(parents=True)
+        (machine_dir / "core-image.wic").write_bytes(b"fake")
+        (machine_dir / "core-image.rootfs.tar.gz").write_bytes(b"fake")
+
+        cfg = ScanConfig(
+            artifact_patterns=["**/*.wic", "**/*.rootfs.tar.gz"],
+            artifact_dirs=["tmp/deploy/images"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+        artifacts = scanner._find_artifacts()
+        names = {a.name for a in artifacts}
+        assert "core-image.wic" in names
+        assert "core-image.rootfs.tar.gz" in names
+
+    def test_default_patterns_are_recursive(self):
+        """Default artifact_patterns should use **/* to handle per-machine subdirs."""
+        cfg = ScanConfig()
+        assert all(p.startswith("**/") for p in cfg.artifact_patterns)
+
 
 # =============================================================================
 # ImageScanner._check_tool_availability tests
@@ -932,7 +954,7 @@ class TestScanConfigModel:
         assert cfg.sbom_format == "cyclonedx"
         assert cfg.output_dir is None
         assert cfg.upload is False
-        assert "*.wic" in cfg.artifact_patterns
+        assert "**/*.wic" in cfg.artifact_patterns
 
     def test_registry_root_has_scan_field(self):
         from bsp.models import RegistryRoot

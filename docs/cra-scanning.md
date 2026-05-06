@@ -78,9 +78,9 @@ scan:
   output_dir: reports/            # output directory for reports and SBOMs
                                   # (default: <build_path>/reports/)
   artifact_patterns:              # glob patterns to select image files
-    - "*.rootfs.tar.gz"
-    - "*.wic"
-    - "*.wic.gz"
+    - "**/*.rootfs.tar.gz"
+    - "**/*.wic"
+    - "**/*.wic.gz"
   artifact_dirs:                  # subdirs under build_path to search
     - "tmp/deploy/images"
   upload: false                   # upload reports to cloud storage (optional)
@@ -109,7 +109,7 @@ registry:
 | `fail_on` | `CRITICAL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
 | `sbom_format` | `cyclonedx` | SBOM format: `cyclonedx`, `spdx-json`, `spdx-tag-value` |
 | `output_dir` | `<build_path>/reports/` | Directory for scan reports and SBOMs |
-| `artifact_patterns` | `*.rootfs.tar.gz`, `*.wic`, `*.wic.gz`, … | Glob patterns to select image files to scan |
+| `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.wic`, `**/*.wic.gz`, … | Glob patterns to select image files to scan |
 | `artifact_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search |
 | `upload` | `false` | Upload reports to cloud storage (same as `deploy`) |
 
