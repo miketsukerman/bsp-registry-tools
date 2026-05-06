@@ -24,13 +24,13 @@ Docker image: embeddedanalyzer/emba
 """
 
 import csv
+import io
 import json
 import logging
 import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -999,7 +999,7 @@ class ImageScanner:
             return []
 
         try:
-            reader = csv.reader(text.splitlines(), delimiter=";")
+            reader = csv.reader(io.StringIO(text), delimiter=";")
             for row in reader:
                 if not row:
                     continue
