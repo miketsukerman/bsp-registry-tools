@@ -140,41 +140,54 @@ produce an empty SBOM and zero CVE findings when passed to Trivy.
 > `artifact_patterns`, or configure Yocto to produce `.tar.gz` output
 > (`IMAGE_FSTYPES += "tar.gz"`).
 
-### Empty SBOM: opkg database stripped from the image
+### Empty SBOM: package database missing or empty
 
 Even when the format is correct (e.g. `.rootfs.tar.gz`), you may see an SBOM with
-**`"components": []`**.  The scanner will emit a `WARNING` in this case.
+**`"components": []`**.  The scanner performs a lightweight pre-scan inspection of the
+tarball and emits a targeted `WARNING` explaining the exact cause.
 
-**Why it happens:**  Both Trivy and Syft enumerate packages by reading the
-package-manager database inside the rootfs (e.g. `/var/lib/opkg/status` for Yocto
-images that use `opkg`).  Production Yocto builds often strip this database from the
-final image to save space, leaving nothing for the scanner to read.
+#### Case 1 — `dpkg/info` present, `dpkg/status` absent or empty
 
-**Fixes:**
+**Symptom (scanner warning):**
+```
+WARNING: The rootfs 'imx-image-core.rootfs.tar.gz' contains the dpkg package directory
+(var/lib/dpkg/info) but the package database (var/lib/dpkg/status) is absent or empty.
+Trivy reads only var/lib/dpkg/status to enumerate packages; without it the SBOM will
+be empty.
+```
 
-1. **Include the package database in the image** _(most complete — recommended for CRA compliance)_:
+**Why it happens:**  Trivy enumerates dpkg-managed packages exclusively from
+`/var/lib/dpkg/status`.  The `info/` directory contains per-package scripts and file
+lists, but **not** the package index.  Yocto assembles `status` from per-package
+fragments during the `do_rootfs` task.  If the build is incremental or partially
+cached, this merge step can be skipped, leaving `status` absent or zero-byte while
+`info/` is still populated from an earlier run.
 
-   ```bitbake
-   # In your image recipe or local.conf
-   IMAGE_FEATURES += "package-management"
-   ```
+**Fix:**  Perform a clean build to force Yocto to regenerate `status`:
+```bash
+bitbake -c clean <image-recipe>
+bitbake <image-recipe>
+```
+If the problem recurs, also verify that `IMAGE_FEATURES += "package-management"` is
+present in your image recipe — this ensures Yocto retains the dpkg database in the
+final rootfs rather than stripping it during image assembly.
 
-   This prevents Yocto from removing `/var/lib/opkg/status` and related files from the
-   final rootfs, giving Trivy/Syft the data they need.
+#### Case 2 — opkg database stripped (no `var/lib/opkg/status`)
 
-2. **Switch to `syft+grype`**:  Syft has a Yocto-aware analyser that can read the
-   build-time package manifest from
-   `<build>/tmp/deploy/licenses/<image>/package.manifest` alongside the rootfs, so it
-   can enumerate packages even without a runtime database:
+**Why it happens:**  Yocto images using `opkg` often strip `/var/lib/opkg/status` to
+save space.  Add `IMAGE_FEATURES += "package-management"` to your image recipe to
+retain it.
 
-   ```yaml
-   scan:
-     tool: syft+grype
-   ```
+#### Case 3 — No recognisable package-manager database at all
 
-3. **Provide the Yocto package manifest path** _(future enhancement — not yet
-   supported)_: Pass the `.package.manifest` file from
-   `tmp/deploy/licenses/<image>/` as an additional `artifact_paths` entry.
+The scanner checks for dpkg, opkg, apk, and rpm databases.  If none are found it
+emits a generic warning and recommends switching to `syft+grype`, which has broader
+Yocto package-manager support:
+
+```yaml
+scan:
+  tool: syft+grype
+```
 
 ---
 
