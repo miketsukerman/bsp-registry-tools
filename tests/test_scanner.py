@@ -29,6 +29,7 @@ from bsp.scanner import (
     ScanFinding,
     ScanResult,
     _SEVERITY_ORDER,
+    _TarballPkgDbInfo,
 )
 
 
@@ -472,6 +473,196 @@ class TestRunTrivy:
         assert sbom_cmds, "No SBOM command was invoked"
         assert "--list-all-pkgs" in sbom_cmds[0], (
             f"--list-all-pkgs not found in SBOM command: {sbom_cmds[0]}"
+        )
+
+
+# =============================================================================
+# ImageScanner._inspect_tarball_pkgdb + _warn_pkgdb tests
+# =============================================================================
+
+
+import io
+import tarfile as _tarfile
+
+
+def _make_tarball(tmp_path: Path, filename: str, members: dict) -> Path:
+    """
+    Build a real .tar.gz at *tmp_path / filename*.
+
+    *members* maps archive member path → content (bytes or None for a
+    directory entry).
+    """
+    p = tmp_path / filename
+    with _tarfile.open(p, "w:gz") as tf:
+        for name, content in members.items():
+            if content is None:
+                info = _tarfile.TarInfo(name=name)
+                info.type = _tarfile.DIRTYPE
+                tf.addfile(info)
+            else:
+                data = content if isinstance(content, bytes) else content.encode()
+                info = _tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+    return p
+
+
+class TestInspectTarballPkgDb:
+    """Unit tests for ImageScanner._inspect_tarball_pkgdb and _warn_pkgdb."""
+
+    def _make_scanner(self, tmp_path):
+        return ImageScanner(ScanConfig(), str(tmp_path))
+
+    # -- _inspect_tarball_pkgdb --------------------------------------------
+
+    def test_dpkg_status_present_and_non_empty(self, tmp_path):
+        """dpkg/status with content → manager listed as 'present'."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/status": b"Package: bash\nStatus: install ok installed\n",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert "dpkg" in info.present
+        assert "dpkg" not in info.indicator_only
+
+    def test_dpkg_info_only_status_absent(self, tmp_path):
+        """dpkg/info present but status absent → indicator_only, not present."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/info/bash.list": b"...",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert "dpkg" not in info.present
+        assert "dpkg" in info.indicator_only
+
+    def test_dpkg_info_only_status_empty(self, tmp_path):
+        """dpkg/status exists but is zero bytes → indicator_only (Trivy ignores empty)."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/info/bash.list": b"...",
+            "./var/lib/dpkg/status": b"",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert "dpkg" not in info.present
+        assert "dpkg" in info.indicator_only
+
+    def test_opkg_status_present(self, tmp_path):
+        """opkg/status with content → present."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/opkg/status": b"Package: bash\nVersion: 1.0\n",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert "opkg" in info.present
+
+    def test_no_package_manager_at_all(self, tmp_path):
+        """Neither a database nor an indicator → both lists empty."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./etc/hostname": b"yocto-board",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert info.present == []
+        assert info.indicator_only == []
+
+    def test_leading_dotslash_normalised(self, tmp_path):
+        """Archive member names with './' prefix are handled correctly."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/status": b"Package: bash\n",
+        })
+        info = ImageScanner._inspect_tarball_pkgdb(tarball)
+        assert "dpkg" in info.present
+
+    def test_unreadable_tarball_returns_unreadable(self, tmp_path):
+        """Non-tar file → unreadable=True, no crash."""
+        bad = tmp_path / "not-a-tar.tar.gz"
+        bad.write_bytes(b"this is not a tarball")
+        info = ImageScanner._inspect_tarball_pkgdb(bad)
+        assert info.unreadable is True
+        assert info.present == []
+        assert info.indicator_only == []
+
+    # -- _warn_pkgdb -------------------------------------------------------
+
+    def test_warn_pkgdb_emits_warning_for_indicator_only(self, tmp_path, caplog):
+        """indicator_only entry → WARNING mentioning the missing status file."""
+        scanner = self._make_scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=[], indicator_only=["dpkg"])
+        artifact = tmp_path / "image.rootfs.tar.gz"
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            scanner._warn_pkgdb(artifact, pkgdb)
+
+        messages = [r.message for r in caplog.records]
+        assert any("dpkg" in m and "status" in m for m in messages), (
+            f"Expected dpkg/status warning, got: {messages}"
+        )
+
+    def test_warn_pkgdb_no_warning_when_present(self, tmp_path, caplog):
+        """When the required database is present, no warning is emitted."""
+        scanner = self._make_scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=["dpkg"], indicator_only=[])
+        artifact = tmp_path / "image.rootfs.tar.gz"
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            scanner._warn_pkgdb(artifact, pkgdb)
+
+        assert not caplog.records
+
+    def test_warn_pkgdb_no_db_at_all(self, tmp_path, caplog):
+        """Neither present nor indicator_only → generic 'no recognisable database' warning."""
+        scanner = self._make_scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=[], indicator_only=[])
+        artifact = tmp_path / "image.rootfs.tar.gz"
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            scanner._warn_pkgdb(artifact, pkgdb)
+
+        messages = [r.message for r in caplog.records]
+        assert any("no recognisable" in m for m in messages), (
+            f"Expected 'no recognisable' warning, got: {messages}"
+        )
+
+    def test_warn_pkgdb_unreadable(self, tmp_path, caplog):
+        """unreadable=True → warning about inability to inspect."""
+        scanner = self._make_scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=[], indicator_only=[], unreadable=True)
+        artifact = tmp_path / "image.rootfs.tar.gz"
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            scanner._warn_pkgdb(artifact, pkgdb)
+
+        messages = [r.message for r in caplog.records]
+        assert any("Could not inspect" in m for m in messages), (
+            f"Expected 'Could not inspect' warning, got: {messages}"
+        )
+
+    def test_run_trivy_calls_inspect_for_gz_tarball(self, tmp_path, caplog):
+        """
+        _run_trivy must call _inspect_tarball_pkgdb for a .tar.gz and emit
+        the targeted dpkg warning when info/ is present but status is absent.
+        """
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/info/bash.list": b"...",
+        })
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = ImageScanner(ScanConfig(), str(tmp_path))
+
+        def fake_run(cmd, **kwargs):
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(json.dumps({"components": []}))
+                else:
+                    Path(out_path).write_text(json.dumps({"Results": []}))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            with patch("subprocess.run", side_effect=fake_run):
+                scanner._run_trivy(tarball, output_dir)
+
+        messages = [r.message for r in caplog.records]
+        assert any("dpkg" in m and "status" in m for m in messages), (
+            f"Expected dpkg/status targeted warning in pre-scan check, got: {messages}"
         )
 
 

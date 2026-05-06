@@ -21,6 +21,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -56,6 +57,36 @@ _TRIVY_UNSUPPORTED_SUFFIXES: frozenset = frozenset([
     ".rootfs.tar.zst",
     ".tar.zst",
 ])
+
+# Package-manager database paths that Trivy recognises inside a rootfs.
+# Keyed by a short human-readable manager name; values are the files/dirs
+# Trivy uses.  The *required* entry is what Trivy actually reads; the
+# *indicator* entry is something that may be present even when *required* is
+# missing (used to produce a more specific diagnostic message).
+_PKGDB_REQUIRED: Dict[str, str] = {
+    "dpkg":  "var/lib/dpkg/status",
+    "opkg":  "var/lib/opkg/status",
+    "apk":   "lib/apk/db/installed",
+    "rpm":   "var/lib/rpm/Packages",
+}
+# Paths whose presence signals a package manager is *configured* even if the
+# main database file is absent (e.g. dpkg info dir without status file).
+_PKGDB_INDICATORS: Dict[str, str] = {
+    "dpkg": "var/lib/dpkg/info",
+    "opkg": "var/lib/opkg/info",
+}
+
+
+@dataclass
+class _TarballPkgDbInfo:
+    """Result of inspecting a tarball for package-manager database files."""
+    # Manager names whose *required* database file is present and non-empty.
+    present: List[str]
+    # Manager names where an *indicator* dir/file is present but the required
+    # database file is absent or empty (missing or zero-byte status file).
+    indicator_only: List[str]
+    # True when the tarball could not be opened for inspection.
+    unreadable: bool = False
 
 
 @dataclass
@@ -275,6 +306,114 @@ class ImageScanner:
                 return suffix
         return None
 
+    # ------------------------------------------------------------------
+    # Trivy backend
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _trivy_unsupported_suffix(artifact_path: Path) -> Optional[str]:
+        """Return the matched unsupported suffix string, or ``None`` if the format is fine."""
+        name = artifact_path.name
+        for suffix in _TRIVY_UNSUPPORTED_SUFFIXES:
+            if name.endswith(suffix):
+                return suffix
+        return None
+
+    @staticmethod
+    def _inspect_tarball_pkgdb(artifact_path: Path) -> "_TarballPkgDbInfo":
+        """
+        Peek inside *artifact_path* (a tar.gz or tar.bz2) to detect which
+        package-manager database files are present.
+
+        This is a lightweight index-only walk (no full extraction) using
+        ``tarfile.getmembers()``.  It is called before invoking Trivy so
+        that precise, actionable warnings can be emitted when Trivy would
+        produce an empty SBOM.
+
+        Returns a :class:`_TarballPkgDbInfo` describing what was found.
+        The paths inside the archive are normalised by stripping a single
+        leading ``./`` so they match the entries in :data:`_PKGDB_REQUIRED`.
+        """
+        try:
+            with tarfile.open(artifact_path, "r:*") as tf:
+                members = {
+                    m.name.lstrip("./")
+                    for m in tf.getmembers()
+                }
+                # Separate index of members with their sizes (to detect empty files)
+                sizes: Dict[str, int] = {
+                    m.name.lstrip("./"): m.size
+                    for m in tf.getmembers()
+                }
+        except (tarfile.TarError, OSError):
+            return _TarballPkgDbInfo(present=[], indicator_only=[], unreadable=True)
+
+        present: List[str] = []
+        indicator_only: List[str] = []
+
+        for mgr, required in _PKGDB_REQUIRED.items():
+            if required in members and sizes.get(required, 0) > 0:
+                present.append(mgr)
+            else:
+                # Check if an indicator path signals the manager is installed
+                # but the required file is missing or zero-byte.
+                indicator = _PKGDB_INDICATORS.get(mgr)
+                if indicator and any(
+                    name == indicator or name.startswith(indicator + "/")
+                    for name in members
+                ):
+                    indicator_only.append(mgr)
+
+        return _TarballPkgDbInfo(present=present, indicator_only=indicator_only)
+
+    def _warn_pkgdb(self, artifact_path: Path, pkgdb: "_TarballPkgDbInfo") -> None:
+        """
+        Emit targeted log warnings based on *pkgdb* inspection results.
+
+        Called before running Trivy so the user sees the reason for an
+        empty SBOM immediately, without having to wait for Trivy to finish.
+        """
+        if pkgdb.unreadable:
+            self.logger.warning(
+                "Could not inspect '%s' to check for package-manager databases. "
+                "Trivy will attempt to scan it anyway.",
+                artifact_path.name,
+            )
+            return
+
+        for mgr in pkgdb.indicator_only:
+            required = _PKGDB_REQUIRED[mgr]
+            indicator = _PKGDB_INDICATORS.get(mgr, "")
+            self.logger.warning(
+                "The rootfs '%s' contains the %s package directory (%s) but "
+                "the package database (%s) is absent or empty. "
+                "Trivy reads only %s to enumerate packages; without it the "
+                "SBOM will be empty. "
+                "To fix: ensure the %s database file is populated during the "
+                "Yocto build. For dpkg-based images, verify that the bitbake "
+                "run_do_rootfs step merges per-package status files into "
+                "%s (this is done automatically but can be skipped on "
+                "incremental builds — run a clean build to confirm).",
+                artifact_path.name,
+                mgr,
+                indicator,
+                required,
+                required,
+                mgr,
+                required,
+            )
+
+        if not pkgdb.present and not pkgdb.indicator_only:
+            self.logger.warning(
+                "The rootfs '%s' contains no recognisable package-manager "
+                "database (checked: %s). "
+                "Trivy will produce an empty SBOM. "
+                "Consider switching to 'tool: syft+grype', which has broader "
+                "Yocto package support.",
+                artifact_path.name,
+                ", ".join(_PKGDB_REQUIRED.keys()),
+            )
+
     def _run_trivy(
         self,
         artifact_path: Path,
@@ -299,6 +438,14 @@ class ImageScanner:
                 bad_suffix,
             )
             return [], None, []
+
+        # Inspect the tarball for package-manager databases before invoking
+        # Trivy.  This allows us to emit a precise, actionable warning when
+        # a required database file is absent (e.g. dpkg info/ present but
+        # status file missing) rather than silently producing an empty SBOM.
+        if artifact_path.suffix in (".gz", ".bz2", ".xz"):
+            pkgdb = self._inspect_tarball_pkgdb(artifact_path)
+            self._warn_pkgdb(artifact_path, pkgdb)
 
         stem = artifact_path.stem.replace(".", "_")
         report_path = output_dir / f"trivy-{stem}.json"
@@ -376,12 +523,11 @@ class ImageScanner:
                 if component_count == 0:
                     self.logger.warning(
                         "Trivy found 0 packages in '%s'. "
-                        "This usually means the rootfs does not contain a recognisable "
-                        "package-manager database (e.g. the opkg status file was stripped "
-                        "from the Yocto image). "
-                        "To fix: add 'IMAGE_FEATURES += \"package-management\"' to your "
-                        "Yocto image recipe, or switch to 'tool: syft+grype' which can "
-                        "read the Yocto package manifest without requiring a live database.",
+                        "If a pre-scan database check did not emit a more specific "
+                        "warning above, the rootfs may use a package manager not "
+                        "supported by Trivy (e.g. opkg). "
+                        "Consider switching to 'tool: syft+grype' for broader "
+                        "Yocto package-manager support.",
                         artifact_path.name,
                     )
                 sbom_result = SbomResult(
