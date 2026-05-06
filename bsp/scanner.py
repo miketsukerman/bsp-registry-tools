@@ -53,6 +53,7 @@ _TRIVY_UNSUPPORTED_SUFFIXES: frozenset = frozenset([
     ".wic.bz2",
     ".wic.xz",
     ".wic.zst",
+    ".rootfs.tar.zst",
     ".tar.zst",
 ])
 
