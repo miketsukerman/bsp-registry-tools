@@ -2084,9 +2084,9 @@ class BspManager:
             preset_scan = resolved.scan_config
             defaults = ScanConfig()
             preset_overrides = {
-                f.name: getattr(preset_scan, f.name)
+                f.name: preset_val
                 for f in dataclass_fields(preset_scan)
-                if getattr(preset_scan, f.name) != getattr(defaults, f.name)
+                if (preset_val := getattr(preset_scan, f.name)) != getattr(defaults, f.name)
             }
             if preset_overrides:
                 base = replace(base, **preset_overrides)
