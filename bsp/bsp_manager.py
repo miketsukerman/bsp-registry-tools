@@ -17,9 +17,10 @@ from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
-from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
+from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, ScanConfig
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
+from .scanner import ImageScanner, ScanResult
 from .storage import create_backend
 from .utils import get_registry_from_yaml_file, build_docker
 
@@ -1279,6 +1280,8 @@ class BspManager:
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1294,6 +1297,8 @@ class BspManager:
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1344,6 +1349,13 @@ class BspManager:
                         deploy_overrides=deploy_overrides or {},
                         build_path_override=build_path_override,
                     )
+                if scan_after_build:
+                    self._scan_resolved(
+                        resolved,
+                        preset=preset,
+                        scan_overrides=scan_overrides or {},
+                        build_path_override=build_path_override,
+                    )
         finally:
             self._cleanup_temp_kas_file()
 
@@ -1357,6 +1369,8 @@ class BspManager:
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
         feature_slugs: Optional[List[str]] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1370,6 +1384,8 @@ class BspManager:
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
             feature_slugs: Additional feature slugs to enable on top of those in the preset
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1389,6 +1405,8 @@ class BspManager:
                 target=target,
                 task=task,
                 build_path_override=build_path_override,
+                scan_after_build=scan_after_build,
+                scan_overrides=scan_overrides,
             )
 
     def build_by_components(
@@ -1402,6 +1420,8 @@ class BspManager:
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1416,6 +1436,8 @@ class BspManager:
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1435,6 +1457,8 @@ class BspManager:
             target=target,
             task=task,
             build_path_override=build_path_override,
+            scan_after_build=scan_after_build,
+            scan_overrides=scan_overrides,
         )
 
     # ------------------------------------------------------------------
@@ -2022,6 +2046,205 @@ class BspManager:
             dry_run=dry_run,
             date_override=date_override,
         )
+
+    # ------------------------------------------------------------------
+    # Scan (CRA image vulnerability scanning)
+    # ------------------------------------------------------------------
+
+    def _resolve_scan_config(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        scan_overrides: Optional[Dict] = None,
+    ) -> ScanConfig:
+        """
+        Resolve the effective ``ScanConfig`` for a build.
+
+        Merge order (later entries override earlier ones):
+        1. Root-level ``scan`` from the registry (global defaults)
+        2. ``ResolvedConfig.scan_config`` (preset-level ``scan`` block, if any)
+        3. CLI-supplied *scan_overrides* dict
+
+        If no scan config is defined anywhere a default ``ScanConfig`` is
+        returned.
+
+        Args:
+            resolved: Resolved build configuration (may carry scan_config from preset).
+            preset: Unused (reserved for future preset-level merge if needed).
+            scan_overrides: Dict of field overrides from the CLI.
+
+        Returns:
+            Effective ``ScanConfig`` instance.
+        """
+        # Start with global registry scan config or defaults
+        base = self.model.scan if self.model and self.model.scan else ScanConfig()
+
+        # Apply preset-level scan config from ResolvedConfig (set by resolver.resolve_preset)
+        if resolved.scan_config is not None:
+            preset_scan = resolved.scan_config
+            defaults = ScanConfig()
+            preset_overrides = {
+                f.name: getattr(preset_scan, f.name)
+                for f in dataclass_fields(preset_scan)
+                if getattr(preset_scan, f.name) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
+        # Apply CLI overrides
+        if scan_overrides:
+            base = replace(base, **{k: v for k, v in scan_overrides.items() if v is not None})
+
+        return base
+
+    def _scan_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan build artifacts for CVEs and generate SBOMs.
+
+        Args:
+            resolved: Resolved build configuration.
+            preset: Optional BSP preset (for scan config merge).
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True, discover and list artifacts without scanning.
+            build_path_override: Optional build path override for artifact lookup.
+            image_paths: Explicit list of image file paths to scan (overrides
+                         auto-discovery when provided).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+        """
+        scan_cfg = self._resolve_scan_config(resolved, preset=preset, scan_overrides=scan_overrides)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
+
+        scanner = ImageScanner(scan_cfg, effective_build_path)
+
+        if dry_run:
+            artifacts = [Path(p) for p in image_paths] if image_paths else scanner._find_artifacts()
+            logging.info("[dry-run] Would scan %d artifact(s):", len(artifacts))
+            for art in artifacts:
+                logging.info("  %s", art)
+            result = ScanResult(fail_on=scan_cfg.fail_on, dry_run=True)
+            result.scanned_artifacts = artifacts
+            return result
+
+        # Run the actual scan
+        artifact_path_objs = [Path(p) for p in image_paths] if image_paths else None
+        result = scanner.scan(artifact_paths=artifact_path_objs)
+
+        # Print summary
+        print(f"\nScan completed: {result.total_count} finding(s) across {len(result.scanned_artifacts)} artifact(s)")
+        if result.total_count:
+            sev_counts = [
+                f"CRITICAL={result.critical_count}",
+                f"HIGH={result.high_count}",
+                f"MEDIUM={result.medium_count}",
+                f"LOW={result.low_count}",
+            ]
+            print("  Severity breakdown: " + "  ".join(sev_counts))
+        if result.sboms:
+            print(f"  SBOM(s) generated:")
+            for sbom in result.sboms:
+                print(f"    {sbom.path} ({sbom.component_count} components, format: {sbom.sbom_format})")
+        if result.report_files:
+            print(f"  Report(s):")
+            for rpt in result.report_files:
+                print(f"    {rpt}")
+        if not result.passed:
+            logging.error(
+                "Scan FAILED: findings at or above '%s' severity found.",
+                scan_cfg.fail_on,
+            )
+        else:
+            logging.info("Scan passed (no findings at or above '%s' severity).", scan_cfg.fail_on)
+
+        return result
+
+    def scan_bsp(
+        self,
+        bsp_name: str,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan built artifacts for a BSP preset for CVEs and generate SBOMs.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True list what would be scanned without scanning.
+            image_paths: Explicit artifact paths to scan (overrides auto-discovery).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+
+        Raises:
+            SystemExit: If preset not found or scanner is not installed.
+        """
+        logging.info("Scanning artifacts for BSP preset: %s", bsp_name)
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            result = self._scan_resolved(
+                resolved,
+                preset=preset,
+                scan_overrides=scan_overrides,
+                dry_run=dry_run,
+                image_paths=image_paths,
+            )
+        if not result.passed and not dry_run:
+            sys.exit(1)
+        return result
+
+    def scan_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan built artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True list what would be scanned without scanning.
+            image_paths: Explicit artifact paths to scan (overrides auto-discovery).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+
+        Raises:
+            SystemExit: If any component is not found or scanner is not installed.
+        """
+        logging.info(
+            "Scanning artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        result = self._scan_resolved(
+            resolved,
+            scan_overrides=scan_overrides,
+            dry_run=dry_run,
+            image_paths=image_paths,
+        )
+        if not result.passed and not dry_run:
+            sys.exit(1)
+        return result
 
     # ------------------------------------------------------------------
     # Test (HIL via LAVA + Robot Framework)

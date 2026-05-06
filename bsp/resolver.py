@@ -22,6 +22,7 @@ from .models import (
     NamedEnvironment,
     Release,
     RegistryRoot,
+    ScanConfig,
     SocVendorOverride,
     Vendor,
     VendorOverride,
@@ -58,6 +59,11 @@ class ResolvedConfig:
         targets: List of Bitbake build targets (images/recipes) to pass to
                  KAS.  Populated from ``BspPreset.targets`` during
                  ``resolve_preset()``; empty when resolving without a preset.
+        scan_config: Optional CRA image scanning configuration resolved for
+                     this build.  Populated from the preset's ``scan`` block
+                     (if present) during ``resolve_preset()``; ``None`` when
+                     resolving without a preset or when no ``scan`` block is
+                     configured.
     """
     device: Device
     release: Release
@@ -70,6 +76,7 @@ class ResolvedConfig:
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     effective_distro: Optional[str] = None
     targets: List[str] = field(default_factory=empty_list)
+    scan_config: Optional[ScanConfig] = None
 
 
 # =============================================================================
@@ -1098,6 +1105,11 @@ class V2Resolver:
         # Apply preset-level targets.
         if preset.targets:
             resolved.targets = list(preset.targets)
+
+        # Apply preset-level scan config (preset overrides registry root).
+        # The merge follows the same pattern as `deploy`: preset fields that
+        # differ from their defaults override the root-level config.
+        resolved.scan_config = preset.scan if preset.scan is not None else getattr(self.model, "scan", None)
 
         return resolved, preset
 

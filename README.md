@@ -22,6 +22,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
+- 🔒 **CRA vulnerability scanning** — scan built images for CVEs and generate SBOMs (CycloneDX/SPDX) with `bsp scan` ([Trivy](https://trivy.dev/) / Syft+Grype)
 - 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
 
 
@@ -699,6 +700,53 @@ bsp gather poky-qemuarm64-scarthgap --dry-run
 # Component-based gather
 bsp gather --device qemuarm64 --release scarthgap --dest-dir /mnt/artifacts
 ```
+
+---
+
+#### `scan` — CRA vulnerability scanning and SBOM generation
+
+Scans built Yocto image artifacts for CVEs and generates a Software Bill of
+Materials (SBOM).  Supports [**Trivy**](https://trivy.dev/) (default) and
+**Syft + Grype** as scanner backends.  See
+[docs/cra-scanning.md](docs/cra-scanning.md) for full details and
+prerequisites.
+
+```bash
+bsp scan <bsp_name> [OPTIONS]
+bsp scan --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--tool trivy\|syft+grype` | Scanner backend (default: `trivy`) |
+| `--severity LEVEL` | Minimum CVE severity to report: `LOW`, `MEDIUM`, `HIGH` (default), `CRITICAL` |
+| `--fail-on LEVEL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` (default) |
+| `--sbom-format FORMAT` | SBOM format: `cyclonedx` (default), `spdx-json`, `spdx-tag-value` |
+| `--output-dir PATH` | Directory for reports and SBOMs (default: `<build_path>/reports/`) |
+| `--image-path PATH` | Explicit artifact to scan (repeatable; overrides auto-discovery) |
+| `--dry-run` | List what would be scanned without running the scanner |
+
+**Examples:**
+
+```bash
+# Scan a preset's built artifacts
+bsp scan poky-qemuarm64-scarthgap
+
+# Fail on HIGH or above, generate SPDX-JSON SBOM
+bsp scan poky-qemuarm64-scarthgap --fail-on HIGH --sbom-format spdx-json
+
+# Dry run: show which artifacts would be scanned
+bsp scan poky-qemuarm64-scarthgap --dry-run
+
+# Scan a specific image file explicitly
+bsp scan poky-qemuarm64-scarthgap \
+  --image-path build/poky/tmp/deploy/images/qemuarm64/core-image-minimal.wic
+
+# Scan immediately after a build (--scan flag on bsp build)
+bsp build poky-qemuarm64-scarthgap --scan --scan-fail-on CRITICAL
+```
+
+**Prerequisites:** Install [Trivy](https://trivy.dev/latest/getting-started/installation/) before using `bsp scan`.
 
 ---
 
