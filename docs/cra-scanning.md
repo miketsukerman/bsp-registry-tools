@@ -140,6 +140,42 @@ produce an empty SBOM and zero CVE findings when passed to Trivy.
 > `artifact_patterns`, or configure Yocto to produce `.tar.gz` output
 > (`IMAGE_FSTYPES += "tar.gz"`).
 
+### Empty SBOM: opkg database stripped from the image
+
+Even when the format is correct (e.g. `.rootfs.tar.gz`), you may see an SBOM with
+**`"components": []`**.  The scanner will emit a `WARNING` in this case.
+
+**Why it happens:**  Both Trivy and Syft enumerate packages by reading the
+package-manager database inside the rootfs (e.g. `/var/lib/opkg/status` for Yocto
+images that use `opkg`).  Production Yocto builds often strip this database from the
+final image to save space, leaving nothing for the scanner to read.
+
+**Fixes:**
+
+1. **Include the package database in the image** _(most complete — recommended for CRA compliance)_:
+
+   ```bitbake
+   # In your image recipe or local.conf
+   IMAGE_FEATURES += "package-management"
+   ```
+
+   This prevents Yocto from removing `/var/lib/opkg/status` and related files from the
+   final rootfs, giving Trivy/Syft the data they need.
+
+2. **Switch to `syft+grype`**:  Syft has a Yocto-aware analyser that can read the
+   build-time package manifest from
+   `<build>/tmp/deploy/licenses/<image>/package.manifest` alongside the rootfs, so it
+   can enumerate packages even without a runtime database:
+
+   ```yaml
+   scan:
+     tool: syft+grype
+   ```
+
+3. **Provide the Yocto package manifest path** _(future enhancement — not yet
+   supported)_: Pass the `.package.manifest` file from
+   `tmp/deploy/licenses/<image>/` as an additional `artifact_paths` entry.
+
 ---
 
 ## CLI Usage

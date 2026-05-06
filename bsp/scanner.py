@@ -356,6 +356,8 @@ class ImageScanner:
             "rootfs",
             "--format", trivy_sbom_format,
             "--output", str(sbom_path),
+            # Include all detected packages, not only those with known CVEs.
+            "--list-all-pkgs",
             "--quiet",
             str(artifact_path),
         ]
@@ -369,6 +371,17 @@ class ImageScanner:
             )
             if sbom_path.exists():
                 component_count = self._count_trivy_sbom_components(sbom_path, trivy_sbom_format)
+                if component_count == 0:
+                    self.logger.warning(
+                        "Trivy found 0 packages in '%s'. "
+                        "This usually means the rootfs does not contain a recognisable "
+                        "package-manager database (e.g. the opkg status file was stripped "
+                        "from the Yocto image). "
+                        "To fix: add 'IMAGE_FEATURES += \"package-management\"' to your "
+                        "Yocto image recipe, or switch to 'tool: syft+grype' which can "
+                        "read the Yocto package manifest without requiring a live database.",
+                        artifact_path.name,
+                    )
                 sbom_result = SbomResult(
                     path=sbom_path,
                     sbom_format=self.config.sbom_format,
@@ -462,6 +475,16 @@ class ImageScanner:
             )
             if sbom_path.exists():
                 component_count = self._count_syft_sbom_components(sbom_path, syft_format)
+                if component_count == 0:
+                    self.logger.warning(
+                        "Syft found 0 packages in '%s'. "
+                        "This usually means the rootfs does not contain a recognisable "
+                        "package-manager database (e.g. the opkg status file was stripped "
+                        "from the Yocto image). "
+                        "To fix: add 'IMAGE_FEATURES += \"package-management\"' to your "
+                        "Yocto image recipe to retain the package database in the final image.",
+                        artifact_path.name,
+                    )
                 sbom_result = SbomResult(
                     path=sbom_path,
                     sbom_format=self.config.sbom_format,
