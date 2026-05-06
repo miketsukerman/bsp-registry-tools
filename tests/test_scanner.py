@@ -709,6 +709,46 @@ class TestImageScannerScan:
 
         assert output_dir.is_dir()
 
+    def test_scan_wic_artifact_is_skipped_by_trivy(self, tmp_path):
+        """WIC files are discovered but skipped by the Trivy backend — end-to-end."""
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        (images_dir / "image.wic").write_bytes(b"fake")
+
+        cfg = ScanConfig(
+            tool="trivy",
+            artifact_patterns=["**/*.wic"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch("shutil.which", return_value="/usr/bin/trivy"):
+            with patch("subprocess.run") as mock_run:
+                result = scanner.scan()
+
+        # Trivy must never be invoked for a WIC artifact
+        mock_run.assert_not_called()
+        assert result.total_count == 0
+        assert result.scanned_artifacts == [images_dir / "image.wic"]
+
+    def test_scan_tar_zst_artifact_is_skipped_by_trivy(self, tmp_path):
+        """Zstd-compressed tarballs are skipped by the Trivy backend — end-to-end."""
+        images_dir = tmp_path / "tmp" / "deploy" / "images" / "machine"
+        images_dir.mkdir(parents=True)
+        (images_dir / "image.rootfs.tar.zst").write_bytes(b"fake")
+
+        cfg = ScanConfig(
+            tool="trivy",
+            artifact_patterns=["**/*.tar.zst"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch("shutil.which", return_value="/usr/bin/trivy"):
+            with patch("subprocess.run") as mock_run:
+                result = scanner.scan()
+
+        mock_run.assert_not_called()
+        assert result.total_count == 0
+
 
 # =============================================================================
 # ImageScanner helper method tests
