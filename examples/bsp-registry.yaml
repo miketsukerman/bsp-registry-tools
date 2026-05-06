@@ -53,6 +53,6 @@ deploy:
     - "**/bzImage"
     - "**/uImage"
   artifact_dirs:                                    # subdirs under build_path to search
-    - build/tmp/deploy/images
-    - build/tmp/deploy/sdk
+    - tmp/deploy/images
+    - tmp/deploy/sdk
   include_manifest: true                            # upload a JSON manifest of all artifacts
