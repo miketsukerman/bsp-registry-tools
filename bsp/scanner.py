@@ -486,13 +486,16 @@ class ImageScanner:
             if sev_idx < min_severity_idx:
                 continue
             artifact = match.get("artifact", {})
+            fix_info = vuln.get("fix") or {}
+            fix_versions = fix_info.get("versions") or []
+            fix_version = fix_versions[0] if fix_versions else ""
             findings.append(ScanFinding(
                 cve_id=vuln.get("id", ""),
                 severity=severity,
                 package_name=artifact.get("name", ""),
                 package_version=artifact.get("version", ""),
                 description=vuln.get("description", ""),
-                fix_version=(vuln.get("fix", {}) or {}).get("versions", [""])[0] if vuln.get("fix") else "",
+                fix_version=fix_version,
             ))
         return findings
 
