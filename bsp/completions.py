@@ -222,7 +222,7 @@ class RemotesCompleter:
 class ScanToolCompleter:
     """Complete scanner backend names for ``--tool`` / ``--scan-tool``."""
 
-    _TOOLS = ["trivy", "syft+grype"]
+    _TOOLS = ["trivy", "syft+grype", "emba"]
 
     def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
         return [t for t in self._TOOLS if t.startswith(prefix)]
