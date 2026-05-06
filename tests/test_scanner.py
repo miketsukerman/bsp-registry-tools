@@ -409,6 +409,71 @@ class TestRunTrivy:
         assert findings == []
         assert sbom is None
 
+    def test_trivy_warns_on_empty_sbom(self, tmp_path, caplog):
+        """A WARNING must be emitted when Trivy produces an SBOM with 0 components."""
+        import logging
+        scanner = self._make_scanner(tmp_path)
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        empty_sbom = json.dumps({"components": []})
+
+        def fake_run(cmd, **kwargs):
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(empty_sbom)
+                else:
+                    Path(out_path).write_text(json.dumps({"Results": []}))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            with patch("subprocess.run", side_effect=fake_run):
+                _, sbom, _ = scanner._run_trivy(artifact, output_dir)
+
+        assert sbom is not None
+        assert sbom.component_count == 0
+        assert any("0 packages" in r.message for r in caplog.records), (
+            f"Expected '0 packages' warning, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_trivy_sbom_command_includes_list_all_pkgs(self, tmp_path):
+        """Trivy SBOM command must include --list-all-pkgs to capture all packages."""
+        scanner = self._make_scanner(tmp_path)
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        called_cmds = []
+
+        def fake_run(cmd, **kwargs):
+            called_cmds.append(list(cmd))
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(TRIVY_SBOM_JSON)
+                else:
+                    Path(out_path).write_text(TRIVY_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_trivy(artifact, output_dir)
+
+        sbom_cmds = [c for c in called_cmds if "sbom-" in str(c)]
+        assert sbom_cmds, "No SBOM command was invoked"
+        assert "--list-all-pkgs" in sbom_cmds[0], (
+            f"--list-all-pkgs not found in SBOM command: {sbom_cmds[0]}"
+        )
+
 
 # =============================================================================
 # ImageScanner._run_trivy — unsupported format skip tests
@@ -590,6 +655,38 @@ class TestRunSyftGrype:
 
         assert sbom is not None
         assert sbom.component_count == 3
+
+    def test_syft_warns_on_empty_sbom(self, tmp_path, caplog):
+        """A WARNING must be emitted when Syft produces an SBOM with 0 components."""
+        import logging
+        scanner = self._make_scanner(tmp_path)
+        artifact = tmp_path / "core-image.rootfs.tar.gz"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        empty_sbom = json.dumps({"components": []})
+
+        def fake_run(cmd, **kwargs):
+            if "syft" in cmd[0]:
+                for arg in cmd:
+                    if "sbom-" in arg and "=" in arg:
+                        path = arg.split("=", 1)[1]
+                        Path(path).write_text(empty_sbom)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            with patch("subprocess.run", side_effect=fake_run):
+                _, sbom, _ = scanner._run_syft_grype(artifact, output_dir)
+
+        assert sbom is not None
+        assert sbom.component_count == 0
+        assert any("0 packages" in r.message for r in caplog.records), (
+            f"Expected '0 packages' warning, got: {[r.message for r in caplog.records]}"
+        )
 
 
 # =============================================================================
