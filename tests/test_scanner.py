@@ -667,6 +667,147 @@ class TestInspectTarballPkgDb:
 
 
 # =============================================================================
+# ImageScanner._resolve_trivy_os_family tests
+# =============================================================================
+
+
+class TestResolveTrivyOsFamily:
+    """Unit tests for OS-family inference from the tarball package-database inspection."""
+
+    def _scanner(self, tmp_path, **cfg_kwargs):
+        return ImageScanner(ScanConfig(**cfg_kwargs), str(tmp_path))
+
+    def test_explicit_config_takes_priority(self, tmp_path):
+        """trivy_os_family from config is returned unchanged, ignoring any detected pkgdb."""
+        scanner = self._scanner(tmp_path, trivy_os_family="alpine")
+        pkgdb = _TarballPkgDbInfo(present=["dpkg"], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) == "alpine"
+
+    def test_dpkg_infers_debian(self, tmp_path):
+        """dpkg in present → infers 'debian'."""
+        scanner = self._scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=["dpkg"], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) == "debian"
+
+    def test_apk_infers_alpine(self, tmp_path):
+        """apk in present → infers 'alpine'."""
+        scanner = self._scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=["apk"], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) == "alpine"
+
+    def test_rpm_infers_centos(self, tmp_path):
+        """rpm in present → infers 'centos'."""
+        scanner = self._scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=["rpm"], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) == "centos"
+
+    def test_opkg_infers_nothing(self, tmp_path):
+        """opkg is not supported by Trivy; no os-family is inferred."""
+        scanner = self._scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=["opkg"], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) is None
+
+    def test_no_database_returns_none(self, tmp_path):
+        """Empty present list and no config → None."""
+        scanner = self._scanner(tmp_path)
+        pkgdb = _TarballPkgDbInfo(present=[], indicator_only=[])
+        assert scanner._resolve_trivy_os_family(pkgdb) is None
+
+    def test_os_family_flag_passed_to_trivy_scan(self, tmp_path):
+        """When dpkg is present, '--os-family' 'debian' must appear in both Trivy commands."""
+        tarball = _make_tarball(tmp_path, "image.rootfs.tar.gz", {
+            "./var/lib/dpkg/status": b"Package: bash\nVersion: 1.0\n",
+        })
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = ImageScanner(ScanConfig(), str(tmp_path))
+
+        called_cmds: list = []
+
+        def fake_run(cmd, **kwargs):
+            called_cmds.append(list(cmd))
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(json.dumps({"components": [{"name": "bash"}]}))
+                else:
+                    Path(out_path).write_text(json.dumps({"Results": []}))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_trivy(tarball, output_dir)
+
+        for cmd in called_cmds:
+            assert "--os-family" in cmd, f"--os-family missing from command: {cmd}"
+            idx = cmd.index("--os-family")
+            assert cmd[idx + 1] == "debian", f"Expected 'debian', got {cmd[idx+1]}"
+
+    def test_explicit_os_family_passed_to_trivy(self, tmp_path):
+        """Explicit trivy_os_family config is forwarded to Trivy even with no tarball inspection."""
+        artifact = tmp_path / "image.ext4"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = ImageScanner(ScanConfig(trivy_os_family="debian", trivy_os_version="12"), str(tmp_path))
+
+        called_cmds: list = []
+
+        def fake_run(cmd, **kwargs):
+            called_cmds.append(list(cmd))
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(json.dumps({"components": []}))
+                else:
+                    Path(out_path).write_text(json.dumps({"Results": []}))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_trivy(artifact, output_dir)
+
+        for cmd in called_cmds:
+            assert "--os-family" in cmd
+            assert "--os-version" in cmd
+            assert cmd[cmd.index("--os-family") + 1] == "debian"
+            assert cmd[cmd.index("--os-version") + 1] == "12"
+
+    def test_no_os_family_when_no_pkgdb_no_config(self, tmp_path):
+        """When no database is detected and no config is set, '--os-family' is absent."""
+        artifact = tmp_path / "image.ext4"
+        artifact.write_bytes(b"fake")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = ImageScanner(ScanConfig(), str(tmp_path))
+
+        called_cmds: list = []
+
+        def fake_run(cmd, **kwargs):
+            called_cmds.append(list(cmd))
+            if "--output" in cmd:
+                out_path = cmd[cmd.index("--output") + 1]
+                if "sbom-" in out_path:
+                    Path(out_path).write_text(json.dumps({"components": []}))
+                else:
+                    Path(out_path).write_text(json.dumps({"Results": []}))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("subprocess.run", side_effect=fake_run):
+            scanner._run_trivy(artifact, output_dir)
+
+        for cmd in called_cmds:
+            assert "--os-family" not in cmd, f"Unexpected --os-family in: {cmd}"
+
+
+# =============================================================================
 # ImageScanner._run_trivy — unsupported format skip tests
 # =============================================================================
 
