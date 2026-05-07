@@ -110,6 +110,33 @@ registry:
         with pytest.raises(SystemExit):
             get_registry_from_yaml_file(v1_file)
 
+    def test_get_registry_future_minor_version_exits(self, tmp_dir):
+        """Registry files with a future minor version should exit (tool is too old)."""
+        future_yaml = """
+specification:
+  version: "2.99"
+registry:
+  bsp: []
+"""
+        future_file = tmp_dir / "future-registry.yaml"
+        future_file.write_text(future_yaml)
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(future_file)
+
+    def test_get_registry_older_minor_version_accepted(self, tmp_dir):
+        """Registry files with an older compatible minor version (2.0) should be accepted."""
+        v20_yaml = """
+specification:
+  version: "2.0"
+registry:
+  bsp: []
+"""
+        v20_file = tmp_dir / "v20-registry.yaml"
+        v20_file.write_text(v20_yaml)
+        result = get_registry_from_yaml_file(v20_file)
+        assert isinstance(result, RegistryRoot)
+        assert result.specification.version == "2.0"
+
     def test_get_registry_no_version_exits(self, tmp_dir):
         """Registry files without a version should exit immediately."""
         no_ver_yaml = """
