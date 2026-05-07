@@ -1218,7 +1218,7 @@ class TestHelpers:
 
 SCAN_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: rpi5
@@ -1534,7 +1534,7 @@ scan:
 
         yaml_with_preset_scan = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: rpi5

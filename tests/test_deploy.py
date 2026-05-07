@@ -149,13 +149,13 @@ class TestDeployConfigCustom:
 
 class TestDeployConfigInRegistryRoot:
     def test_registry_root_deploy_defaults_to_none(self):
-        root = RegistryRoot(specification=Specification(version="2.0"), registry=Registry())
+        root = RegistryRoot(specification=Specification(version="2.1"), registry=Registry())
         assert root.deploy is None
 
     def test_registry_root_with_deploy_config(self):
         deploy = DeployConfig(provider="azure", container="my-container")
         root = RegistryRoot(
-            specification=Specification(version="2.0"),
+            specification=Specification(version="2.1"),
             registry=Registry(),
             deploy=deploy,
         )
@@ -193,7 +193,7 @@ class TestDeployConfigYamlParsing:
 
         yaml_content = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: my-device
@@ -233,7 +233,7 @@ deploy:
 
         yaml_content = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices: []
   releases: []
@@ -725,7 +725,7 @@ deploy:
 
         yaml_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: my-device
@@ -819,7 +819,7 @@ registry:
 
         yaml_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 
 {global_deploy_block}
 registry:

@@ -69,7 +69,7 @@ class TestMainCli:
         kas_file.write_text("header:\n  version: 14\nmachine: qemuarm64\n")
         registry_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   - ubuntu-22.04:
       image: "test/ubuntu-22.04:latest"
