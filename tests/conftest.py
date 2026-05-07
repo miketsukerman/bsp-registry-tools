@@ -13,7 +13,7 @@ from pathlib import Path
 
 MINIMAL_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -49,7 +49,7 @@ registry:
 
 REGISTRY_WITH_ENV_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 environment:
   variables:
     - name: "DL_DIR"
@@ -110,7 +110,7 @@ specification:
 
 EMPTY_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices: []
   releases: []
@@ -120,7 +120,7 @@ registry:
 
 REGISTRY_WITH_FEATURES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:latest"
@@ -178,7 +178,7 @@ registry:
 
 REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -249,7 +249,7 @@ registry:
 
 REGISTRY_WITH_PRESET_ENV_OVERRIDE_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -325,7 +325,7 @@ registry:
 
 REGISTRY_WITH_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:latest"
@@ -360,7 +360,7 @@ registry:
 
 REGISTRY_WITH_NAMED_ENV_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -433,7 +433,7 @@ registry:
 
 REGISTRY_WITH_GLOBAL_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environment:
   copy:
@@ -475,7 +475,7 @@ registry:
 
 REGISTRY_WITH_RUNTIME_ARGS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   isar-qemu-container:
     image: "ghcr.io/ilbers/isar:latest"
@@ -527,7 +527,7 @@ registry:
 
 REGISTRY_WITH_DISTRO_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -573,7 +573,7 @@ registry:
 
 REGISTRY_WITH_FRAMEWORKS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -669,7 +669,7 @@ registry:
 
 REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -886,7 +886,7 @@ distro: poky
 
 REGISTRY_WITH_MULTI_RELEASE_BSP_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -953,7 +953,7 @@ def registry_with_multi_release_bsp_file(tmp_dir):
 
 REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1010,7 +1010,7 @@ def registry_with_multi_release_testing_file(tmp_dir):
 
 REGISTRY_WITH_MULTI_RELEASE_NO_PATH_BSP_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1057,7 +1057,7 @@ def registry_with_multi_release_no_path_bsp_file(tmp_dir):
 
 REGISTRY_WITH_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1187,7 +1187,7 @@ def registry_with_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_VENDORS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1257,7 +1257,7 @@ def registry_with_vendors_file(tmp_dir):
 
 REGISTRY_WITH_VENDOR_OVERRIDE_SLUG_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1397,7 +1397,7 @@ def registry_with_vendor_override_slug_file(tmp_dir):
 
 REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1524,7 +1524,7 @@ def registry_with_soc_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_PRESET_CONTAINER_OVERRIDE_AND_NAMED_ENV_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1581,7 +1581,7 @@ def registry_with_preset_container_override_and_named_env_copy_file(tmp_dir):
 
 REGISTRY_WITH_CONTAINER_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1659,7 +1659,7 @@ def registry_with_container_copy_file(tmp_dir):
 
 REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1793,7 +1793,7 @@ def registry_with_feature_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1860,7 +1860,7 @@ def registry_with_preset_local_conf_and_targets_file(tmp_dir):
 
 REGISTRY_WITH_FEATURE_RELEASE_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1961,7 +1961,7 @@ def registry_with_feature_release_overrides_file(tmp_dir):
 
 REGISTRY_WITH_LAVA_ENV_VARS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"

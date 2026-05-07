@@ -107,7 +107,7 @@ class TestBspManagerList:
     def test_list_containers_empty(self, tmp_dir):
         no_containers_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: test-device
@@ -578,7 +578,7 @@ class TestBspManagerMisc:
 
         registry_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -638,7 +638,7 @@ registry:
 
         registry_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -694,7 +694,7 @@ registry:
 
         registry_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -790,7 +790,7 @@ class TestNamedEnvironmentsInResolver:
         import textwrap
         yaml_content = textwrap.dedent("""
             specification:
-              version: "2.0"
+              version: "2.1"
             environments:
               default:
                 container: "env-container"
@@ -834,7 +834,7 @@ class TestNamedEnvironmentsInResolver:
         import textwrap
         yaml_content = textwrap.dedent("""
             specification:
-              version: "2.0"
+              version: "2.1"
             containers:
               some-container:
                 image: "some-image:latest"
@@ -1322,7 +1322,7 @@ class TestMultiReleaseBspPreset:
         """expand_preset() exits when both release and releases are set."""
         bad_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   c:
     image: "test:latest"
@@ -1361,7 +1361,7 @@ registry:
         """expand_preset() exits when neither release nor releases is set."""
         bad_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   c:
     image: "test:latest"
@@ -2887,7 +2887,7 @@ class TestContainerCopy:
         import textwrap
         yaml_content = textwrap.dedent("""
             specification:
-              version: "2.0"
+              version: "2.1"
             environments:
               default:
                 container: "my-container"
@@ -2957,7 +2957,7 @@ class TestContainerCopy:
         import textwrap
         yaml_content = textwrap.dedent("""
             specification:
-              version: "2.0"
+              version: "2.1"
             environments:
               default:
                 container: "old-container"
@@ -3400,7 +3400,7 @@ class TestPresetLocalConfAndTargets:
         """A preset with only targets (no local_conf) triggers composed KAS YAML generation."""
         yaml_text = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -3517,7 +3517,7 @@ registry:
         """targets list in a multi-release preset is copied to every expanded preset."""
         yaml_text = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -3681,7 +3681,7 @@ class TestLavaEnvVarExpansion:
 
 REGISTRY_A_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -3715,7 +3715,7 @@ registry:
 
 REGISTRY_B_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -3749,7 +3749,7 @@ registry:
 
 REGISTRY_SHARED_PRESET_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices:
     - slug: device-shared

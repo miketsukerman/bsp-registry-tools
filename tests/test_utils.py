@@ -1,5 +1,5 @@
 """
-Tests for YAML parsing utilities and container list-to-dict conversion (v2.0).
+Tests for YAML parsing utilities and container list-to-dict conversion (v2.1).
 """
 
 import subprocess
@@ -52,7 +52,7 @@ class TestYamlParsing:
     def test_get_registry_from_yaml_file(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
         assert isinstance(result, RegistryRoot)
-        assert result.specification.version == "2.0"
+        assert result.specification.version == "2.1"
         assert len(result.registry.devices) == 1
         assert result.registry.devices[0].slug == "test-device"
 
@@ -275,7 +275,7 @@ class TestConvertContainersListToDict:
         """Dict-format containers (parsed via dacite) should yield DockerVolume objects."""
         yaml_content = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   my-container:
     image: "my:latest"
@@ -504,7 +504,7 @@ class TestRegistryInclude:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
 registry:
@@ -526,7 +526,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - releases.yaml
 registry:
@@ -552,7 +552,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
 registry:
@@ -580,7 +580,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
   - releases.yaml
@@ -606,7 +606,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - sub/devices.yaml
 registry:
@@ -648,7 +648,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - outer.yaml
 registry:
@@ -687,7 +687,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - a.yaml
 registry:
@@ -705,7 +705,7 @@ registry:
         """A missing include target causes SystemExit."""
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - nonexistent.yaml
 registry:
@@ -723,7 +723,7 @@ registry:
         """A non-list 'include' value causes SystemExit."""
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include: not-a-list
 registry:
   devices: []
@@ -755,7 +755,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - partial.yaml
 registry:
@@ -788,7 +788,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - containers.yaml
 containers:

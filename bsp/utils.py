@@ -18,7 +18,7 @@ from .models import Docker, DockerArg, DockerVolume, RegistryRoot
 # YAML Configuration Parser with Container Support
 # =============================================================================
 
-SUPPORTED_REGISTRY_VERSION = "2.0"
+SUPPORTED_REGISTRY_VERSION = "2.1"
 
 
 def read_yaml_file(filename: Path) -> str:
