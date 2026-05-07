@@ -87,7 +87,7 @@ specification:
   version: "2.1"
 ```
 
-The tool will exit with a clear error if `version` is not `"2.1"`.
+The tool will exit with a clear error if `version` is not compatible.  The schema follows [semantic versioning](https://semver.org/): the tool accepts any registry whose `version` has the same major number and a minor number ≤ `2.1` (e.g., both `"2.0"` and `"2.1"` are accepted).
 
 ---
 

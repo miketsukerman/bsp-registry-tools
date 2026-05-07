@@ -20,6 +20,11 @@ from .models import Docker, DockerArg, DockerVolume, RegistryRoot
 
 SUPPORTED_REGISTRY_VERSION = "2.1"
 
+# Registry schema follows semantic versioning (https://semver.org/).
+# Minor-version increments are backward compatible: a tool supporting version
+# MAJOR.MINOR accepts any registry that declares MAJOR.x where x <= MINOR.
+_SUPPORTED_MAJOR, _SUPPORTED_MINOR = (int(p) for p in SUPPORTED_REGISTRY_VERSION.split("."))
+
 
 def read_yaml_file(filename: Path) -> str:
     """
@@ -246,13 +251,22 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     """
     yaml_dict = _load_and_merge_includes(filename)
 
-    # Fail fast if the registry version is not supported
+    # Fail fast if the registry version is not supported.
+    # Schema follows semver: accept any MAJOR.x where x <= supported MINOR.
     spec = yaml_dict.get('specification') or {}
     version = spec.get('version') if isinstance(spec, dict) else None
-    if version != SUPPORTED_REGISTRY_VERSION:
+    _version_ok = False
+    if isinstance(version, str) and version.count(".") == 1:
+        try:
+            v_major, v_minor = (int(p) for p in version.split("."))
+            _version_ok = (v_major == _SUPPORTED_MAJOR and v_minor <= _SUPPORTED_MINOR)
+        except ValueError:
+            pass
+    if not _version_ok:
         logging.error(
             f"Unsupported registry version '{version}' in {filename}. "
-            f"This tool requires version '{SUPPORTED_REGISTRY_VERSION}'. "
+            f"This tool supports schema versions "
+            f"{_SUPPORTED_MAJOR}.0 – {SUPPORTED_REGISTRY_VERSION}. "
             f"See docs/migration-v1-to-v2.md in the bsp-registry-tools repository "
             f"for upgrade instructions."
         )

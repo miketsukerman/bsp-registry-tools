@@ -107,7 +107,9 @@ class Specification:
     Registry specification version.
 
     Attributes:
-        version: Specification version string (e.g., '2.1')
+        version: Specification version string (e.g., '2.0', '2.1').
+                 Schema follows semver; the tool accepts any version with the
+                 same major number and a minor number ≤ the supported version.
     """
     version: str
 
@@ -1051,7 +1053,7 @@ class RegistryRoot:
     Root container for the v2.1 registry configuration.
 
     Attributes:
-        specification: Specification version information (must be '2.1')
+        specification: Specification version information (must be '2.0' – '2.1')
         registry: Main registry data containing devices, releases, features, and presets
         containers: Dictionary of Docker container definitions keyed by name
         environment: Global environment applied to every build.  Contains
