@@ -718,7 +718,7 @@ bsp scan --device <d> --release <r> [--feature <f>] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--tool trivy\|syft+grype` | Scanner backend (default: `trivy`) |
+| `--tool trivy\|syft+grype\|emba` | Scanner backend (default: `trivy`) |
 | `--severity LEVEL` | Minimum CVE severity to report: `LOW`, `MEDIUM`, `HIGH` (default), `CRITICAL` |
 | `--fail-on LEVEL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` (default) |
 | `--sbom-format FORMAT` | SBOM format: `cyclonedx` (default), `spdx-json`, `spdx-tag-value` |
