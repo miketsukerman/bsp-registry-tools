@@ -129,6 +129,25 @@ class TestImageFlasherFindImage:
         assert result is not None
         assert result.name == "b.wic"
 
+    def test_debug_logs_search_patterns_and_selected_image(self, tmp_path, caplog):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        (images_dir / "core-image-minimal.wic").write_bytes(b"img")
+
+        flasher = self._make_flasher(patterns=["**/*.wic"])
+        with caplog.at_level(logging.DEBUG, logger="ImageFlasher"):
+            result = flasher._find_image(str(tmp_path))
+
+        assert result is not None
+        assert any(
+            "Searching for flash image with pattern '**/*.wic'" in r.message
+            for r in caplog.records
+        )
+        assert any(
+            "Selected flash image" in r.message and "core-image-minimal.wic" in r.message
+            for r in caplog.records
+        )
+
 
 # =============================================================================
 # ImageFlasher._find_bmap tests

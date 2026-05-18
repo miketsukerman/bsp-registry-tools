@@ -218,6 +218,15 @@ class ImageFlasher:
         """
         base = Path(build_path)
         all_matches: List[Path] = []
+        selected_pattern: Optional[str] = None
+        selected_search_dir: Optional[Path] = None
+
+        self.logger.debug(
+            "Searching flashable image under '%s' with artifact_dirs=%s and image_patterns=%s",
+            base,
+            self.config.artifact_dirs,
+            self.config.image_patterns,
+        )
 
         for artifact_dir in self.config.artifact_dirs:
             search_dir = base / artifact_dir
@@ -225,13 +234,27 @@ class ImageFlasher:
                 self.logger.debug("Artifact dir not found, skipping: %s", search_dir)
                 continue
             for pattern in self.config.image_patterns:
+                self.logger.debug(
+                    "Searching for flash image with pattern '%s' in '%s'.",
+                    pattern,
+                    search_dir,
+                )
                 matches = sorted(search_dir.glob(pattern))
-                for m in matches:
-                    if m.is_file() and m not in all_matches:
-                        all_matches.append(m)
+                file_matches = [m for m in matches if m.is_file() and m not in all_matches]
+                if file_matches:
+                    self.logger.debug(
+                        "Pattern '%s' matched %d candidate image(s).",
+                        pattern,
+                        len(file_matches),
+                    )
+                for m in file_matches:
+                    all_matches.append(m)
                 if all_matches:
                     # Return the first match for this pattern; lower-indexed
                     # patterns (more-compressed variants) win.
+                    if selected_pattern is None:
+                        selected_pattern = pattern
+                        selected_search_dir = search_dir
                     break
 
         if len(all_matches) > 1:
@@ -239,6 +262,19 @@ class ImageFlasher:
                 "Multiple flashable images found; using the first one: %s. "
                 "Use --image-path to select a specific image.",
                 all_matches[0],
+            )
+
+        if all_matches:
+            self.logger.debug(
+                "Selected flash image '%s' (pattern='%s', search_dir='%s').",
+                all_matches[0],
+                selected_pattern,
+                selected_search_dir,
+            )
+        else:
+            self.logger.debug(
+                "No flashable image matched configured patterns: %s",
+                self.config.image_patterns,
             )
 
         return all_matches[0] if all_matches else None
