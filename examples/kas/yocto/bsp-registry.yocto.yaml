@@ -1,5 +1,5 @@
 specification:
-  version: "2.1"
+  version: "2.2"
 
 # Container definitions for build environments
 containers:

@@ -79,7 +79,7 @@ When no `flash:` block is defined anywhere, sensible defaults are used.
 # bsp-registry.yaml
 
 specification:
-  version: "2.1"
+  version: "2.2"
 
 # -------------------------------------------------------------------
 # Global flash defaults (applied to every preset unless overridden)

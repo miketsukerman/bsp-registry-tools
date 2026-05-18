@@ -18,7 +18,7 @@ from .models import Docker, DockerArg, DockerVolume, RegistryRoot
 # YAML Configuration Parser with Container Support
 # =============================================================================
 
-SUPPORTED_REGISTRY_VERSION = "2.1"
+SUPPORTED_REGISTRY_VERSION = "2.2"
 
 # Registry schema follows semantic versioning (https://semver.org/).
 # Minor-version increments are backward compatible: a tool supporting version
