@@ -507,6 +507,16 @@ def main() -> int:
                 "Overrides 'build_options' in the registry container definition."
             )
         )
+        build_parser.add_argument(
+            "--no-cache",
+            dest="no_cache",
+            action="store_true",
+            default=False,
+            help=(
+                "Disable Docker layer cache when building the BSP container image. "
+                "Shorthand for --docker-build-options '--no-cache'."
+            ),
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -537,40 +547,31 @@ def main() -> int:
         # Containers command
         containers_parser = subparsers.add_parser(
             "containers",
-            help="List available containers or build a container image",
+            help="List or build container images from the registry",
         )
-        containers_subparsers = containers_parser.add_subparsers(
-            dest="containers_command",
-            help="Containers sub-command",
+        containers_parser.add_argument(
+            "containers_action",
+            nargs="?",
+            choices=["list", "build"],
+            default="list",
+            help="Action to perform: 'list' (default) to list containers, 'build' to build them",
         )
-
-        containers_build = containers_subparsers.add_parser(
-            "build",
-            help="Build a container image from its registry definition",
-        )
-        containers_build.add_argument(
+        containers_parser.add_argument(
             "container_name",
+            nargs="?",
             type=str,
+            default=None,
             help=(
-                "Container name to build, optionally prefixed with registry name "
-                "(registry:container)."
+                "Container name to build (only used with 'build'; omit to build all). "
+                "Supports 'registry:container' syntax in multi-registry mode."
             ),
         ).completer = ContainerCompleter()
-        cache_group = containers_build.add_mutually_exclusive_group()
-        cache_group.add_argument(
-            "--cache",
-            dest="use_cache",
-            action="store_const",
-            const=True,
-            default=None,
-            help="Force Docker build cache usage even if registry build_options include --no-cache",
-        )
-        cache_group.add_argument(
+        containers_parser.add_argument(
             "--no-cache",
-            dest="use_cache",
-            action="store_const",
-            const=False,
-            help="Disable Docker build cache for this container build",
+            dest="no_cache",
+            action="store_true",
+            default=False,
+            help="Disable Docker layer cache for the container build",
         )
 
         # ----------------------------------------------------------------

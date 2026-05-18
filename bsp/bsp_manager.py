@@ -1158,6 +1158,74 @@ class BspManager:
                 require_definition=True,
             )
 
+    def build_containers(
+        self,
+        container_name: Optional[str] = None,
+        *,
+        no_cache: bool = False,
+    ) -> None:
+        """Build container images from the registry.
+
+        When *container_name* is provided, only that container is built
+        (equivalent to ``build_container`` but using ``no_cache``).  When
+        omitted, every container across all loaded registries that has both
+        ``file`` and ``image`` set is built.
+
+        Containers that declare an ``image`` but no ``file`` (pre-built images
+        pulled from a registry) are skipped with a warning.  Containers with
+        neither ``file`` nor ``image`` are silently skipped.
+
+        Args:
+            container_name: Optional name of a single container to build;
+                            supports ``registry:container`` syntax in
+                            multi-registry mode.
+            no_cache: When ``True``, pass ``--no-cache`` to every ``docker
+                      build`` invocation.
+
+        Raises:
+            SystemExit: If a named container is not found, or if any build
+                        fails.
+        """
+        use_cache: Optional[bool] = False if no_cache else None
+
+        if container_name is not None:
+            self.build_container(container_name, use_cache=use_cache)
+            return
+
+        built = 0
+        skipped = 0
+        for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
+            reg_containers = reg_model.containers or {} if reg_model else {}
+            with self._use_registry_context(reg_model, reg_resolver, reg_path):
+                for cname, container in reg_containers.items():
+                    if not container.file or not container.image:
+                        if container.image and not container.file:
+                            logging.warning(
+                                "Container '%s' has an image but no Dockerfile ('file'); "
+                                "skipping build.",
+                                cname,
+                            )
+                        else:
+                            logging.debug(
+                                "Container '%s' has no image or file; skipping.", cname
+                            )
+                        skipped += 1
+                        continue
+                    logging.info(
+                        "Building container '%s' from registry '%s'", cname, reg_name
+                    )
+                    self._build_container_image(
+                        container,
+                        label=cname,
+                        use_cache=use_cache,
+                    )
+                    built += 1
+
+        if built == 0 and skipped == 0:
+            logging.info("No containers found in registry.")
+        else:
+            logging.info("Built %d container(s), skipped %d.", built, skipped)
+
     # ------------------------------------------------------------------
     # Build directory helpers
     # ------------------------------------------------------------------
