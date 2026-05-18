@@ -27,6 +27,21 @@ def expand_build_options_env(value: str) -> str:
         return os.environ.get(m.group(1), m.group(0))
     return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
 
+
+def normalize_build_option_tokens(tokens: List[str]) -> List[str]:
+    """Normalize docker build-option tokens for compatibility across engines.
+
+    Currently this rewrites ``--network=<mode>`` to ``--network <mode>``.
+    """
+    normalized: List[str] = []
+    for token in tokens:
+        if token.startswith("--network="):
+            network_mode = token.split("=", 1)[1]
+            normalized.extend(["--network", network_mode])
+        else:
+            normalized.append(token)
+    return normalized
+
 # =============================================================================
 # YAML Configuration Parser with Container Support
 # =============================================================================
@@ -374,7 +389,8 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         #   build_options: "$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
         # and have the variable resolved at build time.
         if build_options:
-            cmd.extend(shlex.split(expand_build_options_env(build_options)))
+            raw_tokens = shlex.split(expand_build_options_env(build_options))
+            cmd.extend(normalize_build_option_tokens(raw_tokens))
 
         cmd.extend(["."])  # Build context is current directory
 

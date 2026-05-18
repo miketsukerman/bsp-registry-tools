@@ -15,7 +15,7 @@ from bsp import (
     get_registry_from_yaml_file,
     convert_containers_list_to_dict,
 )
-from bsp.utils import build_docker, _deep_merge_yaml_dicts
+from bsp.utils import build_docker, normalize_build_option_tokens, _deep_merge_yaml_dicts
 from .conftest import INVALID_YAML, MINIMAL_REGISTRY_YAML, REGISTRY_WITH_ENV_YAML
 
 
@@ -483,6 +483,47 @@ class TestBuildDocker:
         assert "version=1 2" in cmd
 
     @patch("bsp.utils.subprocess.run")
+    def test_build_options_network_equals_form_normalized(self, mock_run, tmp_path):
+        """`--network=host` in build_options is translated to `--network host` tokens."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(
+            dockerfile_dir,
+            "Dockerfile",
+            "test-image:latest",
+            build_options="--network=host",
+        )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--network=host" not in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--network") + 1 == cmd.index("host")
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_network_equals_via_env_expanded_and_normalized(
+        self, mock_run, tmp_path, monkeypatch
+    ):
+        """$ENV expansion keeps `--network=host` effective by normalizing to two tokens."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        monkeypatch.setenv("MY_DOCKER_BUILD_FLAGS", "--network=host")
+        build_docker(
+            dockerfile_dir,
+            "Dockerfile",
+            "test-image:latest",
+            build_options="$ENV{MY_DOCKER_BUILD_FLAGS}",
+        )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--network=host" not in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--network") + 1 == cmd.index("host")
+
+    @patch("bsp.utils.subprocess.run")
     def test_no_cache_appends_flag(self, mock_run, tmp_path):
         """Passing build_options='--no-cache' adds --no-cache to the docker command."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -533,6 +574,22 @@ class TestBuildDocker:
                      build_options="$ENV{_BSP_UNSET_VAR_}")
 
         assert mock_run.called
+
+
+class TestNormalizeBuildOptionTokens:
+    def test_network_equals_is_split_to_two_tokens(self):
+        tokens = normalize_build_option_tokens(["--network=host"])
+        assert tokens == ["--network", "host"]
+
+    def test_multiple_network_equals_tokens_are_all_normalized(self):
+        tokens = normalize_build_option_tokens(
+            ["--network=host", "--label", "x=1", "--network=none"]
+        )
+        assert tokens == ["--network", "host", "--label", "x=1", "--network", "none"]
+
+    def test_empty_network_value_is_preserved_after_normalization(self):
+        tokens = normalize_build_option_tokens(["--network="])
+        assert tokens == ["--network", ""]
 
 
 # =============================================================================
