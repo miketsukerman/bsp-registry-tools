@@ -1607,6 +1607,7 @@ required to use `bsp flash`.
 flash:
   tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
   image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/{build_target}-*.wic.*" # expanded at runtime when --target is given (first priority)
     - "**/*.wic.bz2"
     - "**/*.wic.gz"
     - "**/*.wic.xz"
@@ -1623,7 +1624,7 @@ flash:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (uses block-map for fast, verified flashing), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
-| `image_patterns` | list[str] | See above | Glob patterns for flashable image discovery, evaluated in order. When `bsp build --target <name> --flash ...` is used, `{build_target}` placeholders are expanded in patterns. |
+| `image_patterns` | list[str] | See above | Glob patterns for flashable image discovery, evaluated in order. Patterns may contain `{build_target}` which is expanded to the BitBake target name when `bsp build --target <name> --flash ...` or `bsp flash --build-target <name>` is used; the exact target pattern `**/<target>.wic.*` is also prepended automatically as the highest-priority entry. |
 | `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
 | `extra_args` | string (opt.) | `null` | Extra arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
 

@@ -87,6 +87,7 @@ specification:
 flash:
   tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
   image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/{build_target}-*.wic.*" # expanded at runtime when --target is given (first priority)
     - "**/*.wic.bz2"              # most-compressed variant preferred
     - "**/*.wic.gz"
     - "**/*.wic.xz"
@@ -122,9 +123,46 @@ registry:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `tool` | `bmaptool` | Flash tool: `bmaptool`, `dd`, or `uuu` (NXP mfgtools) |
-| `image_patterns` | `["**/*.wic.bz2", "**/*.wic.gz", "**/*.wic.xz", "**/*.wic", "**/*.sdimg", "**/*.rpi-sdimg"]` | Glob patterns (relative to each artifact directory) used to discover flashable images. Evaluated in order; the first match wins. During `bsp build --target <name> --flash ...`, `{build_target}` placeholders are expanded. |
+| `image_patterns` | `["**/*.wic.bz2", "**/*.wic.gz", "**/*.wic.xz", "**/*.wic", "**/*.sdimg", "**/*.rpi-sdimg"]` | Glob patterns (relative to each artifact directory) used to discover flashable images. Evaluated in order; the first match wins. Patterns may contain `{build_target}` which is expanded to the BitBake target name at runtime (see below). |
 | `artifact_dirs` | `["tmp/deploy/images"]` | Subdirectories under the build output path to search for images |
 | `extra_args` | `null` | Additional arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"` to skip block-map verification even when a `.bmap` file is present) |
+
+### `{build_target}` placeholder in patterns
+
+When `bsp build --target <name> --flash ...` (or `bsp flash --build-target <name>`) is
+used, any `{build_target}` placeholder in `image_patterns` is replaced with the
+actual BitBake target name at runtime.  This lets you write generic registry files
+that automatically prefer the image produced by the requested build target.
+
+**Example** — registry YAML:
+
+```yaml
+flash:
+  image_patterns:
+    - "**/{build_target}-*.wic.*"   # target-specific variant; highest priority when --target is given
+    - "**/*.wic.bz2"
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic"
+```
+
+When `bsp build my-preset --target core-image-minimal --flash /dev/sdb` runs:
+
+1. `**/{build_target}-*.wic.*` → `**/core-image-minimal-*.wic.*` (expanded)
+2. An additional exact-match pattern `**/core-image-minimal.wic.*` is **prepended** automatically as the highest-priority entry.
+3. The resulting effective pattern list is:
+   ```
+   **/core-image-minimal.wic.*          ← auto-prepended (highest priority)
+   **/core-image-minimal-*.wic.*        ← from registry (after expansion)
+   **/*.wic.bz2
+   **/*.wic.gz
+   **/*.wic.xz
+   **/*.wic
+   ```
+
+If `--target` is **not** supplied, `{build_target}` placeholders remain literal
+and will not match any real file path — omit them from the fallback patterns if
+you do not always provide a target.
 
 ### Config merge order
 
@@ -245,6 +283,16 @@ image automatically:
 4. When more than one file matches the winning pattern, a `WARNING` is logged
    and the **first** (alphabetically earliest) file is used.  Specify
    `--image-path` to select a particular file when multiple images exist.
+
+### `{build_target}` placeholder expansion
+
+Before the patterns are evaluated, any `{build_target}` token in each pattern
+string is replaced with the BitBake target name supplied via `--target`.  In
+addition, the exact pattern `**/<target>.wic.*` is always **prepended** as the
+highest-priority entry so that the exact output image for the requested target
+is tried first.
+
+See [above](#build_target-placeholder-in-patterns) for a worked example.
 
 ### Block-map (`.bmap`) discovery
 
