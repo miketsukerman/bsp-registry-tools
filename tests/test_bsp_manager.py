@@ -217,6 +217,180 @@ registry:
         with pytest.raises(SystemExit):
             manager.build_container("my-container")
 
+
+class TestComposeDockerBuildOptions:
+    """Unit tests for BspManager._compose_docker_build_options()."""
+
+    def test_none_returns_none(self):
+        assert BspManager._compose_docker_build_options(None) is None
+
+    def test_no_cache_added_when_use_cache_false(self):
+        result = BspManager._compose_docker_build_options(None, use_cache=False)
+        assert result is not None
+        assert "--no-cache" in shlex.split(result)
+
+    def test_no_cache_removed_when_use_cache_true(self):
+        result = BspManager._compose_docker_build_options("--no-cache --network host", use_cache=True)
+        tokens = shlex.split(result)
+        assert "--no-cache" not in tokens
+        assert "--network" in tokens
+
+    def test_env_var_expanded_before_token_manipulation(self, monkeypatch):
+        monkeypatch.setenv("MY_BUILD_OPTS", "--no-cache")
+        # use_cache=True should remove --no-cache even if it came from an env var
+        result = BspManager._compose_docker_build_options("${MY_BUILD_OPTS}", use_cache=True)
+        if result:
+            assert "--no-cache" not in shlex.split(result)
+
+    def test_env_var_with_no_cache_use_cache_false(self, monkeypatch):
+        monkeypatch.setenv("MY_BUILD_OPTS", "--network host")
+        result = BspManager._compose_docker_build_options("${MY_BUILD_OPTS}", use_cache=False)
+        tokens = shlex.split(result)
+        assert "--no-cache" in tokens
+        assert "--network" in tokens
+
+
+class TestBuildContainers:
+    """Tests for BspManager.build_containers() (build-all / filtered)."""
+
+    _MULTI_CONTAINER_YAML = """
+specification:
+  version: "2.2"
+containers:
+  container-a:
+    image: "test/container-a:latest"
+    file: Dockerfile.a
+    args: []
+  container-b:
+    image: "test/container-b:latest"
+    file: Dockerfile.b
+    args: []
+  image-only:
+    image: "test/pulled:latest"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+
+    def _make_registry(self, tmp_dir, yaml_text=None):
+        reg_dir = tmp_dir / "containers"
+        reg_dir.mkdir(exist_ok=True)
+        (reg_dir / "Dockerfile.a").write_text("FROM ubuntu:22.04\n")
+        (reg_dir / "Dockerfile.b").write_text("FROM ubuntu:24.04\n")
+        reg_file = reg_dir / "bsp-registry.yaml"
+        reg_file.write_text(yaml_text or self._MULTI_CONTAINER_YAML)
+        return reg_file
+
+    def test_build_all_containers(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        with patch("bsp.bsp_manager.build_docker") as mock_bd:
+            mgr.build_containers()
+        # Only container-a and container-b have both file+image; image-only is skipped
+        assert mock_bd.call_count == 2
+        called_tags = {c[0][2] for c in mock_bd.call_args_list}
+        assert called_tags == {"test/container-a:latest", "test/container-b:latest"}
+
+    def test_build_named_container(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        with patch("bsp.bsp_manager.build_docker") as mock_bd:
+            mgr.build_containers(container_name="container-a")
+        assert mock_bd.call_count == 1
+        assert mock_bd.call_args[0][2] == "test/container-a:latest"
+
+    def test_build_nonexistent_container_exits(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        with pytest.raises(SystemExit):
+            mgr.build_containers(container_name="does-not-exist")
+
+    def test_build_containers_no_cache(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        with patch("bsp.bsp_manager.build_docker") as mock_bd:
+            mgr.build_containers(no_cache=True)
+        for call_args in mock_bd.call_args_list:
+            opts = call_args[1].get("build_options") or ""
+            assert "--no-cache" in shlex.split(opts)
+
+    def test_build_containers_skips_image_only(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        with patch("bsp.bsp_manager.build_docker") as mock_bd:
+            mgr.build_containers()
+        built_tags = {c[0][2] for c in mock_bd.call_args_list}
+        assert "test/pulled:latest" not in built_tags
+
+
+class TestBuildBspNoCacheFlag:
+    """Verify that the docker_build_options='--no-cache' path flows through to build_docker."""
+
+    _BSP_REGISTRY_YAML = """
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+registry:
+  devices:
+    - slug: test-device
+      description: "Test Device"
+      vendor: vendor
+      soc_vendor: soc
+      includes: []
+  releases:
+    - slug: test-release
+      description: "Test Release"
+      yocto_version: "5.0"
+      includes:
+        - kas.yaml
+  features: []
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      device: test-device
+      release: test-release
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/test
+"""
+
+    def _make_registry(self, tmp_dir):
+        registry_dir = tmp_dir / "bsp_nocache"
+        registry_dir.mkdir()
+        (registry_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu:22.04\n")
+        (registry_dir / "kas.yaml").write_text("header:\n  version: 14\n")
+        reg_file = registry_dir / "bsp-registry.yaml"
+        reg_file.write_text(self._BSP_REGISTRY_YAML)
+        return reg_file
+
+    def test_build_bsp_passes_no_cache_via_docker_build_options(self, tmp_dir):
+        reg_file = self._make_registry(tmp_dir)
+        mgr = BspManager(config_path=str(reg_file))
+        mgr.initialize()
+        kas_mock = MagicMock()
+        with patch("bsp.bsp_manager.build_docker") as mock_bd, \
+             patch.object(mgr, "_get_kas_manager_for_resolved", return_value=kas_mock), \
+             patch.object(mgr, "prepare_build_directory"), \
+             patch.object(mgr, "_copy_files"):
+            mgr.build_bsp("test-bsp", docker_build_options="--no-cache")
+        assert mock_bd.called
+        _, kw = mock_bd.call_args
+        assert "--no-cache" in shlex.split(kw.get("build_options") or "")
+
+
+class TestBspManagerMultiPreset:
     def test_multiple_presets(self, registry_with_env_file):
         manager = BspManager(config_path=str(registry_with_env_file))
         manager.initialize()

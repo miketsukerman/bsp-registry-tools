@@ -260,27 +260,97 @@ class TestContainersCommand:
             "bsp", "--registry", str(registry_file),
             "containers", "build", "ubuntu-22.04"
         ]):
-            with patch.object(BspManager, "build_container") as mock_build_container:
+            with patch.object(BspManager, "build_containers") as mock_build:
                 exit_code = bsp.main()
         assert exit_code == 0
-        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=None)
+        mock_build.assert_called_once_with(
+            container_name="ubuntu-22.04", no_cache=False
+        )
 
     def test_containers_build_no_cache_dispatches_to_manager(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
             "containers", "build", "ubuntu-22.04", "--no-cache"
         ]):
-            with patch.object(BspManager, "build_container") as mock_build_container:
+            with patch.object(BspManager, "build_containers") as mock_build:
                 exit_code = bsp.main()
         assert exit_code == 0
-        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=False)
+        mock_build.assert_called_once_with(
+            container_name="ubuntu-22.04", no_cache=True
+        )
 
-    def test_containers_build_cache_dispatches_to_manager(self, registry_file):
+    def test_containers_build_all_when_no_name(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
-            "containers", "build", "ubuntu-22.04", "--cache"
+            "containers", "build"
         ]):
-            with patch.object(BspManager, "build_container") as mock_build_container:
+            with patch.object(BspManager, "build_containers") as mock_build:
                 exit_code = bsp.main()
         assert exit_code == 0
-        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=True)
+        mock_build.assert_called_once_with(
+            container_name=None, no_cache=False
+        )
+
+    def test_containers_build_all_no_cache(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "--no-cache"
+        ]):
+            with patch.object(BspManager, "build_containers") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            container_name=None, no_cache=True
+        )
+
+    def test_containers_no_action_lists(self, registry_file, capsys):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers"
+        ]):
+            exit_code = bsp.main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "ubuntu-22.04" in captured.out
+
+    def test_containers_list_explicit(self, registry_file, capsys):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "list"
+        ]):
+            exit_code = bsp.main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "ubuntu-22.04" in captured.out
+
+
+class TestBuildNoCacheFlag:
+    def test_bsp_build_no_cache_passes_docker_build_options(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp", "--no-cache"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_build_bsp.call_args
+        assert kwargs.get("docker_build_options") is not None
+        import shlex
+        assert "--no-cache" in shlex.split(kwargs["docker_build_options"])
+
+    def test_bsp_build_no_cache_combined_with_docker_build_options(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp",
+            "--no-cache", "--docker-build-options", "--network host"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_build_bsp.call_args
+        opts = kwargs.get("docker_build_options") or ""
+        import shlex
+        tokens = shlex.split(opts)
+        assert "--no-cache" in tokens
+        assert "--network" in tokens
+        assert "host" in tokens

@@ -440,18 +440,45 @@ separate — their definitions are never merged together.
 | `--remote NAME` | Show only entries from the named remote registry |
 | `--device DEVICE`, `-d DEVICE` | Filter releases by device slug (only used with `releases`) |
 
-#### `containers` — List available container definitions or build a container image
+#### `containers` — List container definitions or build container images
 
 ```bash
+# List all container definitions (default action)
 bsp containers
+bsp containers list
+
+# Build all containers that have a Dockerfile
+bsp containers build
+bsp containers build --no-cache          # force clean Docker rebuild
+
+# Build a single named container
 bsp containers build debian-bookworm
 bsp containers build debian-bookworm --no-cache
-bsp containers build debian-bookworm --cache
+
+# Multi-registry: target a specific registry
+bsp containers build upstream:debian-bookworm
 ```
 
-Use `registry:container` in multi-registry mode to target a specific registry’s
-container definition. `--no-cache` appends Docker’s `--no-cache` flag, while
-`--cache` removes it from the effective build options for that invocation.
+The `build` action iterates every container in the registry that has both an
+`image` and a `file` (Dockerfile) and builds each one. Containers with only an
+`image` (pre-built images pulled from a registry) are skipped with a warning.
+Pass a name to build only that single container.
+
+`--no-cache` passes Docker’s `--no-cache` flag to the build invocation,
+bypassing the layer cache.
+
+The `build_options` field in the registry and the `--docker-build-options` CLI
+flag both support **environment variable expansion** at build time:
+
+```yaml
+containers:
+  my-image:
+    image: "my-org/my-image:latest"
+    file: Dockerfile
+    build_options: "${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+```
+
+If the variable is unset the reference is passed through unchanged.
 
 #### `tree` — Display a tree view of the BSP registry
 
@@ -567,6 +594,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--lava-server URL` | LAVA server base URL override (overrides registry `lava.server`) |
 | `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
+| `--no-cache` | Disable Docker layer cache when building the BSP container image |
+| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition. Supports environment variable references such as `${MY_FLAGS}`. |
 
 **Examples:**
 
@@ -600,6 +629,12 @@ bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-conta
 
 # Build and trigger LAVA test, wait for result
 bsp build poky-qemuarm64-scarthgap --test --wait
+
+# Force a clean Docker build (no layer cache)
+bsp build poky-qemuarm64-scarthgap --no-cache
+
+# Pass extra Docker build flags (e.g. use host network during build)
+bsp build poky-qemuarm64-scarthgap --docker-build-options "--network host"
 
 # Build with LAVA credential overrides
 bsp build poky-qemuarm64-scarthgap --test --wait \

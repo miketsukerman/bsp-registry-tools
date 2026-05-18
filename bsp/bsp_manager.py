@@ -1103,8 +1103,15 @@ class BspManager:
         base_options: Optional[str],
         use_cache: Optional[bool] = None,
     ) -> Optional[str]:
-        """Apply cache policy on top of an optional docker-build options string."""
-        tokens = shlex.split(base_options) if base_options else []
+        """Apply cache policy on top of an optional docker-build options string.
+
+        Environment variables in *base_options* are expanded before any token
+        manipulation so that patterns like ``${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``
+        are resolved correctly (e.g. when determining whether ``--no-cache`` is
+        already present).
+        """
+        expanded = os.path.expandvars(base_options) if base_options else None
+        tokens = shlex.split(expanded) if expanded else []
         if use_cache is True:
             tokens = [token for token in tokens if token != "--no-cache"]
         elif use_cache is False and "--no-cache" not in tokens:
@@ -1186,6 +1193,8 @@ class BspManager:
             SystemExit: If a named container is not found, or if any build
                         fails.
         """
+        # use_cache=False tells _compose_docker_build_options to add --no-cache;
+        # use_cache=None means "defer to registry build_options" (no override).
         use_cache: Optional[bool] = False if no_cache else None
 
         if container_name is not None:

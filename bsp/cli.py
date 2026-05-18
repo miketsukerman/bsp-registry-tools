@@ -1351,6 +1351,11 @@ def main() -> int:
             task = getattr(args, "task", None)
             build_path = getattr(args, "build_path", None)
             docker_build_options = getattr(args, "docker_build_options", None)
+            no_cache = getattr(args, "no_cache", False)
+            if no_cache:
+                docker_build_options = BspManager._compose_docker_build_options(
+                    docker_build_options, use_cache=False
+                )
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -1433,11 +1438,11 @@ def main() -> int:
                 bsp_mgr.list_bsp(use_color=use_color, registry_filter=registry_filter)
 
         elif args.command == "containers":
-            containers_command = getattr(args, "containers_command", None)
-            if containers_command == "build":
-                bsp_mgr.build_container(
-                    getattr(args, "container_name"),
-                    use_cache=getattr(args, "use_cache", None),
+            action = getattr(args, "containers_action", "list")
+            if action == "build":
+                bsp_mgr.build_containers(
+                    container_name=getattr(args, "container_name", None),
+                    no_cache=getattr(args, "no_cache", False),
                 )
             else:
                 bsp_mgr.list_containers(use_color=not args.no_color)

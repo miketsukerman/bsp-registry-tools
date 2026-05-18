@@ -326,6 +326,8 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         build_options: Extra flags appended to the ``docker build`` command
                        before the build context (e.g. ``--no-cache
                        --network host``).  Split with shell quoting rules.
+                       Environment variables in the value are expanded at
+                       build time (e.g. ``${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``).
 
     Raises:
         SystemExit: If Docker build fails, prerequisites are missing, or Docker is unavailable
@@ -355,9 +357,12 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
             for argument in build_args:
                 cmd.extend(["--build-arg", f"{argument.name}={argument.value}"])
 
-        # Add extra build options (e.g. --no-cache, --network host)
+        # Add extra build options (e.g. --no-cache, --network host).
+        # Expand environment variables so users can write
+        #   build_options: "${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+        # and have the variable resolved at build time.
         if build_options:
-            cmd.extend(shlex.split(build_options))
+            cmd.extend(shlex.split(os.path.expandvars(build_options)))
 
         cmd.extend(["."])  # Build context is current directory
 
