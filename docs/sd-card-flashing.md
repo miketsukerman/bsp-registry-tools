@@ -122,7 +122,7 @@ registry:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `tool` | `bmaptool` | Flash tool: `bmaptool`, `dd`, or `uuu` (NXP mfgtools) |
-| `image_patterns` | `["**/*.wic.bz2", "**/*.wic.gz", "**/*.wic.xz", "**/*.wic", "**/*.sdimg", "**/*.rpi-sdimg"]` | Glob patterns (relative to each artifact directory) used to discover flashable images. Evaluated in order; the first match wins. |
+| `image_patterns` | `["**/*.wic.bz2", "**/*.wic.gz", "**/*.wic.xz", "**/*.wic", "**/*.sdimg", "**/*.rpi-sdimg"]` | Glob patterns (relative to each artifact directory) used to discover flashable images. Evaluated in order; the first match wins. During `bsp build --target <name> --flash ...`, `{build_target}` placeholders are expanded. |
 | `artifact_dirs` | `["tmp/deploy/images"]` | Subdirectories under the build output path to search for images |
 | `extra_args` | `null` | Additional arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"` to skip block-map verification even when a `.bmap` file is present) |
 

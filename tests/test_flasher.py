@@ -664,6 +664,37 @@ class TestBspManagerFlashBsp:
         assert flash_cfg.image_patterns.count(target_pattern) == 1
         assert flash_cfg.image_patterns[0] == target_pattern
 
+    def test_flash_resolved_expands_build_target_pattern_placeholders(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        resolved, _ = mgr.resolver.resolve_preset("test-bsp")
+
+        with patch.object(
+            mgr,
+            "_resolve_flash_config",
+            return_value=FlashConfig(
+                image_patterns=["**/{build_target}-*.wic.*", "**/*.wic"]
+            ),
+        ):
+            with patch("bsp.bsp_manager.ImageFlasher") as mock_flasher_cls:
+                mock_flasher = mock_flasher_cls.return_value
+                mock_flasher.flash.return_value = FlashResult(
+                    image_path=tmp_path / "test-image.wic",
+                    target_device="/dev/sdb",
+                    success=True,
+                    dry_run=True,
+                )
+
+                mgr._flash_resolved(
+                    resolved,
+                    target_device="/dev/sdb",
+                    build_target="core-image-minimal",
+                    dry_run=True,
+                )
+
+        flash_cfg = mock_flasher_cls.call_args[0][0]
+        assert flash_cfg.image_patterns[0] == "**/core-image-minimal.wic.*"
+        assert "**/core-image-minimal-*.wic.*" in flash_cfg.image_patterns
+
 
 # =============================================================================
 # CLI argument parsing tests
