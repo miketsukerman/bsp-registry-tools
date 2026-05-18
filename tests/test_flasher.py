@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
+import logging
 import pytest
 
 from bsp.flasher import FlashResult, ImageFlasher
@@ -107,7 +108,6 @@ class TestImageFlasherFindImage:
         (images_dir / "a.wic").write_bytes(b"a")
         (images_dir / "b.wic").write_bytes(b"b")
 
-        import logging
         with caplog.at_level(logging.WARNING, logger="ImageFlasher"):
             flasher = self._make_flasher(patterns=["**/*.wic"])
             flasher._find_image(str(tmp_path))
@@ -201,7 +201,6 @@ class TestImageFlasherCheckTool:
                 flasher._check_tool_availability()
 
     def test_exit_message_contains_tool_name(self, caplog):
-        import logging
         cfg = FlashConfig(tool="bmaptool")
         flasher = ImageFlasher(cfg)
         with patch("shutil.which", return_value=None):
@@ -341,7 +340,6 @@ class TestImageFlasherFlash:
         assert result.success is False
 
     def test_warns_when_device_does_not_exist(self, tmp_path, caplog):
-        import logging
         images_dir = tmp_path / "tmp" / "deploy" / "images"
         images_dir.mkdir(parents=True)
         img = images_dir / "image.wic"
