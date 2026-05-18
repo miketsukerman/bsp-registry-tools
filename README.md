@@ -228,7 +228,7 @@ Create a `bsp-registry.yaml` or `bsp-registry.yml` file (see [examples/bsp-regis
 
 ```yaml
 specification:
-  version: "2.1"
+  version: "2.2"
 
 environment:
   variables:
@@ -1159,7 +1159,7 @@ CLI flags (`--lava-server`, `--lava-token`, `--artifact-url`) override both.
 # bsp-registry.yaml
 
 specification:
-  version: "2.1"
+  version: "2.2"
 
 # Registry-level LAVA connection settings
 lava:
@@ -1285,13 +1285,13 @@ suites: list[LavaTestSuite] = client.get_job_results(job_id)
 
 ## Registry Configuration Reference
 
-The BSP registry is a YAML file following **schema v2.1**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
+The BSP registry is a YAML file following **schema v2.2**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
 
 ### `specification`
 
 ```yaml
 specification:
-  version: "2.1"
+  version: "2.2"
 ```
 
 ### `include` (optional)
@@ -1861,7 +1861,7 @@ bsp-registry-tools/
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
-│   ├── models.py             # Dataclass models (v2.1 schema)
+│   ├── models.py             # Dataclass models (v2.2 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
 │   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
@@ -1886,7 +1886,7 @@ bsp-registry-tools/
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
 ├── docs/
-│   ├── registry-v2.md        # Full v2.1 schema reference
+│   ├── registry-v2.md        # Full v2.2 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
 │   ├── server.md             # HTTP server (REST + GraphQL) reference

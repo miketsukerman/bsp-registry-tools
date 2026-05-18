@@ -1,5 +1,5 @@
 """
-Configuration data classes for BSP registry definitions (schema v2.1).
+Configuration data classes for BSP registry definitions (schema v2.2).
 """
 
 from dataclasses import dataclass, field
@@ -107,7 +107,7 @@ class Specification:
     Registry specification version.
 
     Attributes:
-        version: Specification version string (e.g., '2.0', '2.1').
+        version: Specification version string (e.g., '2.0', '2.2').
                  Schema follows semver; the tool accepts any version with the
                  same major number and a minor number ≤ the supported version.
     """
@@ -115,7 +115,7 @@ class Specification:
 
 
 # =============================================================================
-# v2.1 Data Classes
+# v2.2 Data Classes
 # =============================================================================
 
 @dataclass
@@ -977,7 +977,7 @@ class BspPreset:
 @dataclass
 class Registry:
     """
-    Main v2.1 registry containing devices, releases, features, distros, and presets.
+    Main v2.2 registry containing devices, releases, features, distros, and presets.
 
     Attributes:
         devices: List of hardware device definitions
@@ -1096,10 +1096,10 @@ class DeployConfig:
 @dataclass
 class RegistryRoot:
     """
-    Root container for the v2.1 registry configuration.
+    Root container for the v2.2 registry configuration.
 
     Attributes:
-        specification: Specification version information (must be '2.0' – '2.1')
+        specification: Specification version information (must be '2.0' – '2.2')
         registry: Main registry data containing devices, releases, features, and presets
         containers: Dictionary of Docker container definitions keyed by name
         environment: Global environment applied to every build.  Contains

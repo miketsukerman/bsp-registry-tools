@@ -1,12 +1,12 @@
-# BSP Registry Schema v2.1
+# BSP Registry Schema v2.2
 
-This document describes the v2.1 registry YAML schema used by `bsp-registry-tools`.
+This document describes the v2.2 registry YAML schema used by `bsp-registry-tools`.
 
 ---
 
 ## Overview
 
-Schema v2.1 separates the registry into independent sections:
+Schema v2.2 separates the registry into independent sections:
 
 | Section        | Purpose                                                       |
 |----------------|---------------------------------------------------------------|
@@ -34,7 +34,7 @@ the root file's own content is applied.
 
 ```yaml
 specification:
-  version: "2.1"          # required
+  version: "2.2"          # required
 
 include:                  # optional – list of additional registry files to merge in
   - devices/boards.yaml
@@ -85,10 +85,10 @@ deploy:                   # optional – global cloud deployment configuration
 
 ```yaml
 specification:
-  version: "2.1"
+  version: "2.2"
 ```
 
-The tool will exit with a clear error if `version` is not compatible.  The schema follows [semantic versioning](https://semver.org/): the tool accepts any registry whose `version` has the same major number and a minor number ≤ `2.1` (e.g., both `"2.0"` and `"2.1"` are accepted).
+The tool will exit with a clear error if `version` is not compatible.  The schema follows [semantic versioning](https://semver.org/): the tool accepts any registry whose `version` has the same major number and a minor number ≤ `2.2` (e.g., `"2.0"`, `"2.1"`, and `"2.2"` are accepted).
 
 ---
 
@@ -102,7 +102,7 @@ is applied, so entries in the including file always take precedence.
 ```yaml
 # registry.yaml  ← main file (must contain specification)
 specification:
-  version: "2.1"
+  version: "2.2"
 
 include:
   - devices/boards.yaml      # relative to the directory of this file
@@ -454,7 +454,7 @@ registry:
 | `local_conf` | list[str]            | Lines appended to `local.conf` for this device                              |
 | `copy`       | list[dict[str, str]] | Files to copy into the build environment before the build starts. Each entry is a single-key dict `{"source": "destination"}`. The source is resolved relative to the registry file's parent directory. The destination is resolved relative to the BSP's build directory, so `scripts/` means a `scripts/` subdirectory *inside* the BSP output folder (e.g. `build/my-bsp/scripts/`). If the destination ends with `/` or is an existing directory, the source filename is preserved. |
 
-> **Note on build output path and container:** In v2.1 the container and output path are **optional** preset-level overrides configured in the preset's `build:` block (see [`registry.bsp`](#registrybsp-optional-presets) below).  When `build:` is absent, or when individual fields are omitted, the container falls back to the release's named environment (or `"default"`), and the path is auto-composed as `build/<distro>-<device>-<release>`.  New registries should use the flat `includes`/`local_conf`/`copy` fields directly on the device instead of the legacy `device.build:` nested block.
+> **Note on build output path and container:** In v2.2 the container and output path are **optional** preset-level overrides configured in the preset's `build:` block (see [`registry.bsp`](#registrybsp-optional-presets) below).  When `build:` is absent, or when individual fields are omitted, the container falls back to the release's named environment (or `"default"`), and the path is auto-composed as `build/<distro>-<device>-<release>`.  New registries should use the flat `includes`/`local_conf`/`copy` fields directly on the device instead of the legacy `device.build:` nested block.
 
 ---
 
@@ -1347,7 +1347,7 @@ files.
 
 ```yaml
 specification:
-  version: "2.1"
+  version: "2.2"
 
 # Global environment: variables and file copies applied to every build
 environment:
