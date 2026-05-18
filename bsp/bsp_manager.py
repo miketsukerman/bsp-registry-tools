@@ -204,17 +204,22 @@ class BspManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
+    def _parse_registry_qualified(value: str) -> Tuple[Optional[str], str]:
         """Split a registry-qualified value into ``(registry_name, item_name)``.
 
         If *value* contains no colon the returned registry_name is ``None``.
-        Despite the method name this helper is also reused for selectors such as
-        ``registry:container``.
+        Supports both preset selectors (``registry:preset``) and container
+        selectors (``registry:container``).
         """
         if ":" in value:
             registry_name, item_name = value.split(":", 1)
             return registry_name.strip(), item_name.strip()
         return None, value
+
+    @staticmethod
+    def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
+        """Backward-compatible wrapper for parsing ``registry:preset`` values."""
+        return BspManager._parse_registry_qualified(value)
 
     def _iter_registries(self) -> Iterator[Tuple[str, object, V2Resolver, Path]]:
         """Iterate over (name, model, resolver, config_path) tuples for all registries."""
@@ -292,7 +297,7 @@ class BspManager:
         Raises:
             SystemExit: If the registry or preset is not found.
         """
-        registry_hint, preset_name = self._parse_registry_preset(bsp_name)
+        registry_hint, preset_name = self._parse_registry_qualified(bsp_name)
 
         if registry_hint is not None:
             # Look only in the named registry
@@ -1048,7 +1053,7 @@ class BspManager:
         self, container_name: str
     ) -> Tuple[Docker, str, object, V2Resolver, Path]:
         """Resolve a named container across all loaded registries."""
-        registry_hint, plain_name = self._parse_registry_preset(container_name)
+        registry_hint, plain_name = self._parse_registry_qualified(container_name)
         matches: List[Tuple[Docker, str, object, V2Resolver, Path]] = []
 
         if registry_hint is not None:
