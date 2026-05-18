@@ -2349,8 +2349,8 @@ class BspManager:
             target_device: Block device path (e.g. ``/dev/sdb``).
             preset: Optional BSP preset (for flash config merge).
             build_target: Optional BitBake target used by ``bsp build --target``.
-                          When provided, an additional image pattern
-                          ``**/{build_target}*.wic.*`` is appended for
+                          When provided, an additional high-priority image pattern
+                          ``**/{build_target}.wic.*`` is prepended for
                           auto-discovery.
             flash_overrides: CLI-level overrides for the flash configuration.
             image_path: Explicit path to the image file to flash.  Overrides
@@ -2363,11 +2363,11 @@ class BspManager:
         """
         flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
         if build_target:
-            target_pattern = f"**/{build_target}*.wic.*"
+            target_pattern = f"**/{build_target}.wic.*"
             patterns = list(flash_cfg.image_patterns or [])
-            if target_pattern not in patterns:
-                patterns.append(target_pattern)
-                flash_cfg = replace(flash_cfg, image_patterns=patterns)
+            patterns = [p for p in patterns if p != target_pattern]
+            patterns.insert(0, target_pattern)
+            flash_cfg = replace(flash_cfg, image_patterns=patterns)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )

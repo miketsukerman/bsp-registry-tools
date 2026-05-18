@@ -605,7 +605,7 @@ class TestBspManagerFlashBsp:
         assert call_kwargs["target_device"] == "/dev/sdb"
         assert call_kwargs["dry_run"] is True
 
-    def test_flash_resolved_appends_build_target_pattern(self, tmp_path):
+    def test_flash_resolved_prepends_build_target_pattern(self, tmp_path):
         mgr = self._make_manager(tmp_path)
         resolved, _ = mgr.resolver.resolve_preset("test-bsp")
 
@@ -632,12 +632,12 @@ class TestBspManagerFlashBsp:
 
         flash_cfg = mock_flasher_cls.call_args[0][0]
         assert "**/*.wic" in flash_cfg.image_patterns
-        assert "**/core-image-minimal*.wic.*" in flash_cfg.image_patterns
+        assert flash_cfg.image_patterns[0] == "**/core-image-minimal.wic.*"
 
     def test_flash_resolved_deduplicates_build_target_pattern(self, tmp_path):
         mgr = self._make_manager(tmp_path)
         resolved, _ = mgr.resolver.resolve_preset("test-bsp")
-        target_pattern = "**/core-image-minimal*.wic.*"
+        target_pattern = "**/core-image-minimal.wic.*"
 
         with patch.object(
             mgr,
@@ -662,6 +662,7 @@ class TestBspManagerFlashBsp:
 
         flash_cfg = mock_flasher_cls.call_args[0][0]
         assert flash_cfg.image_patterns.count(target_pattern) == 1
+        assert flash_cfg.image_patterns[0] == target_pattern
 
 
 # =============================================================================
