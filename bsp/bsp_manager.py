@@ -1368,6 +1368,7 @@ class BspManager:
                         resolved,
                         target_device=flash_target,
                         preset=preset,
+                        build_target=target,
                         flash_overrides=flash_overrides or {},
                         build_path_override=build_path_override,
                     )
@@ -2334,6 +2335,7 @@ class BspManager:
         resolved: ResolvedConfig,
         target_device: str,
         preset: Optional[BspPreset] = None,
+        build_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
         image_path: Optional[str] = None,
         dry_run: bool = False,
@@ -2346,6 +2348,10 @@ class BspManager:
             resolved: Resolved build configuration.
             target_device: Block device path (e.g. ``/dev/sdb``).
             preset: Optional BSP preset (for flash config merge).
+            build_target: Optional BitBake target used by ``bsp build --target``.
+                          When provided, an additional image pattern
+                          ``**/{build_target}*.wic.*`` is appended for
+                          auto-discovery.
             flash_overrides: CLI-level overrides for the flash configuration.
             image_path: Explicit path to the image file to flash.  Overrides
                         auto-discovery when provided.
@@ -2356,6 +2362,12 @@ class BspManager:
             :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
         """
         flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
+        if build_target:
+            target_pattern = f"**/{build_target}*.wic.*"
+            patterns = list(flash_cfg.image_patterns or [])
+            if target_pattern not in patterns:
+                patterns.append(target_pattern)
+                flash_cfg = replace(flash_cfg, image_patterns=patterns)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )
