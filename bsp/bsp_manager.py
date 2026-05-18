@@ -1319,14 +1319,14 @@ class BspManager:
             container = resolved.container
             if container.file and container.image:
                 # CLI --docker-build-options overrides the registry build_options field
-                effective_build_options = docker_build_options if docker_build_options is not None else container.build_options
+                build_opts = docker_build_options if docker_build_options is not None else container.build_options
                 build_docker(
                     str(self.config_path.parent),
                     container.file,
                     container.image,
                     container.args,
                     verbose=self.verbose,
-                    build_options=effective_build_options,
+                    build_options=build_opts,
                 )
         else:
             if checkout_only:

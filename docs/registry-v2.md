@@ -228,7 +228,7 @@ containers:
 | `image`           | string (opt.) | Docker image to use at runtime                                 |
 | `file`            | string (opt.) | Path to Dockerfile for `docker build`                          |
 | `args`            | list          | Docker build arguments (`name`/`value` pairs)                  |
-| `build_options`   | string (opt.) | Extra flags appended verbatim to the `docker build` command before the build context (e.g. `--no-cache --network host`). Split with shell quoting rules. Can be overridden per-invocation with the CLI flag `--docker-build-options`. |
+| `build_options`   | string (opt.) | Extra flags for the `docker build` command, parsed with shell quoting rules and appended before the build context (e.g. `--no-cache --network host`). Can be overridden per-invocation with the CLI flag `--docker-build-options`. |
 | `runtime_args`    | string (opt.) | Extra flags appended to the container engine `run` invocation. Forwarded to `kas-container` via `--runtime-args`. Useful for port-forwarding, device access (`--device`), or capability grants (`--cap-add`). |
 | `volumes`         | list (opt.)   | List of host-to-container directory mappings. Each entry is converted to a `-v host:container[:ro]` flag passed via `--runtime-args`. Host paths support `$ENV{VAR}` expansion. |
 
