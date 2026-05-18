@@ -605,6 +605,64 @@ class TestBspManagerFlashBsp:
         assert call_kwargs["target_device"] == "/dev/sdb"
         assert call_kwargs["dry_run"] is True
 
+    def test_flash_resolved_appends_build_target_pattern(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        resolved, _ = mgr.resolver.resolve_preset("test-bsp")
+
+        with patch.object(
+            mgr,
+            "_resolve_flash_config",
+            return_value=FlashConfig(image_patterns=["**/*.wic"]),
+        ):
+            with patch("bsp.bsp_manager.ImageFlasher") as mock_flasher_cls:
+                mock_flasher = mock_flasher_cls.return_value
+                mock_flasher.flash.return_value = FlashResult(
+                    image_path=tmp_path / "test-image.wic",
+                    target_device="/dev/sdb",
+                    success=True,
+                    dry_run=True,
+                )
+
+                mgr._flash_resolved(
+                    resolved,
+                    target_device="/dev/sdb",
+                    build_target="core-image-minimal",
+                    dry_run=True,
+                )
+
+        flash_cfg = mock_flasher_cls.call_args[0][0]
+        assert "**/*.wic" in flash_cfg.image_patterns
+        assert "**/core-image-minimal*.wic.*" in flash_cfg.image_patterns
+
+    def test_flash_resolved_deduplicates_build_target_pattern(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        resolved, _ = mgr.resolver.resolve_preset("test-bsp")
+        target_pattern = "**/core-image-minimal*.wic.*"
+
+        with patch.object(
+            mgr,
+            "_resolve_flash_config",
+            return_value=FlashConfig(image_patterns=["**/*.wic", target_pattern]),
+        ):
+            with patch("bsp.bsp_manager.ImageFlasher") as mock_flasher_cls:
+                mock_flasher = mock_flasher_cls.return_value
+                mock_flasher.flash.return_value = FlashResult(
+                    image_path=tmp_path / "test-image.wic",
+                    target_device="/dev/sdb",
+                    success=True,
+                    dry_run=True,
+                )
+
+                mgr._flash_resolved(
+                    resolved,
+                    target_device="/dev/sdb",
+                    build_target="core-image-minimal",
+                    dry_run=True,
+                )
+
+        flash_cfg = mock_flasher_cls.call_args[0][0]
+        assert flash_cfg.image_patterns.count(target_pattern) == 1
+
 
 # =============================================================================
 # CLI argument parsing tests
