@@ -158,32 +158,6 @@ class ContainerCompleter:
             return []
 
 
-class ContainerCompleter:
-    """Complete container names from the registry.
-
-    In multi-registry mode both bare names (``container``) and fully-qualified
-    names (``registry:container``) are returned so users can disambiguate when
-    the same container name exists in more than one registry.
-    """
-
-    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
-        try:
-            mgr = _build_manager_for_completion(parsed_args)
-            if mgr is None:
-                return []
-            results: List[str] = []
-            multi = len(mgr.registries) > 1
-            for reg_name, reg_model, _reg_resolver, _ in mgr._iter_registries():
-                containers = reg_model.containers or {} if reg_model else {}
-                for container_name in containers:
-                    results.append(container_name)
-                    if multi:
-                        results.append(f"{reg_name}:{container_name}")
-            return results
-        except (Exception, SystemExit):  # pylint: disable=broad-except
-            return []
-
-
 class DevicesCompleter:
     """Complete device slugs from the registry."""
 
