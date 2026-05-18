@@ -204,7 +204,7 @@ class BspManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_registry_qualified(value: str) -> Tuple[Optional[str], str]:
+    def _parse_qualified_name(value: str) -> Tuple[Optional[str], str]:
         """Split a registry-qualified value into ``(registry_name, item_name)``.
 
         If *value* contains no colon the returned registry_name is ``None``.
@@ -217,9 +217,14 @@ class BspManager:
         return None, value
 
     @staticmethod
+    def _parse_registry_qualified(value: str) -> Tuple[Optional[str], str]:
+        """Backward-compatible wrapper for parsing registry-qualified values."""
+        return BspManager._parse_qualified_name(value)
+
+    @staticmethod
     def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
         """Backward-compatible wrapper for parsing ``registry:preset`` values."""
-        return BspManager._parse_registry_qualified(value)
+        return BspManager._parse_qualified_name(value)
 
     def _iter_registries(self) -> Iterator[Tuple[str, object, V2Resolver, Path]]:
         """Iterate over (name, model, resolver, config_path) tuples for all registries."""
@@ -297,7 +302,7 @@ class BspManager:
         Raises:
             SystemExit: If the registry or preset is not found.
         """
-        registry_hint, preset_name = self._parse_registry_qualified(bsp_name)
+        registry_hint, preset_name = self._parse_qualified_name(bsp_name)
 
         if registry_hint is not None:
             # Look only in the named registry
@@ -1053,7 +1058,7 @@ class BspManager:
         self, container_name: str
     ) -> Tuple[Docker, str, object, V2Resolver, Path]:
         """Resolve a named container across all loaded registries."""
-        registry_hint, plain_name = self._parse_registry_qualified(container_name)
+        registry_hint, plain_name = self._parse_qualified_name(container_name)
         matches: List[Tuple[Docker, str, object, V2Resolver, Path]] = []
 
         if registry_hint is not None:

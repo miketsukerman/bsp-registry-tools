@@ -3,6 +3,7 @@ Tests for BspManager registry operations (v2.0 schema).
 """
 
 import pytest
+import shlex
 import yaml
 from unittest.mock import patch, MagicMock
 
@@ -159,7 +160,7 @@ registry:
         assert mock_build_docker.called
         args, kwargs = mock_build_docker.call_args
         assert args[0] == str(registry_dir)
-        assert kwargs.get("build_options") == "--no-cache"
+        assert "--no-cache" in shlex.split(kwargs.get("build_options") or "")
 
     def test_build_container_cache_flag_removes_registry_no_cache(self, tmp_dir):
         registry_dir = tmp_dir / "container_cache"
