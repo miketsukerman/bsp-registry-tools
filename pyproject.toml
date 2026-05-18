@@ -58,6 +58,11 @@ deploy = [
 completions = [
     "argcomplete>=3.0",
 ]
+# bmaptool must be installed separately as a system package:
+#   sudo apt install bmap-tools
+# or from PyPI: pip install bmaptool
+# There is no Python package dependency to add here.
+flash = []
 
 [project.scripts]
 bsp = "bsp.cli:main"

@@ -730,6 +730,51 @@ class ScanConfig:
 
 
 @dataclass
+class FlashConfig:
+    """
+    SD-card / block-device flashing configuration via bmap-tools (or dd).
+
+    A ``FlashConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        image_patterns: Glob patterns (relative to each artifact directory)
+                        used to discover flashable image files.  Patterns are
+                        evaluated in order; the first matching file is used.
+                        Defaults to common Yocto WIC / SD-card image formats,
+                        ordered from most- to least-preferred compressed
+                        variants.
+        artifact_dirs: Subdirectories under the build output path to search
+                       for flashable image files.  Mirrors
+                       :attr:`ScanConfig.artifact_dirs`.
+        tool: Flash tool to invoke.  Supported values: ``"bmaptool"``
+              (default) — uses ``bmaptool copy`` which automatically locates
+              and uses the accompanying ``.bmap`` block-map file for fast,
+              verified flashing.  Pass ``"dd"`` as an alternative for
+              environments where bmap-tools is not available (no block-map
+              acceleration).
+        extra_args: Additional command-line arguments forwarded verbatim to
+                    the flash tool (e.g. ``"--nobmap"`` to skip the block-map
+                    file even when one is present).  Arguments are split on
+                    whitespace.  Default: ``None``.
+    """
+    image_patterns: List[str] = field(default_factory=lambda: [
+        "**/*.wic.bz2",
+        "**/*.wic.gz",
+        "**/*.wic.xz",
+        "**/*.wic",
+        "**/*.sdimg",
+        "**/*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+    ])
+    tool: str = "bmaptool"
+    extra_args: Optional[str] = None
+
+
+@dataclass
 class LavaServerConfig:
     """
     LAVA server connection settings (top-level ``lava:`` block in the registry).
@@ -926,6 +971,7 @@ class BspPreset:
     deploy: Optional["DeployConfig"] = None
     testing: Optional[TestingConfig] = None
     scan: Optional["ScanConfig"] = None
+    flash: Optional["FlashConfig"] = None
 
 
 @dataclass
@@ -1080,3 +1126,4 @@ class RegistryRoot:
     deploy: Optional[DeployConfig] = None
     lava: Optional[LavaServerConfig] = None
     scan: Optional[ScanConfig] = None
+    flash: Optional[FlashConfig] = None

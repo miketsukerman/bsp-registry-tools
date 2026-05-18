@@ -18,6 +18,7 @@ from .models import (
     Docker,
     EnvironmentVariable,
     Feature,
+    FlashConfig,
     Framework,
     NamedEnvironment,
     Release,
@@ -77,6 +78,7 @@ class ResolvedConfig:
     effective_distro: Optional[str] = None
     targets: List[str] = field(default_factory=empty_list)
     scan_config: Optional[ScanConfig] = None
+    flash_config: Optional[FlashConfig] = None
 
 
 # =============================================================================
@@ -913,6 +915,8 @@ class V2Resolver:
                     build=expanded_build,
                     deploy=preset.deploy,
                     testing=preset.testing,
+                    scan=preset.scan,
+                    flash=preset.flash,
                 )
             )
         return expanded
@@ -1110,6 +1114,9 @@ class V2Resolver:
         # The merge follows the same pattern as `deploy`: preset fields that
         # differ from their defaults override the root-level config.
         resolved.scan_config = preset.scan if preset.scan is not None else getattr(self.model, "scan", None)
+
+        # Apply preset-level flash config (same pattern as scan_config).
+        resolved.flash_config = preset.flash if preset.flash is not None else getattr(self.model, "flash", None)
 
         return resolved, preset
 
