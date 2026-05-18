@@ -2351,7 +2351,8 @@ class BspManager:
             build_target: Optional BitBake target used by ``bsp build --target``.
                           When provided, an additional high-priority image pattern
                           ``**/{build_target}.wic.*`` is prepended for
-                          auto-discovery.
+                          auto-discovery and any ``{build_target}`` placeholders
+                          in configured image patterns are expanded.
             flash_overrides: CLI-level overrides for the flash configuration.
             image_path: Explicit path to the image file to flash.  Overrides
                         auto-discovery when provided.
@@ -2362,12 +2363,13 @@ class BspManager:
             :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
         """
         flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
+        patterns = list(flash_cfg.image_patterns or [])
         if build_target:
+            patterns = [p.replace("{build_target}", build_target) for p in patterns]
             target_pattern = f"**/{build_target}.wic.*"
-            patterns = list(flash_cfg.image_patterns or [])
             patterns = [p for p in patterns if p != target_pattern]
             patterns.insert(0, target_pattern)
-            flash_cfg = replace(flash_cfg, image_patterns=patterns)
+        flash_cfg = replace(flash_cfg, image_patterns=patterns)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )

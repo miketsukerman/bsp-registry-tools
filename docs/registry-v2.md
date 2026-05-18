@@ -1774,7 +1774,7 @@ flash:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (block-map-accelerated, verified), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
-| `image_patterns` | list[str] | See above | Glob patterns for image discovery, evaluated in order; first match wins |
+| `image_patterns` | list[str] | See above | Glob patterns for image discovery, evaluated in order; first match wins. During `bsp build --target <name> --flash ...`, `{build_target}` placeholders are expanded. |
 | `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
 | `extra_args` | string (opt.) | `null` | Additional CLI arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
 
