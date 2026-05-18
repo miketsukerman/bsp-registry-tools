@@ -58,10 +58,10 @@ deploy = [
 completions = [
     "argcomplete>=3.0",
 ]
-# bmaptool must be installed separately as a system package:
-#   sudo apt install bmap-tools
-# or from PyPI: pip install bmaptool
-# There is no Python package dependency to add here.
+# flash: intentionally empty — bmaptool is a system package, not a Python package.
+# Install it separately:  sudo apt install bmap-tools
+# or from PyPI:           pip install bmaptool
+# This extra exists solely to document the system dependency.
 flash = []
 
 [project.scripts]
