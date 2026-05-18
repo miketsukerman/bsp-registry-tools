@@ -247,6 +247,20 @@ class TestConvertContainersListToDict:
         result = convert_containers_list_to_dict(containers_list)
         assert result["net-container"].runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
 
+    def test_container_build_options_set(self):
+        containers_list = [
+            {
+                "buildopts-container": {
+                    "image": "buildopts:latest",
+                    "file": "Dockerfile",
+                    "args": [],
+                    "build_options": "--network host --no-cache",
+                }
+            },
+        ]
+        result = convert_containers_list_to_dict(containers_list)
+        assert result["buildopts-container"].build_options == "--network host --no-cache"
+
     def test_container_volumes_default_empty(self):
         containers_list = [
             {"my-container": {"image": "my-image:latest", "file": "Dockerfile", "args": []}},
@@ -329,6 +343,31 @@ registry:
         assert vols[0].read_only is False
         assert vols[1].host == "/host/ro"
         assert vols[1].read_only is True
+
+    def test_get_registry_list_format_build_options_preserved(self, tmp_dir):
+        """List-format containers should preserve `build_options` after conversion."""
+        yaml_content = """
+specification:
+  version: "2.1"
+containers:
+  - ubuntu-22.04:
+      file: Dockerfile.ubuntu
+      image: "advantech/bsp-registry/ubuntu-22.04/kas:5.2"
+      build_options: "--network host"
+      args:
+        - name: "DISTRO"
+          value: "ubuntu:22.04"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        reg_file = tmp_dir / "registry-list-containers.yaml"
+        reg_file.write_text(yaml_content)
+
+        result = get_registry_from_yaml_file(reg_file)
+        assert result.containers["ubuntu-22.04"].build_options == "--network host"
 
     def test_get_registry_distro_section(self, registry_with_distro_file):
         result = get_registry_from_yaml_file(registry_with_distro_file)
