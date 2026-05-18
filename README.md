@@ -799,6 +799,9 @@ bsp flash --device <d> --release <r> [--feature <f>] --target /dev/sdX [OPTIONS]
 | `--build-path PATH` | Override the build output directory used for image discovery |
 | `--dry-run` | Show what would be flashed without writing anything to the device |
 
+For non-dry-run flashes, `bsp` runs the final flashing command with superuser
+rights (via `sudo` when not already root).
+
 **Examples:**
 
 ```bash

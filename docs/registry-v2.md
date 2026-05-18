@@ -1751,7 +1751,8 @@ fields for that preset.
 Flashing is triggered explicitly via `bsp flash` or automatically after a
 successful build when `bsp build --flash /dev/sdX` is used.  `--dry-run` shows
 what would be flashed without requiring a real device or `bmaptool` to be
-installed.
+installed. Non-dry-run flashing runs with superuser rights (`sudo` when not
+already root).
 
 ```yaml
 flash:

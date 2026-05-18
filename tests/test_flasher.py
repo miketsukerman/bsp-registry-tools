@@ -190,23 +190,57 @@ class TestImageFlasherCheckTool:
     def test_passes_when_tool_found(self):
         cfg = FlashConfig(tool="bmaptool")
         flasher = ImageFlasher(cfg)
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            flasher._check_tool_availability()  # should not raise
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                flasher._check_tool_availability()  # should not raise
+
+    def test_passes_when_tool_and_sudo_found(self):
+        cfg = FlashConfig(tool="bmaptool")
+        flasher = ImageFlasher(cfg)
+
+        def _which(name):
+            if name == "sudo":
+                return "/usr/bin/sudo"
+            if name == "bmaptool":
+                return "/usr/bin/bmaptool"
+            return None
+
+        with patch("os.geteuid", return_value=1000):
+            with patch("shutil.which", side_effect=_which):
+                flasher._check_tool_availability()  # should not raise
+
+    def test_exits_when_sudo_missing_for_non_root(self):
+        cfg = FlashConfig(tool="bmaptool")
+        flasher = ImageFlasher(cfg)
+
+        def _which(name):
+            if name == "sudo":
+                return None
+            if name == "bmaptool":
+                return "/usr/bin/bmaptool"
+            return None
+
+        with patch("os.geteuid", return_value=1000):
+            with patch("shutil.which", side_effect=_which):
+                with pytest.raises(SystemExit):
+                    flasher._check_tool_availability()
 
     def test_exits_when_tool_missing(self):
         cfg = FlashConfig(tool="bmaptool")
         flasher = ImageFlasher(cfg)
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                flasher._check_tool_availability()
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value=None):
+                with pytest.raises(SystemExit):
+                    flasher._check_tool_availability()
 
     def test_exit_message_contains_tool_name(self, caplog):
         cfg = FlashConfig(tool="bmaptool")
         flasher = ImageFlasher(cfg)
-        with patch("shutil.which", return_value=None):
-            with caplog.at_level(logging.ERROR, logger="ImageFlasher"):
-                with pytest.raises(SystemExit):
-                    flasher._check_tool_availability()
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value=None):
+                with caplog.at_level(logging.ERROR, logger="ImageFlasher"):
+                    with pytest.raises(SystemExit):
+                        flasher._check_tool_availability()
         assert any("bmaptool" in r.message for r in caplog.records)
 
 
@@ -220,7 +254,8 @@ class TestImageFlasherBuildCommand:
         cfg = FlashConfig(tool="bmaptool")
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
-        cmd = flasher._build_command(img, "/dev/sdb", None)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "/dev/sdb", None)
         assert cmd == ["bmaptool", "copy", str(img), "/dev/sdb"]
 
     def test_bmaptool_with_bmap(self, tmp_path):
@@ -228,21 +263,24 @@ class TestImageFlasherBuildCommand:
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
         bmap = tmp_path / "image.wic.bmap"
-        cmd = flasher._build_command(img, "/dev/sdb", bmap)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "/dev/sdb", bmap)
         assert cmd == ["bmaptool", "copy", "--bmap", str(bmap), str(img), "/dev/sdb"]
 
     def test_bmaptool_with_extra_args(self, tmp_path):
         cfg = FlashConfig(tool="bmaptool", extra_args="--nobmap")
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
-        cmd = flasher._build_command(img, "/dev/sdb", None)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "/dev/sdb", None)
         assert "--nobmap" in cmd
 
     def test_dd_command(self, tmp_path):
         cfg = FlashConfig(tool="dd")
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
-        cmd = flasher._build_command(img, "/dev/sdb", None)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "/dev/sdb", None)
         assert cmd[0] == "dd"
         assert f"if={img}" in cmd
         assert "of=/dev/sdb" in cmd
@@ -252,14 +290,24 @@ class TestImageFlasherBuildCommand:
         cfg = FlashConfig(tool="uuu", extra_args="-b emmc_all")
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
-        cmd = flasher._build_command(img, "", None)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "", None)
         assert cmd == ["uuu", "-b", "emmc_all", str(img)]
+
+    def test_non_root_adds_sudo_prefix(self, tmp_path):
+        cfg = FlashConfig(tool="bmaptool")
+        flasher = ImageFlasher(cfg)
+        img = tmp_path / "image.wic"
+        with patch("os.geteuid", return_value=1000):
+            cmd = flasher._build_command(img, "/dev/sdb", None)
+        assert cmd[:3] == ["sudo", "bmaptool", "copy"]
 
     def test_generic_tool_command(self, tmp_path):
         cfg = FlashConfig(tool="custom-flasher")
         flasher = ImageFlasher(cfg)
         img = tmp_path / "image.wic"
-        cmd = flasher._build_command(img, "/dev/sdb", None)
+        with patch("os.geteuid", return_value=0):
+            cmd = flasher._build_command(img, "/dev/sdb", None)
         assert cmd[0] == "custom-flasher"
         assert str(img) in cmd
         assert "/dev/sdb" in cmd
@@ -315,9 +363,10 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
 
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            with patch("subprocess.run", return_value=mock_proc) as mock_run:
-                result = flasher.flash(str(tmp_path), "/dev/sdb")
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                    result = flasher.flash(str(tmp_path), "/dev/sdb")
 
         assert result.success is True
         assert result.target_device == "/dev/sdb"
@@ -340,9 +389,10 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 1
 
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            with patch("subprocess.run", return_value=mock_proc):
-                result = flasher.flash(str(tmp_path), "/dev/sdb")
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                with patch("subprocess.run", return_value=mock_proc):
+                    result = flasher.flash(str(tmp_path), "/dev/sdb")
 
         assert result.success is False
 
@@ -358,11 +408,12 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
 
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            with patch("subprocess.run", return_value=mock_proc):
-                with caplog.at_level(logging.WARNING, logger="ImageFlasher"):
-                    # /dev/nonexistent_xyz should not exist
-                    flasher.flash(str(tmp_path), "/dev/nonexistent_xyz_bsp_test")
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                with patch("subprocess.run", return_value=mock_proc):
+                    with caplog.at_level(logging.WARNING, logger="ImageFlasher"):
+                        # /dev/nonexistent_xyz should not exist
+                        flasher.flash(str(tmp_path), "/dev/nonexistent_xyz_bsp_test")
 
         assert any("does not exist" in r.message for r in caplog.records)
 
@@ -390,9 +441,10 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
 
-        with patch("shutil.which", return_value="/usr/bin/uuu"):
-            with patch("subprocess.run", return_value=mock_proc) as mock_run:
-                result = flasher.flash(str(tmp_path), "")
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/uuu"):
+                with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                    result = flasher.flash(str(tmp_path), "")
 
         assert result.success is True
         assert result.target_device == ""
@@ -409,11 +461,12 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
 
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            with patch("subprocess.run", return_value=mock_proc) as mock_run:
-                result = flasher.flash(
-                    str(tmp_path), "/dev/sdb", image_path=str(img)
-                )
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                    result = flasher.flash(
+                        str(tmp_path), "/dev/sdb", image_path=str(img)
+                    )
 
         assert result.image_path == img
         cmd_called = mock_run.call_args[0][0]
@@ -433,14 +486,43 @@ class TestImageFlasherFlash:
         mock_proc = MagicMock()
         mock_proc.returncode = 0
 
-        with patch("shutil.which", return_value="/usr/bin/bmaptool"):
-            with patch("subprocess.run", return_value=mock_proc) as mock_run:
-                result = flasher.flash(str(tmp_path), "/dev/sdb")
+        with patch("os.geteuid", return_value=0):
+            with patch("shutil.which", return_value="/usr/bin/bmaptool"):
+                with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                    result = flasher.flash(str(tmp_path), "/dev/sdb")
 
         assert result.bmap_path == bmap
         cmd_called = mock_run.call_args[0][0]
         assert "--bmap" in cmd_called
         assert str(bmap) in cmd_called
+
+    def test_non_root_flash_invokes_sudo(self, tmp_path):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        img = images_dir / "image.wic"
+        img.write_bytes(b"data")
+
+        cfg = self._cfg(image_patterns=["**/*.wic"], artifact_dirs=["tmp/deploy/images"])
+        flasher = ImageFlasher(cfg)
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+
+        def _which(name):
+            if name == "sudo":
+                return "/usr/bin/sudo"
+            if name == "bmaptool":
+                return "/usr/bin/bmaptool"
+            return None
+
+        with patch("os.geteuid", return_value=1000):
+            with patch("shutil.which", side_effect=_which):
+                with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                    result = flasher.flash(str(tmp_path), "/dev/sdb")
+
+        assert result.success is True
+        cmd_called = mock_run.call_args[0][0]
+        assert cmd_called[:3] == ["sudo", "bmaptool", "copy"]
 
 
 # =============================================================================
