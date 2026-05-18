@@ -23,6 +23,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
 - 🔒 **CRA vulnerability scanning** — scan built images for CVEs and generate SBOMs (CycloneDX/SPDX) with `bsp scan` ([Trivy](https://trivy.dev/) / Syft+Grype)
+- 💾 **SD card / block device flashing** — write Yocto WIC images to an SD card or USB drive with `bsp flash` ([bmap-tools](https://github.com/intel/bmap-tools) for fast, verified flashing)
 - 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
 
 
@@ -90,6 +91,31 @@ pip install "bsp-registry-tools[completions]"
 ```
 
 See the [Shell Completions](#shell-completions) section below for activation instructions.
+
+#### Optional extras for SD card flashing
+
+`bsp flash` requires `bmaptool` which is a **system package**, not a Python
+package.  Install it with your system package manager:
+
+```bash
+# Debian / Ubuntu
+sudo apt install bmap-tools
+
+# Arch Linux
+sudo pacman -S bmap-tools
+
+# From PyPI
+pip install bmaptool
+```
+
+The `flash` optional extra is documentation-only and installs no Python
+dependencies:
+
+```bash
+pip install "bsp-registry-tools[flash]"
+```
+
+See [docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details.
 
 ## Shell Completions
 
@@ -747,6 +773,54 @@ bsp build poky-qemuarm64-scarthgap --scan --scan-fail-on CRITICAL
 ```
 
 **Prerequisites:** Install [Trivy](https://trivy.dev/latest/getting-started/installation/) before using `bsp scan`.
+
+---
+
+#### `flash` — Flash a Yocto image to an SD card or block device
+
+Discovers the Yocto WIC image produced by `bsp build` and writes it to a block
+device using [bmap-tools](https://github.com/intel/bmap-tools) (`bmaptool
+copy`) for fast, verified flashing.  See
+[docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details and
+prerequisites.
+
+```bash
+bsp flash <bsp_name> --target /dev/sdX [OPTIONS]
+bsp flash --device <d> --release <r> [--feature <f>] --target /dev/sdX [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--target DEVICE`, `-t DEVICE` | Destination block device (e.g. `/dev/sdb`). Required unless `--dry-run` is used. |
+| `--image-path PATH` | Explicit image file to flash (overrides auto-discovery) |
+| `--image-pattern PATTERN` | Override default glob patterns for image discovery (repeatable) |
+| `--tool bmaptool\|dd` | Flash tool override (default: `bmaptool`) |
+| `--extra-args ARGS` | Extra arguments forwarded verbatim to the flash tool (e.g. `--nobmap`) |
+| `--build-path PATH` | Override the build output directory used for image discovery |
+| `--dry-run` | Show what would be flashed without writing anything to the device |
+
+**Examples:**
+
+```bash
+# Flash a preset's built image to /dev/sdb
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb
+
+# Preview what would be flashed without writing
+bsp flash imx8mp-adv-scarthgap --dry-run
+
+# Flash a specific image file explicitly
+bsp flash imx8mp-adv-scarthgap \
+  --target /dev/sdb \
+  --image-path build/imx8mp-adv/scarthgap/tmp/deploy/images/core-image-minimal.wic.bz2
+
+# Use dd instead of bmaptool
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb --tool dd
+
+# Flash immediately after a build
+bsp build imx8mp-adv-scarthgap --flash /dev/sdb
+```
+
+**Prerequisites:** Install [bmap-tools](https://github.com/intel/bmap-tools) (`sudo apt install bmap-tools`) before using `bsp flash`.
 
 ---
 
@@ -1515,6 +1589,60 @@ registry:
 ```
 
 See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
+
+### `flash` (optional)
+
+Global SD-card / block-device flashing configuration applied to all presets.  A
+`BspPreset` can also include a `flash:` block to override specific settings for
+that preset.  All fields have sensible defaults; the `flash:` block is not
+required to use `bsp flash`.
+
+```yaml
+flash:
+  tool: bmaptool                  # "bmaptool" (default) | "dd"
+  image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/*.wic.bz2"
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic"
+    - "**/*.sdimg"
+    - "**/*.rpi-sdimg"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  extra_args: null                # extra CLI args forwarded verbatim to the flash tool
+```
+
+**`flash` fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (uses block-map for fast, verified flashing) or `"dd"` (raw copy, no block-map) |
+| `image_patterns` | list[str] | See above | Glob patterns for flashable image discovery, evaluated in order |
+| `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
+| `extra_args` | string (opt.) | `null` | Extra arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
+
+#### Per-preset flash override
+
+```yaml
+flash:                            # global: bmaptool
+  tool: bmaptool
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: imx8mp-adv-scarthgap
+      device: imx8mp-adv
+      release: scarthgap
+
+    # Overrides extra_args for this preset (e.g. skip block-map verification).
+    - name: rpi4-scarthgap
+      device: rpi4
+      release: scarthgap
+      flash:
+        extra_args: "--nobmap"
+```
+
+See [docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details.
 
 ### `lava` (optional)
 
