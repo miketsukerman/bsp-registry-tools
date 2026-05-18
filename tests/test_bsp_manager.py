@@ -128,6 +128,94 @@ registry:
         # Should not raise, just print info
         manager.list_containers()
 
+    def test_build_container_uses_registry_dir_and_can_disable_cache(self, tmp_dir):
+        registry_dir = tmp_dir / "container_build"
+        registry_dir.mkdir()
+        (registry_dir / "Dockerfile.test").write_text("FROM ubuntu:22.04\n")
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(
+            """
+specification:
+  version: "2.2"
+containers:
+  my-container:
+    image: "test/my-container:latest"
+    file: Dockerfile.test
+    args: []
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        )
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            manager.build_container("my-container", use_cache=False)
+
+        assert mock_build_docker.called
+        args, kwargs = mock_build_docker.call_args
+        assert args[0] == str(registry_dir)
+        assert kwargs.get("build_options") == "--no-cache"
+
+    def test_build_container_cache_flag_removes_registry_no_cache(self, tmp_dir):
+        registry_dir = tmp_dir / "container_cache"
+        registry_dir.mkdir()
+        (registry_dir / "Dockerfile.test").write_text("FROM ubuntu:22.04\n")
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(
+            """
+specification:
+  version: "2.2"
+containers:
+  my-container:
+    image: "test/my-container:latest"
+    file: Dockerfile.test
+    args: []
+    build_options: "--no-cache --network host"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        )
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            manager.build_container("my-container", use_cache=True)
+
+        _, kwargs = mock_build_docker.call_args
+        assert kwargs.get("build_options") == "--network host"
+
+    def test_build_container_requires_file_and_image(self, tmp_dir):
+        registry_file = tmp_dir / "bsp-registry.yaml"
+        registry_file.write_text(
+            """
+specification:
+  version: "2.2"
+containers:
+  my-container:
+    image: "test/my-container:latest"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        )
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with pytest.raises(SystemExit):
+            manager.build_container("my-container")
+
     def test_multiple_presets(self, registry_with_env_file):
         manager = BspManager(config_path=str(registry_with_env_file))
         manager.initialize()
@@ -4084,3 +4172,57 @@ class TestMultiRegistry:
         mgr.initialize()
         with pytest.raises(SystemExit):
             mgr.get_bsp_by_name("nonexistent-registry:bsp-alpha")
+
+    def test_build_container_registry_prefix_uses_correct_registry(self, tmp_dir):
+        reg_a_dir = tmp_dir / "reg-a"
+        reg_b_dir = tmp_dir / "reg-b"
+        reg_a_dir.mkdir()
+        reg_b_dir.mkdir()
+        (reg_a_dir / "Dockerfile.a").write_text("FROM ubuntu:22.04\n")
+        (reg_b_dir / "Dockerfile.b").write_text("FROM ubuntu:24.04\n")
+
+        path_a = reg_a_dir / "bsp-registry.yaml"
+        path_b = reg_b_dir / "bsp-registry.yaml"
+        path_a.write_text(
+            """
+specification:
+  version: "2.2"
+containers:
+  shared-container:
+    image: "test/shared:a"
+    file: Dockerfile.a
+    args: []
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        )
+        path_b.write_text(
+            """
+specification:
+  version: "2.2"
+containers:
+  shared-container:
+    image: "test/shared:b"
+    file: Dockerfile.b
+    args: []
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        )
+
+        mgr = BspManager(config_paths=[("a", str(path_a)), ("b", str(path_b))])
+        mgr.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            mgr.build_container("b:shared-container")
+
+        args, _kwargs = mock_build_docker.call_args
+        assert args[0] == str(reg_b_dir)
+        assert args[1] == "Dockerfile.b"
+        assert args[2] == "test/shared:b"

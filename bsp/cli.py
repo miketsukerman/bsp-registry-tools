@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .bsp_manager import BspManager
 from .completions import (
+    ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
     PresetsCompleter,
@@ -533,8 +534,44 @@ def main() -> int:
             help="Show only entries from the named remote registry"
         ).completer = RemotesCompleter()
 
-        # List containers command
-        subparsers.add_parser("containers", help="List available containers")
+        # Containers command
+        containers_parser = subparsers.add_parser(
+            "containers",
+            help="List available containers or build a container image",
+        )
+        containers_subparsers = containers_parser.add_subparsers(
+            dest="containers_command",
+            help="Containers sub-command",
+        )
+
+        containers_build = containers_subparsers.add_parser(
+            "build",
+            help="Build a container image from its registry definition",
+        )
+        containers_build.add_argument(
+            "container_name",
+            type=str,
+            help=(
+                "Container name to build, optionally prefixed with registry name "
+                "(registry:container)."
+            ),
+        ).completer = ContainerCompleter()
+        cache_group = containers_build.add_mutually_exclusive_group()
+        cache_group.add_argument(
+            "--cache",
+            dest="use_cache",
+            action="store_const",
+            const=True,
+            default=None,
+            help="Force Docker build cache usage even if registry build_options include --no-cache",
+        )
+        cache_group.add_argument(
+            "--no-cache",
+            dest="use_cache",
+            action="store_const",
+            const=False,
+            help="Disable Docker build cache for this container build",
+        )
 
         # ----------------------------------------------------------------
         # Tree command
@@ -1395,7 +1432,14 @@ def main() -> int:
                 bsp_mgr.list_bsp(use_color=use_color, registry_filter=registry_filter)
 
         elif args.command == "containers":
-            bsp_mgr.list_containers(use_color=not args.no_color)
+            containers_command = getattr(args, "containers_command", None)
+            if containers_command == "build":
+                bsp_mgr.build_container(
+                    getattr(args, "container_name"),
+                    use_cache=getattr(args, "use_cache", None),
+                )
+            else:
+                bsp_mgr.list_containers(use_color=not args.no_color)
 
         elif args.command == "tree":
             full = getattr(args, "full", False)

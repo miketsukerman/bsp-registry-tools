@@ -252,3 +252,35 @@ class TestBuildCommand:
         assert args[0] == "test-bsp"
         assert kwargs.get("checkout_only") is True
         assert kwargs.get("build_path_override") == custom_path
+
+
+class TestContainersCommand:
+    def test_containers_build_dispatches_to_manager(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "ubuntu-22.04"
+        ]):
+            with patch.object(BspManager, "build_container") as mock_build_container:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=None)
+
+    def test_containers_build_no_cache_dispatches_to_manager(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "ubuntu-22.04", "--no-cache"
+        ]):
+            with patch.object(BspManager, "build_container") as mock_build_container:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=False)
+
+    def test_containers_build_cache_dispatches_to_manager(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "ubuntu-22.04", "--cache"
+        ]):
+            with patch.object(BspManager, "build_container") as mock_build_container:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build_container.assert_called_once_with("ubuntu-22.04", use_cache=True)

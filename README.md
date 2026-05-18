@@ -440,11 +440,18 @@ separate — their definitions are never merged together.
 | `--remote NAME` | Show only entries from the named remote registry |
 | `--device DEVICE`, `-d DEVICE` | Filter releases by device slug (only used with `releases`) |
 
-#### `containers` — List available container definitions
+#### `containers` — List available container definitions or build a container image
 
 ```bash
 bsp containers
+bsp containers build debian-bookworm
+bsp containers build debian-bookworm --no-cache
+bsp containers build debian-bookworm --cache
 ```
+
+Use `registry:container` in multi-registry mode to target a specific registry’s
+container definition. `--no-cache` appends Docker’s `--no-cache` flag, while
+`--cache` removes it from the effective build options for that invocation.
 
 #### `tree` — Display a tree view of the BSP registry
 

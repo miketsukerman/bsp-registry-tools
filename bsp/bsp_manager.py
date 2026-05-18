@@ -4,6 +4,7 @@ Main BSP management class coordinating registry, builds, and exports.
 
 import logging
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -204,13 +205,15 @@ class BspManager:
 
     @staticmethod
     def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
-        """Split a ``registry:preset`` string into ``(registry_name, preset_name)``.
+        """Split a registry-qualified value into ``(registry_name, item_name)``.
 
         If *value* contains no colon the returned registry_name is ``None``.
+        Despite the method name this helper is also reused for selectors such as
+        ``registry:container``.
         """
         if ":" in value:
-            registry_name, preset_name = value.split(":", 1)
-            return registry_name.strip(), preset_name.strip()
+            registry_name, item_name = value.split(":", 1)
+            return registry_name.strip(), item_name.strip()
         return None, value
 
     def _iter_registries(self) -> Iterator[Tuple[str, object, V2Resolver, Path]]:
@@ -1041,6 +1044,115 @@ class BspManager:
         _, preset, _, _, _, _ = self._resolve_preset_multi(bsp_name)
         return preset
 
+    def _resolve_container_multi(
+        self, container_name: str
+    ) -> Tuple[Docker, str, object, V2Resolver, Path]:
+        """Resolve a named container across all loaded registries."""
+        registry_hint, plain_name = self._parse_registry_preset(container_name)
+        matches: List[Tuple[Docker, str, object, V2Resolver, Path]] = []
+
+        if registry_hint is not None:
+            known = [name for name, _, _, _ in self._iter_registries()]
+            if registry_hint not in known:
+                logging.error(
+                    "Registry '%s' not found. Available registries: %s",
+                    registry_hint,
+                    ", ".join(known) if known else "(none)",
+                )
+                sys.exit(1)
+
+        for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
+            if registry_hint is not None and reg_name != registry_hint:
+                continue
+            reg_containers = reg_model.containers or {} if reg_model else {}
+            if plain_name in reg_containers:
+                matches.append(
+                    (reg_containers[plain_name], reg_name, reg_model, reg_resolver, reg_path)
+                )
+
+        if not matches:
+            if registry_hint is not None:
+                logging.error(
+                    "Container '%s' not found in registry '%s'.",
+                    plain_name,
+                    registry_hint,
+                )
+            else:
+                logging.error("Container '%s' not found in any loaded registry.", plain_name)
+            sys.exit(1)
+
+        if len(matches) > 1 and registry_hint is None:
+            found_in = [reg_name for _, reg_name, _, _, _ in matches]
+            logging.warning(
+                "Container '%s' found in multiple registries: %s. "
+                "Using first match from '%s'.",
+                plain_name,
+                ", ".join(found_in),
+                found_in[0],
+            )
+
+        return matches[0]
+
+    @staticmethod
+    def _compose_docker_build_options(
+        base_options: Optional[str],
+        use_cache: Optional[bool] = None,
+    ) -> Optional[str]:
+        """Apply cache policy on top of an optional docker-build options string."""
+        tokens = shlex.split(base_options) if base_options else []
+        if use_cache is True:
+            tokens = [token for token in tokens if token != "--no-cache"]
+        elif use_cache is False and "--no-cache" not in tokens:
+            tokens.append("--no-cache")
+        return shlex.join(tokens) if tokens else None
+
+    def _build_container_image(
+        self,
+        container: Docker,
+        *,
+        label: str = "",
+        docker_build_options: Optional[str] = None,
+        use_cache: Optional[bool] = None,
+        require_definition: bool = False,
+    ) -> bool:
+        """Build a Docker image from a container definition."""
+        if not container.file or not container.image:
+            if require_definition:
+                logging.error(
+                    "Container '%s' must define both 'file' and 'image' to be built locally.",
+                    label or "(unnamed)",
+                )
+                sys.exit(1)
+            return False
+
+        build_opts = docker_build_options if docker_build_options is not None else container.build_options
+        build_docker(
+            str(self.config_path.parent),
+            container.file,
+            container.image,
+            container.args,
+            verbose=self.verbose,
+            build_options=self._compose_docker_build_options(build_opts, use_cache=use_cache),
+        )
+        return True
+
+    def build_container(
+        self,
+        container_name: str,
+        *,
+        use_cache: Optional[bool] = None,
+    ) -> None:
+        """Build a named container from the registry."""
+        logging.info("Building container: %s", container_name)
+        container, _, reg_model, reg_resolver, reg_path = self._resolve_container_multi(container_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            self._build_container_image(
+                container,
+                label=container_name,
+                use_cache=use_cache,
+                require_definition=True,
+            )
+
     # ------------------------------------------------------------------
     # Build directory helpers
     # ------------------------------------------------------------------
@@ -1316,18 +1428,11 @@ class BspManager:
 
         # Build Docker image if needed (skip in checkout mode)
         if not checkout_only and resolved.container:
-            container = resolved.container
-            if container.file and container.image:
-                # CLI --docker-build-options overrides the registry build_options field
-                build_opts = docker_build_options if docker_build_options is not None else container.build_options
-                build_docker(
-                    str(self.config_path.parent),
-                    container.file,
-                    container.image,
-                    container.args,
-                    verbose=self.verbose,
-                    build_options=build_opts,
-                )
+            self._build_container_image(
+                resolved.container,
+                label=label or resolved.device.slug,
+                docker_build_options=docker_build_options,
+            )
         else:
             if checkout_only:
                 logging.info("Skipping Docker build in checkout mode")
@@ -1536,7 +1641,10 @@ class BspManager:
             container = resolved.container
             if container.file and container.image:
                 logging.info("Building Docker image for shell environment...")
-                build_docker(str(self.config_path.parent), container.file, container.image, container.args)
+                self._build_container_image(
+                    container,
+                    label=label or resolved.device.slug,
+                )
 
         self.prepare_build_directory(resolved.build_path)
         self._copy_files(resolved)

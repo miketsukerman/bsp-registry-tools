@@ -16,6 +16,7 @@ import yaml
 
 import bsp
 from bsp.completions import (
+    ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
     PresetsCompleter,
@@ -150,6 +151,43 @@ class TestDevicesCompleter:
         args = _parsed_args(registry=None)
         with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
             assert DevicesCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
+# ContainerCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestContainerCompleter:
+    def test_returns_container_names(self, tmp_path):
+        reg = _make_registry_file(tmp_path, MINIMAL_REGISTRY_YAML)
+        args = _parsed_args(registry=str(reg))
+        completions = ContainerCompleter()("", args)
+        assert "ubuntu-22.04" in completions
+
+    def test_multi_registry_includes_qualified_names(self, tmp_path):
+        reg1 = tmp_path / "reg1.yaml"
+        reg2 = tmp_path / "reg2.yaml"
+        reg1.write_text(MINIMAL_REGISTRY_YAML)
+        reg2.write_text(MINIMAL_REGISTRY_YAML.replace("ubuntu-22.04", "other-container"))
+
+        from bsp.bsp_manager import BspManager
+        mgr = BspManager(config_paths=[("regA", str(reg1)), ("regB", str(reg2))])
+        mgr.initialize()
+
+        mock_args = _parsed_args(registry=str(reg1))
+        with patch("bsp.completions._build_manager_for_completion", return_value=mgr):
+            completions = ContainerCompleter()("", mock_args)
+
+        assert "ubuntu-22.04" in completions
+        assert "regA:ubuntu-22.04" in completions
+        assert "other-container" in completions
+        assert "regB:other-container" in completions
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert ContainerCompleter()("", args) == []
 
 
 # ---------------------------------------------------------------------------
