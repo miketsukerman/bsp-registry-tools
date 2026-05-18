@@ -15,9 +15,10 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
+from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
-from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, ScanConfig
+from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, FlashConfig, ScanConfig
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .scanner import ImageScanner, ScanResult
@@ -1282,6 +1283,9 @@ class BspManager:
         build_path_override: Optional[str] = None,
         scan_after_build: bool = False,
         scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1299,6 +1303,9 @@ class BspManager:
             build_path_override: If provided, overrides the build output path from the registry
             scan_after_build: If True, scan artifacts for CVEs after a successful build
             scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1356,6 +1363,14 @@ class BspManager:
                         scan_overrides=scan_overrides or {},
                         build_path_override=build_path_override,
                     )
+                if flash_after_build and flash_target:
+                    self._flash_resolved(
+                        resolved,
+                        target_device=flash_target,
+                        preset=preset,
+                        flash_overrides=flash_overrides or {},
+                        build_path_override=build_path_override,
+                    )
         finally:
             self._cleanup_temp_kas_file()
 
@@ -1371,6 +1386,9 @@ class BspManager:
         feature_slugs: Optional[List[str]] = None,
         scan_after_build: bool = False,
         scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1386,6 +1404,9 @@ class BspManager:
             feature_slugs: Additional feature slugs to enable on top of those in the preset
             scan_after_build: If True, scan artifacts for CVEs after a successful build
             scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1407,6 +1428,9 @@ class BspManager:
                 build_path_override=build_path_override,
                 scan_after_build=scan_after_build,
                 scan_overrides=scan_overrides,
+                flash_after_build=flash_after_build,
+                flash_target=flash_target,
+                flash_overrides=flash_overrides,
             )
 
     def build_by_components(
@@ -1422,6 +1446,9 @@ class BspManager:
         build_path_override: Optional[str] = None,
         scan_after_build: bool = False,
         scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1438,6 +1465,9 @@ class BspManager:
             build_path_override: If provided, overrides the build output path from the registry
             scan_after_build: If True, scan artifacts for CVEs after a successful build
             scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1459,6 +1489,9 @@ class BspManager:
             build_path_override=build_path_override,
             scan_after_build=scan_after_build,
             scan_overrides=scan_overrides,
+            flash_after_build=flash_after_build,
+            flash_target=flash_target,
+            flash_overrides=flash_overrides,
         )
 
     # ------------------------------------------------------------------
@@ -2245,6 +2278,185 @@ class BspManager:
         if not result.passed and not dry_run:
             sys.exit(1)
         return result
+
+    # ------------------------------------------------------------------
+    # Flash (SD-card / block-device flashing via bmap-tools)
+    # ------------------------------------------------------------------
+
+    def _resolve_flash_config(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        flash_overrides: Optional[Dict] = None,
+    ) -> FlashConfig:
+        """
+        Resolve the effective ``FlashConfig`` for a build.
+
+        Merge order (later entries override earlier ones):
+        1. Root-level ``flash`` from the registry (global defaults)
+        2. ``ResolvedConfig.flash_config`` (preset-level ``flash`` block, if any)
+        3. CLI-supplied *flash_overrides* dict
+
+        If no flash config is defined anywhere a default ``FlashConfig`` is
+        returned.
+
+        Args:
+            resolved: Resolved build configuration (may carry flash_config from preset).
+            preset: Unused (reserved for future preset-level merge if needed).
+            flash_overrides: Dict of field overrides from the CLI.
+
+        Returns:
+            Effective ``FlashConfig`` instance.
+        """
+        # Start with global registry flash config or defaults
+        base = self.model.flash if self.model and self.model.flash else FlashConfig()
+
+        # Apply preset-level flash config from ResolvedConfig
+        if resolved.flash_config is not None:
+            preset_flash = resolved.flash_config
+            defaults = FlashConfig()
+            preset_overrides = {
+                f.name: preset_val
+                for f in dataclass_fields(preset_flash)
+                if (preset_val := getattr(preset_flash, f.name)) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
+        # Apply CLI overrides
+        if flash_overrides:
+            base = replace(base, **{k: v for k, v in flash_overrides.items() if v is not None})
+
+        return base
+
+    def _flash_resolved(
+        self,
+        resolved: ResolvedConfig,
+        target_device: str,
+        preset: Optional[BspPreset] = None,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash build artifacts for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            preset: Optional BSP preset (for flash config merge).
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.  Overrides
+                        auto-discovery when provided.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: Optional build path override for artifact lookup.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+        """
+        flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
+
+        flasher = ImageFlasher(flash_cfg)
+        result = flasher.flash(
+            build_path=effective_build_path,
+            target_device=target_device,
+            image_path=image_path,
+            dry_run=dry_run,
+        )
+
+        if not result.success and not dry_run:
+            sys.exit(1)
+
+        return result
+
+    def flash_bsp(
+        self,
+        bsp_name: str,
+        target_device: str,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash built artifacts for a BSP preset to a block device.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: If provided, overrides the build output path
+                                 from the registry.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+
+        Raises:
+            SystemExit: If preset not found or flash tool is not installed.
+        """
+        logging.info("Flashing artifacts for BSP preset: %s", bsp_name)
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            return self._flash_resolved(
+                resolved,
+                target_device=target_device,
+                preset=preset,
+                flash_overrides=flash_overrides,
+                image_path=image_path,
+                dry_run=dry_run,
+                build_path_override=build_path_override,
+            )
+
+    def flash_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        target_device: str,
+        feature_slugs: Optional[List[str]] = None,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash built artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            feature_slugs: Optional list of feature slugs.
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: If provided, overrides the build output path
+                                 from the registry.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+
+        Raises:
+            SystemExit: If any component is not found or flash tool is not installed.
+        """
+        logging.info(
+            "Flashing artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._flash_resolved(
+            resolved,
+            target_device=target_device,
+            flash_overrides=flash_overrides,
+            image_path=image_path,
+            dry_run=dry_run,
+            build_path_override=build_path_override,
+        )
 
     # ------------------------------------------------------------------
     # Test (HIL via LAVA + Robot Framework)

@@ -108,6 +108,26 @@ def _collect_scan_overrides(args) -> dict:
     return overrides
 
 
+def _collect_flash_overrides(args) -> dict:
+    """
+    Extract flash-related CLI arguments into a flat flash-override dict.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    tool = getattr(args, "flash_tool", None)
+    if tool is not None:
+        overrides["tool"] = tool
+    patterns = getattr(args, "flash_image_patterns", None)
+    if patterns:
+        overrides["image_patterns"] = patterns
+    extra_args = getattr(args, "flash_extra_args", None)
+    if extra_args is not None:
+        overrides["extra_args"] = extra_args
+    return overrides
+
+
 # =============================================================================
 # Remotes sub-command dispatcher (no registry loading required)
 # =============================================================================
@@ -457,6 +477,22 @@ def main() -> int:
             metavar="PATH",
             default=None,
             help="Directory to write scan reports and SBOMs into"
+        )
+        build_parser.add_argument(
+            "--flash",
+            type=str,
+            dest="flash_target",
+            metavar="DEVICE",
+            default=None,
+            help="Flash built artifacts to DEVICE (e.g. /dev/sdb) after a successful build"
+        )
+        build_parser.add_argument(
+            "--flash-tool",
+            type=str,
+            dest="flash_tool",
+            metavar="TOOL",
+            default=None,
+            help="Flash tool to use: bmaptool (default) or dd"
         )
 
         # ----------------------------------------------------------------
@@ -883,6 +919,99 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
+        # Flash command (SD-card / block-device flashing via bmap-tools)
+        # ----------------------------------------------------------------
+        flash_parser = subparsers.add_parser(
+            "flash",
+            help="Flash a built image to an SD card or block device using bmap-tools"
+        )
+        flash_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset whose image to flash, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        flash_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based flash)"
+        ).completer = DevicesCompleter()
+        flash_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based flash)"
+        ).completer = ReleasesCompleter()
+        flash_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        flash_parser.add_argument(
+            "--target", "-t",
+            type=str,
+            dest="flash_target",
+            metavar="DEVICE",
+            default=None,
+            help="Block device path to flash to (e.g. /dev/sdb)"
+        )
+        flash_parser.add_argument(
+            "--image-path",
+            type=str,
+            dest="flash_image_path",
+            metavar="PATH",
+            default=None,
+            help=(
+                "Explicit image file to flash. "
+                "Overrides auto-discovery when provided."
+            )
+        )
+        flash_parser.add_argument(
+            "--image-pattern",
+            action="append",
+            dest="flash_image_patterns",
+            metavar="PATTERN",
+            default=None,
+            help=(
+                "Glob pattern to find the flashable image (can be specified multiple times). "
+                "Overrides the default patterns when provided."
+            )
+        )
+        flash_parser.add_argument(
+            "--tool",
+            type=str,
+            dest="flash_tool",
+            metavar="TOOL",
+            default=None,
+            help="Flash tool to use: bmaptool (default) or dd"
+        )
+        flash_parser.add_argument(
+            "--extra-args",
+            type=str,
+            dest="flash_extra_args",
+            metavar="ARGS",
+            default=None,
+            help="Extra arguments forwarded verbatim to the flash tool (e.g. '--nobmap')"
+        )
+        flash_parser.add_argument(
+            "--build-path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            default=None,
+            help="Override the build output directory used for artifact discovery"
+        )
+        flash_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="Show what would be flashed without actually writing to the device"
+        )
+
+        # ----------------------------------------------------------------
         # Test command
         # ----------------------------------------------------------------
         test_parser = subparsers.add_parser(
@@ -1160,6 +1289,9 @@ def main() -> int:
             run_test = getattr(args, "run_test", False)
             scan_after_build = getattr(args, "scan_after_build", False)
             scan_overrides = _collect_scan_overrides(args)
+            flash_target = getattr(args, "flash_target", None)
+            flash_after_build = flash_target is not None
+            flash_overrides = _collect_flash_overrides(args)
             wait = getattr(args, "wait", False)
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
@@ -1182,6 +1314,9 @@ def main() -> int:
                     feature_slugs=features,
                     scan_after_build=scan_after_build,
                     scan_overrides=scan_overrides,
+                    flash_after_build=flash_after_build,
+                    flash_target=flash_target,
+                    flash_overrides=flash_overrides,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -1204,6 +1339,9 @@ def main() -> int:
                     build_path_override=build_path,
                     scan_after_build=scan_after_build,
                     scan_overrides=scan_overrides,
+                    flash_after_build=flash_after_build,
+                    flash_target=flash_target,
+                    flash_overrides=flash_overrides,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
@@ -1408,6 +1546,52 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 scan_parser.print_help()
+                return 1
+
+        elif args.command == "flash":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            flash_target = getattr(args, "flash_target", None)
+            flash_image_path = getattr(args, "flash_image_path", None)
+            dry_run = getattr(args, "dry_run", False)
+            build_path = getattr(args, "build_path", None)
+            flash_overrides = _collect_flash_overrides(args)
+
+            if not dry_run and not flash_target:
+                logging.error(
+                    "--target / -t is required unless --dry-run is specified."
+                )
+                flash_parser.print_help()
+                return 1
+
+            if _check_exclusive(bsp_name, device, release, flash_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.flash_bsp(
+                    bsp_name,
+                    target_device=flash_target or "",
+                    flash_overrides=flash_overrides,
+                    image_path=flash_image_path,
+                    dry_run=dry_run,
+                    build_path_override=build_path,
+                )
+            elif device and release:
+                bsp_mgr.flash_by_components(
+                    device, release,
+                    target_device=flash_target or "",
+                    feature_slugs=features,
+                    flash_overrides=flash_overrides,
+                    image_path=flash_image_path,
+                    dry_run=dry_run,
+                    build_path_override=build_path,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                flash_parser.print_help()
                 return 1
 
         elif args.command == "test":
