@@ -85,7 +85,7 @@ specification:
 # Global flash defaults (applied to every preset unless overridden)
 # -------------------------------------------------------------------
 flash:
-  tool: bmaptool                  # "bmaptool" (default) | "dd"
+  tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
   image_patterns:                 # glob patterns, tried in order (first match wins)
     - "**/*.wic.bz2"              # most-compressed variant preferred
     - "**/*.wic.gz"
@@ -121,7 +121,7 @@ registry:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `tool` | `bmaptool` | Flash tool: `bmaptool` or `dd` |
+| `tool` | `bmaptool` | Flash tool: `bmaptool`, `dd`, or `uuu` (NXP mfgtools) |
 | `image_patterns` | `["**/*.wic.bz2", "**/*.wic.gz", "**/*.wic.xz", "**/*.wic", "**/*.sdimg", "**/*.rpi-sdimg"]` | Glob patterns (relative to each artifact directory) used to discover flashable images. Evaluated in order; the first match wins. |
 | `artifact_dirs` | `["tmp/deploy/images"]` | Subdirectories under the build output path to search for images |
 | `extra_args` | `null` | Additional arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"` to skip block-map verification even when a `.bmap` file is present) |
@@ -154,10 +154,10 @@ bsp flash --device imx8mp-adv --release scarthgap --target /dev/sdb
 
 ```
 bsp flash <preset | --device D --release R [--feature F ...]>
-          [--target /dev/sdX]        # destination block device (required unless --dry-run)
+          [--target /dev/sdX]        # destination block device (required unless --dry-run or --tool uuu)
           [--image-path PATH]        # explicit image file (overrides auto-discovery)
           [--image-pattern PATTERN]  # override glob patterns (repeatable)
-          [--tool bmaptool|dd]       # flash tool override
+          [--tool bmaptool|dd|uuu]   # flash tool override
           [--extra-args ARGS]        # forwarded verbatim to the flash tool
           [--build-path PATH]        # override the build output directory
           [--dry-run]                # show what would be flashed without writing
@@ -179,6 +179,9 @@ bsp flash imx8mp-adv-scarthgap \
 
 # Use dd instead of bmaptool (no block-map acceleration)
 bsp flash imx8mp-adv-scarthgap --target /dev/sdb --tool dd
+
+# Use uuu (mfgtools) for NXP USB flashing (target device path not required)
+bsp flash imx8mp-adv-scarthgap --tool uuu --extra-args "-b emmc_all"
 
 # Pass extra args to bmaptool (e.g. skip block-map verification)
 bsp flash imx8mp-adv-scarthgap --target /dev/sdb --extra-args "--nobmap"

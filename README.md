@@ -791,10 +791,10 @@ bsp flash --device <d> --release <r> [--feature <f>] --target /dev/sdX [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--target DEVICE`, `-t DEVICE` | Destination block device (e.g. `/dev/sdb`). Required unless `--dry-run` is used. |
+| `--target DEVICE`, `-t DEVICE` | Destination block device (e.g. `/dev/sdb`). Required unless `--dry-run` is used or `--tool uuu` is selected. |
 | `--image-path PATH` | Explicit image file to flash (overrides auto-discovery) |
 | `--image-pattern PATTERN` | Override default glob patterns for image discovery (repeatable) |
-| `--tool bmaptool\|dd` | Flash tool override (default: `bmaptool`) |
+| `--tool bmaptool\|dd\|uuu` | Flash tool override (default: `bmaptool`) |
 | `--extra-args ARGS` | Extra arguments forwarded verbatim to the flash tool (e.g. `--nobmap`) |
 | `--build-path PATH` | Override the build output directory used for image discovery |
 | `--dry-run` | Show what would be flashed without writing anything to the device |
@@ -816,11 +816,14 @@ bsp flash imx8mp-adv-scarthgap \
 # Use dd instead of bmaptool
 bsp flash imx8mp-adv-scarthgap --target /dev/sdb --tool dd
 
+# Use uuu (mfgtools) for NXP USB flashing (no --target required)
+bsp flash imx8mp-adv-scarthgap --tool uuu --extra-args "-b emmc_all"
+
 # Flash immediately after a build
 bsp build imx8mp-adv-scarthgap --flash /dev/sdb
 ```
 
-**Prerequisites:** Install [bmap-tools](https://github.com/intel/bmap-tools) (`sudo apt install bmap-tools`) before using `bsp flash`.
+**Prerequisites:** Install [bmap-tools](https://github.com/intel/bmap-tools) (`sudo apt install bmap-tools`) for `bmaptool` mode, or [uuu/mfgtools](https://github.com/nxp-imx/mfgtools) for `--tool uuu`.
 
 ---
 
@@ -1599,7 +1602,7 @@ required to use `bsp flash`.
 
 ```yaml
 flash:
-  tool: bmaptool                  # "bmaptool" (default) | "dd"
+  tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
   image_patterns:                 # glob patterns, tried in order (first match wins)
     - "**/*.wic.bz2"
     - "**/*.wic.gz"
@@ -1616,7 +1619,7 @@ flash:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (uses block-map for fast, verified flashing) or `"dd"` (raw copy, no block-map) |
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (uses block-map for fast, verified flashing), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
 | `image_patterns` | list[str] | See above | Glob patterns for flashable image discovery, evaluated in order |
 | `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
 | `extra_args` | string (opt.) | `null` | Extra arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
