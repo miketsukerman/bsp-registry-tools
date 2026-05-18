@@ -216,12 +216,6 @@ class BspManager:
             return registry_name.strip(), item_name.strip()
         return None, value
 
-    @staticmethod
-    def _parse_registry_qualified(value: str) -> Tuple[Optional[str], str]:
-        """Backward-compatible wrapper for parsing registry-qualified values."""
-        return BspManager._parse_qualified_name(value)
-
-    @staticmethod
     def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
         """Backward-compatible wrapper for parsing ``registry:preset`` values."""
         return BspManager._parse_qualified_name(value)
