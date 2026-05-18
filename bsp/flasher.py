@@ -14,6 +14,7 @@ Project page: https://github.com/intel/bmap-tools
 """
 
 import logging
+import os
 import shlex
 import shutil
 import subprocess
@@ -284,10 +285,17 @@ class ImageFlasher:
 
     def _check_tool_availability(self) -> None:
         """
-        Verify that the configured flash tool is available on ``$PATH``.
+        Verify that required flash executables are available on ``$PATH``.
 
         Exits with a descriptive install hint when the tool is missing.
         """
+        if not self._is_running_as_root() and shutil.which("sudo") is None:
+            self.logger.error(
+                "Flashing requires superuser rights, but 'sudo' is not installed. "
+                "Install sudo or run the command as root."
+            )
+            sys.exit(1)
+
         tool = self.config.tool
         if shutil.which(tool) is None:
             install_hints = {
@@ -309,6 +317,21 @@ class ImageFlasher:
                 hint,
             )
             sys.exit(1)
+
+    def _is_running_as_root(self) -> bool:
+        """
+        Return ``True`` when running as root/superuser.
+        """
+        geteuid = getattr(os, "geteuid", None)
+        return bool(callable(geteuid) and geteuid() == 0)
+
+    def _with_superuser_prefix(self, cmd: List[str]) -> List[str]:
+        """
+        Ensure the command executes with superuser rights.
+        """
+        if self._is_running_as_root():
+            return cmd
+        return ["sudo"] + cmd
 
     # ------------------------------------------------------------------
     # Command builder
@@ -361,4 +384,4 @@ class ImageFlasher:
             # Generic: just call the tool with the image and device as args.
             cmd = [tool] + extra + [str(image_path), target_device]
 
-        return cmd
+        return self._with_superuser_prefix(cmd)

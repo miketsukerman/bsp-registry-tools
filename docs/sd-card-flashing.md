@@ -163,6 +163,9 @@ bsp flash <preset | --device D --release R [--feature F ...]>
           [--dry-run]                # show what would be flashed without writing
 ```
 
+For non-dry-run flashes, `bsp` executes the final flash command with superuser
+rights (via `sudo` when not already running as root).
+
 #### Examples
 
 ```bash
@@ -223,7 +226,7 @@ bsp build imx8mp-adv-scarthgap --flash /dev/sdb --flash-tool dd
 | Option | Description |
 |--------|-------------|
 | `--flash DEVICE` | Flash the built image to `DEVICE` after a successful build |
-| `--flash-tool TOOL` | Override the flash tool (`bmaptool` or `dd`) |
+| `--flash-tool TOOL` | Override the flash tool (`bmaptool`, `dd`, or `uuu`) |
 
 ---
 
