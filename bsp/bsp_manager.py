@@ -2365,7 +2365,10 @@ class BspManager:
         flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
         patterns = list(flash_cfg.image_patterns or [])
         if build_target:
-            patterns = [p.replace("{build_target}", build_target) for p in patterns]
+            patterns = [
+                p.replace("{build_target}", build_target) if "{build_target}" in p else p
+                for p in patterns
+            ]
             target_pattern = f"**/{build_target}.wic.*"
             patterns = [p for p in patterns if p != target_pattern]
             patterns.insert(0, target_pattern)
