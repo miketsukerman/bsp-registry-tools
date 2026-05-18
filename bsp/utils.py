@@ -4,6 +4,7 @@ YAML parsing utilities and Docker build helper for BSP registry tools.
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -14,6 +15,17 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
 
 from .models import Docker, DockerArg, DockerVolume, RegistryRoot
+
+
+def expand_build_options_env(value: str) -> str:
+    """Expand ``$ENV{VAR}`` placeholders in *value* with OS environment values.
+
+    Unrecognised placeholders (variable not set) are left unchanged.
+    This is the same ``$ENV{}`` convention used everywhere else in the registry.
+    """
+    def _replace(m: re.Match) -> str:
+        return os.environ.get(m.group(1), m.group(0))
+    return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
 
 # =============================================================================
 # YAML Configuration Parser with Container Support
@@ -326,8 +338,8 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         build_options: Extra flags appended to the ``docker build`` command
                        before the build context (e.g. ``--no-cache
                        --network host``).  Split with shell quoting rules.
-                       Environment variables in the value are expanded at
-                       build time (e.g. ``${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``).
+                       ``$ENV{VAR}`` placeholders are expanded at build time
+                       (e.g. ``$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``).
 
     Raises:
         SystemExit: If Docker build fails, prerequisites are missing, or Docker is unavailable
@@ -358,11 +370,11 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
                 cmd.extend(["--build-arg", f"{argument.name}={argument.value}"])
 
         # Add extra build options (e.g. --no-cache, --network host).
-        # Expand environment variables so users can write
-        #   build_options: "${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+        # Expand $ENV{VAR} placeholders so users can write
+        #   build_options: "$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
         # and have the variable resolved at build time.
         if build_options:
-            cmd.extend(shlex.split(os.path.expandvars(build_options)))
+            cmd.extend(shlex.split(expand_build_options_env(build_options)))
 
         cmd.extend(["."])  # Build context is current directory
 

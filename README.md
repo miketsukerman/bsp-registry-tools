@@ -468,14 +468,15 @@ Pass a name to build only that single container.
 bypassing the layer cache.
 
 The `build_options` field in the registry and the `--docker-build-options` CLI
-flag both support **environment variable expansion** at build time:
+flag both support **environment variable expansion** using the ``$ENV{VAR}``
+syntax (consistent with the rest of the registry) at build time:
 
 ```yaml
 containers:
   my-image:
     image: "my-org/my-image:latest"
     file: Dockerfile
-    build_options: "${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+    build_options: "$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
 ```
 
 If the variable is unset the reference is passed through unchanged.

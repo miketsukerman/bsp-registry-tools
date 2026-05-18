@@ -238,13 +238,13 @@ class TestComposeDockerBuildOptions:
     def test_env_var_expanded_before_token_manipulation(self, monkeypatch):
         monkeypatch.setenv("MY_BUILD_OPTS", "--no-cache")
         # use_cache=True should remove --no-cache even if it came from an env var
-        result = BspManager._compose_docker_build_options("${MY_BUILD_OPTS}", use_cache=True)
+        result = BspManager._compose_docker_build_options("$ENV{MY_BUILD_OPTS}", use_cache=True)
         if result:
             assert "--no-cache" not in shlex.split(result)
 
     def test_env_var_with_no_cache_use_cache_false(self, monkeypatch):
         monkeypatch.setenv("MY_BUILD_OPTS", "--network host")
-        result = BspManager._compose_docker_build_options("${MY_BUILD_OPTS}", use_cache=False)
+        result = BspManager._compose_docker_build_options("$ENV{MY_BUILD_OPTS}", use_cache=False)
         tokens = shlex.split(result)
         assert "--no-cache" in tokens
         assert "--network" in tokens

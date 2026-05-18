@@ -507,13 +507,13 @@ class TestBuildDocker:
 
     @patch("bsp.utils.subprocess.run")
     def test_build_options_env_var_expanded(self, mock_run, tmp_path, monkeypatch):
-        """Environment variables in build_options are expanded before docker is called."""
+        """$ENV{VAR} placeholders in build_options are expanded before docker is called."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         dockerfile_dir = self._make_dockerfile_dir(tmp_path)
 
         monkeypatch.setenv("MY_DOCKER_BUILD_FLAGS", "--no-cache --network host")
         build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
-                     build_options="${MY_DOCKER_BUILD_FLAGS}")
+                     build_options="$ENV{MY_DOCKER_BUILD_FLAGS}")
 
         cmd = mock_run.call_args[0][0]
         assert "--no-cache" in cmd
@@ -522,7 +522,7 @@ class TestBuildDocker:
 
     @patch("bsp.utils.subprocess.run")
     def test_build_options_unset_env_var_preserved(self, mock_run, tmp_path, monkeypatch):
-        """An unset environment variable reference is passed through as-is (not crashing)."""
+        """An unset $ENV{VAR} reference is passed through as-is (not crashing)."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         dockerfile_dir = self._make_dockerfile_dir(tmp_path)
 
@@ -530,7 +530,7 @@ class TestBuildDocker:
         monkeypatch.delenv("_BSP_UNSET_VAR_", raising=False)
         # Should not raise; the unexpanded token is passed verbatim to docker
         build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
-                     build_options="${_BSP_UNSET_VAR_}")
+                     build_options="$ENV{_BSP_UNSET_VAR_}")
 
         assert mock_run.called
 

@@ -24,7 +24,7 @@ from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .scanner import ImageScanner, ScanResult
 from .storage import create_backend
-from .utils import get_registry_from_yaml_file, build_docker
+from .utils import get_registry_from_yaml_file, build_docker, expand_build_options_env
 
 if COLORAMA_AVAILABLE:
     from colorama import Fore, Style
@@ -1105,12 +1105,12 @@ class BspManager:
     ) -> Optional[str]:
         """Apply cache policy on top of an optional docker-build options string.
 
-        Environment variables in *base_options* are expanded before any token
-        manipulation so that patterns like ``${BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``
-        are resolved correctly (e.g. when determining whether ``--no-cache`` is
-        already present).
+        ``$ENV{VAR}`` placeholders in *base_options* are expanded before any
+        token manipulation so that patterns like
+        ``$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}`` are resolved correctly
+        (e.g. when determining whether ``--no-cache`` is already present).
         """
-        expanded = os.path.expandvars(base_options) if base_options else None
+        expanded = expand_build_options_env(base_options) if base_options else None
         tokens = shlex.split(expanded) if expanded else []
         if use_cache is True:
             tokens = [token for token in tokens if token != "--no-cache"]
