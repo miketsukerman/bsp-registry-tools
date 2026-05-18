@@ -732,7 +732,7 @@ class ScanConfig:
 @dataclass
 class FlashConfig:
     """
-    SD-card / block-device flashing configuration via bmap-tools (or dd).
+    SD-card / block-device flashing configuration via bmap-tools, dd, or uuu.
 
     A ``FlashConfig`` block can appear at the root level of the registry
     (applies to every build) or on an individual ``BspPreset`` (overrides
@@ -749,11 +749,11 @@ class FlashConfig:
                        for flashable image files.  Mirrors
                        :attr:`ScanConfig.artifact_dirs`.
         tool: Flash tool to invoke.  Supported values: ``"bmaptool"``
-              (default) — uses ``bmaptool copy`` which automatically locates
-              and uses the accompanying ``.bmap`` block-map file for fast,
-              verified flashing.  Pass ``"dd"`` as an alternative for
-              environments where bmap-tools is not available (no block-map
-              acceleration).
+               (default) — uses ``bmaptool copy`` which automatically locates
+               and uses the accompanying ``.bmap`` block-map file for fast,
+               verified flashing.  Pass ``"dd"`` as an alternative for
+               environments where bmap-tools is not available (no block-map
+               acceleration), or ``"uuu"`` for NXP USB update flows.
         extra_args: Additional command-line arguments forwarded verbatim to
                     the flash tool (e.g. ``"--nobmap"`` to skip the block-map
                     file even when one is present).  Arguments are split on

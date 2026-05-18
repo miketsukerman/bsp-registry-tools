@@ -1755,7 +1755,7 @@ installed.
 
 ```yaml
 flash:
-  tool: bmaptool                  # "bmaptool" (default) | "dd"
+  tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
   image_patterns:                 # glob patterns, tried in order (first match wins)
     - "**/*.wic.bz2"              # most-compressed variant tried first
     - "**/*.wic.gz"
@@ -1772,7 +1772,7 @@ flash:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (block-map-accelerated, verified) or `"dd"` (raw copy) |
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (block-map-accelerated, verified), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
 | `image_patterns` | list[str] | See above | Glob patterns for image discovery, evaluated in order; first match wins |
 | `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
 | `extra_args` | string (opt.) | `null` | Additional CLI arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
@@ -2074,4 +2074,3 @@ line when they are set on the preset:
 Available BSP presets:
 - adv-imx8-scarthgap: Advantech i.MX8 Scarthgap (device: adv-imx8, release: scarthgap, vendor_release: imx-6.6.53)
 ```
-

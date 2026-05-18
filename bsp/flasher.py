@@ -1,6 +1,6 @@
 """
-Image flasher: discovers Yocto image artifacts and flashes them to a block
-device using bmap-tools (bmaptool) or dd.
+Image flasher: discovers Yocto image artifacts and flashes them using
+bmap-tools (bmaptool), dd, or uuu (NXP mfgtools).
 
 ``bmaptool copy`` is the preferred backend because it:
 * Reads the accompanying ``.bmap`` block-map file to skip empty blocks,
@@ -51,7 +51,7 @@ class ImageFlasher:
     """
     Discovers a Yocto image artifact and flashes it to a block device.
 
-    Provider-agnostic: the flash tool (``bmaptool`` or ``dd``) is selected
+    Provider-agnostic: the flash tool (``bmaptool``, ``dd``, or ``uuu``) is selected
     via ``flash_config.tool``.
 
     Args:
@@ -123,7 +123,8 @@ class ImageFlasher:
             print(f"  image : {resolved_image}")
             if bmap:
                 print(f"  bmap  : {bmap}")
-            print(f"  target: {target_device}")
+            if target_device:
+                print(f"  target: {target_device}")
             return FlashResult(
                 image_path=resolved_image,
                 target_device=target_device,
@@ -133,14 +134,22 @@ class ImageFlasher:
             )
 
         # ------------------------------------------------------------------
-        # 3. Check tool availability
+        # 3. Validate required target + check tool availability
         # ------------------------------------------------------------------
+        if self.config.tool != "uuu" and not target_device:
+            self.logger.error(
+                "Flash tool '%s' requires a target device path. "
+                "Use --target /dev/sdX.",
+                self.config.tool,
+            )
+            sys.exit(1)
+
         self._check_tool_availability()
 
         # ------------------------------------------------------------------
         # 4. Warn when target device does not exist (but continue)
         # ------------------------------------------------------------------
-        if not Path(target_device).exists():
+        if self.config.tool != "uuu" and not Path(target_device).exists():
             self.logger.warning(
                 "Target device '%s' does not exist. "
                 "Make sure the SD card / USB drive is connected.",
@@ -152,7 +161,10 @@ class ImageFlasher:
         # ------------------------------------------------------------------
         cmd = self._build_command(resolved_image, target_device, bmap)
         self.logger.info("Flashing image: %s", " ".join(cmd))
-        print(f"\nFlashing {resolved_image.name} → {target_device} …")
+        if self.config.tool == "uuu":
+            print(f"\nFlashing {resolved_image.name} via uuu …")
+        else:
+            print(f"\nFlashing {resolved_image.name} → {target_device} …")
         if bmap:
             print(f"  Using bmap file: {bmap.name}")
 
@@ -284,6 +296,10 @@ class ImageFlasher:
                     "  or see https://github.com/intel/bmap-tools"
                 ),
                 "dd": "dd is part of GNU coreutils and should already be installed.",
+                "uuu": (
+                    "Install uuu (mfgtools) from https://github.com/nxp-imx/mfgtools "
+                    "or your distro package manager."
+                ),
             }
             hint = install_hints.get(tool, f"Please install '{tool}' manually.")
             self.logger.error(
@@ -315,6 +331,10 @@ class ImageFlasher:
 
             dd if=<image> of=<device> bs=4M [extra_args …]
 
+        For ``uuu`` the command is::
+
+            uuu [extra_args …] <image>
+
         Args:
             image_path: Path to the image file to flash.
             target_device: Destination block device.
@@ -335,6 +355,8 @@ class ImageFlasher:
         elif tool == "dd":
             cmd = ["dd", f"if={image_path}", f"of={target_device}", "bs=4M"]
             cmd += extra
+        elif tool == "uuu":
+            cmd = ["uuu"] + extra + [str(image_path)]
         else:
             # Generic: just call the tool with the image and device as args.
             cmd = [tool] + extra + [str(image_path), target_device]

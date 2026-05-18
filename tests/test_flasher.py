@@ -248,6 +248,13 @@ class TestImageFlasherBuildCommand:
         assert "of=/dev/sdb" in cmd
         assert "bs=4M" in cmd
 
+    def test_uuu_command(self, tmp_path):
+        cfg = FlashConfig(tool="uuu", extra_args="-b emmc_all")
+        flasher = ImageFlasher(cfg)
+        img = tmp_path / "image.wic"
+        cmd = flasher._build_command(img, "", None)
+        assert cmd == ["uuu", "-b", "emmc_all", str(img)]
+
     def test_generic_tool_command(self, tmp_path):
         cfg = FlashConfig(tool="custom-flasher")
         flasher = ImageFlasher(cfg)
@@ -358,6 +365,39 @@ class TestImageFlasherFlash:
                     flasher.flash(str(tmp_path), "/dev/nonexistent_xyz_bsp_test")
 
         assert any("does not exist" in r.message for r in caplog.records)
+
+    def test_exits_when_target_missing_for_non_uuu_tool(self, tmp_path):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        img = images_dir / "image.wic"
+        img.write_bytes(b"data")
+
+        cfg = self._cfg(tool="dd", image_patterns=["**/*.wic"], artifact_dirs=["tmp/deploy/images"])
+        flasher = ImageFlasher(cfg)
+
+        with pytest.raises(SystemExit):
+            flasher.flash(str(tmp_path), "")
+
+    def test_uuu_allows_empty_target(self, tmp_path):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        img = images_dir / "image.wic"
+        img.write_bytes(b"data")
+
+        cfg = self._cfg(tool="uuu", image_patterns=["**/*.wic"], artifact_dirs=["tmp/deploy/images"])
+        flasher = ImageFlasher(cfg)
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+
+        with patch("shutil.which", return_value="/usr/bin/uuu"):
+            with patch("subprocess.run", return_value=mock_proc) as mock_run:
+                result = flasher.flash(str(tmp_path), "")
+
+        assert result.success is True
+        assert result.target_device == ""
+        cmd_called = mock_run.call_args[0][0]
+        assert cmd_called == ["uuu", str(img)]
 
     def test_explicit_image_path_used(self, tmp_path):
         img = tmp_path / "explicit.wic"
@@ -522,6 +562,14 @@ class TestCliFlashParser:
     def test_tool_flag(self):
         """bsp flash <preset> --tool dd --dry-run"""
         self._parse(["flash", "mypreset", "--tool", "dd", "--dry-run"])
+
+    def test_tool_flag_uuu(self):
+        """bsp flash <preset> --tool uuu --dry-run"""
+        self._parse(["flash", "mypreset", "--tool", "uuu", "--dry-run"])
+
+    def test_uuu_without_target_non_dry_run(self):
+        """bsp flash <preset> --tool uuu should not require --target."""
+        self._parse(["flash", "mypreset", "--tool", "uuu"])
 
     def test_extra_args_flag(self):
         """bsp flash <preset> --extra-args '--nobmap' --dry-run"""

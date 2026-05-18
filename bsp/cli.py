@@ -491,8 +491,9 @@ def main() -> int:
             type=str,
             dest="flash_tool",
             metavar="TOOL",
+            choices=["bmaptool", "dd", "uuu"],
             default=None,
-            help="Flash tool to use: bmaptool (default) or dd"
+            help="Flash tool to use: bmaptool (default), dd, or uuu"
         )
 
         # ----------------------------------------------------------------
@@ -985,8 +986,9 @@ def main() -> int:
             type=str,
             dest="flash_tool",
             metavar="TOOL",
+            choices=["bmaptool", "dd", "uuu"],
             default=None,
-            help="Flash tool to use: bmaptool (default) or dd"
+            help="Flash tool to use: bmaptool (default), dd, or uuu"
         )
         flash_parser.add_argument(
             "--extra-args",
@@ -1559,9 +1561,9 @@ def main() -> int:
             build_path = getattr(args, "build_path", None)
             flash_overrides = _collect_flash_overrides(args)
 
-            if not dry_run and not flash_target:
+            if not dry_run and not flash_target and getattr(args, "flash_tool", None) != "uuu":
                 logging.error(
-                    "--target / -t is required unless --dry-run is specified."
+                    "--target / -t is required unless --dry-run is specified or --tool uuu is used."
                 )
                 flash_parser.print_help()
                 return 1
