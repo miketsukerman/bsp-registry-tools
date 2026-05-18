@@ -1286,6 +1286,7 @@ class BspManager:
         flash_after_build: bool = False,
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1306,6 +1307,9 @@ class BspManager:
             flash_after_build: If True, flash artifacts to *flash_target* after a successful build
             flash_target: Block device path used when *flash_after_build* is True
             flash_overrides: CLI-level overrides for the flash configuration
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
@@ -1314,12 +1318,15 @@ class BspManager:
         if not checkout_only and resolved.container:
             container = resolved.container
             if container.file and container.image:
+                # CLI --docker-build-options overrides the registry build_options field
+                effective_build_options = docker_build_options if docker_build_options is not None else container.build_options
                 build_docker(
                     str(self.config_path.parent),
                     container.file,
                     container.image,
                     container.args,
                     verbose=self.verbose,
+                    build_options=effective_build_options,
                 )
         else:
             if checkout_only:
@@ -1390,6 +1397,7 @@ class BspManager:
         flash_after_build: bool = False,
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1408,6 +1416,9 @@ class BspManager:
             flash_after_build: If True, flash artifacts to *flash_target* after a successful build
             flash_target: Block device path used when *flash_after_build* is True
             flash_overrides: CLI-level overrides for the flash configuration
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
 
         Raises:
             SystemExit: If preset not found or build fails
@@ -1432,6 +1443,7 @@ class BspManager:
                 flash_after_build=flash_after_build,
                 flash_target=flash_target,
                 flash_overrides=flash_overrides,
+                docker_build_options=docker_build_options,
             )
 
     def build_by_components(
@@ -1450,6 +1462,7 @@ class BspManager:
         flash_after_build: bool = False,
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1469,6 +1482,9 @@ class BspManager:
             flash_after_build: If True, flash artifacts to *flash_target* after a successful build
             flash_target: Block device path used when *flash_after_build* is True
             flash_overrides: CLI-level overrides for the flash configuration
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1493,6 +1509,7 @@ class BspManager:
             flash_after_build=flash_after_build,
             flash_target=flash_target,
             flash_overrides=flash_overrides,
+            docker_build_options=docker_build_options,
         )
 
     # ------------------------------------------------------------------

@@ -624,6 +624,185 @@ registry:
         called_dockerfile_dir = mock_build_docker.call_args[0][0]
         assert called_dockerfile_dir == str(registry_dir)
 
+    def test_build_bsp_passes_registry_build_options_to_build_docker(self, tmp_dir):
+        """build_docker is called with build_options from the registry container definition."""
+        from unittest.mock import patch
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "reg_opts"
+        registry_dir.mkdir()
+        dockerfile = registry_dir / "Dockerfile.ubuntu"
+        dockerfile.write_text("FROM ubuntu:22.04\n")
+        kas_file = registry_dir / "test.yaml"
+        kas_file.write_text("header:\n  version: 14\nmachine: qemuarm64\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+    build_options: "--no-cache --network host"
+registry:
+  devices:
+    - slug: test-device
+      description: "Test Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      build:
+        container: "ubuntu-22.04"
+        path: build/test
+        includes:
+          - {kas_file}
+  releases:
+    - slug: test-release
+      description: "Test Release"
+      includes: []
+  features: []
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      device: test-device
+      release: test-release
+      features: []
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            with patch.object(KasManager, "build_project"):
+                with patch.object(manager, "prepare_build_directory"):
+                    with patch.object(KasManager, "dump_config", return_value=None):
+                        manager.build_bsp("test-bsp")
+
+        assert mock_build_docker.called
+        _, kwargs = mock_build_docker.call_args
+        assert kwargs.get("build_options") == "--no-cache --network host"
+
+    def test_build_bsp_cli_build_options_override_registry(self, tmp_dir):
+        """docker_build_options from the CLI overrides build_options in the registry."""
+        from unittest.mock import patch
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "reg_override"
+        registry_dir.mkdir()
+        dockerfile = registry_dir / "Dockerfile.ubuntu"
+        dockerfile.write_text("FROM ubuntu:22.04\n")
+        kas_file = registry_dir / "test.yaml"
+        kas_file.write_text("header:\n  version: 14\nmachine: qemuarm64\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+    build_options: "--no-cache"
+registry:
+  devices:
+    - slug: test-device
+      description: "Test Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      build:
+        container: "ubuntu-22.04"
+        path: build/test
+        includes:
+          - {kas_file}
+  releases:
+    - slug: test-release
+      description: "Test Release"
+      includes: []
+  features: []
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      device: test-device
+      release: test-release
+      features: []
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            with patch.object(KasManager, "build_project"):
+                with patch.object(manager, "prepare_build_directory"):
+                    with patch.object(KasManager, "dump_config", return_value=None):
+                        manager.build_bsp("test-bsp", docker_build_options="--platform linux/arm64")
+
+        assert mock_build_docker.called
+        _, kwargs = mock_build_docker.call_args
+        assert kwargs.get("build_options") == "--platform linux/arm64"
+
+    def test_build_bsp_no_build_options_passes_none(self, tmp_dir):
+        """When neither registry nor CLI sets build_options, build_docker gets None."""
+        from unittest.mock import patch
+        from bsp.kas_manager import KasManager
+
+        registry_dir = tmp_dir / "reg_no_opts"
+        registry_dir.mkdir()
+        dockerfile = registry_dir / "Dockerfile.ubuntu"
+        dockerfile.write_text("FROM ubuntu:22.04\n")
+        kas_file = registry_dir / "test.yaml"
+        kas_file.write_text("header:\n  version: 14\nmachine: qemuarm64\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu-22.04:latest"
+    file: Dockerfile.ubuntu
+    args: []
+registry:
+  devices:
+    - slug: test-device
+      description: "Test Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+      build:
+        container: "ubuntu-22.04"
+        path: build/test
+        includes:
+          - {kas_file}
+  releases:
+    - slug: test-release
+      description: "Test Release"
+      includes: []
+  features: []
+  bsp:
+    - name: test-bsp
+      description: "Test BSP"
+      device: test-device
+      release: test-release
+      features: []
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
+            with patch.object(KasManager, "build_project"):
+                with patch.object(manager, "prepare_build_directory"):
+                    with patch.object(KasManager, "dump_config", return_value=None):
+                        manager.build_bsp("test-bsp")
+
+        assert mock_build_docker.called
+        _, kwargs = mock_build_docker.call_args
+        assert kwargs.get("build_options") is None
+
     def test_shell_into_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """shell_into_bsp must resolve Dockerfile relative to the registry file, not CWD."""
         from unittest.mock import patch

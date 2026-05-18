@@ -495,6 +495,17 @@ def main() -> int:
             default=None,
             help="Flash tool to use: bmaptool (default), dd, or uuu"
         )
+        build_parser.add_argument(
+            "--docker-build-options",
+            type=str,
+            dest="docker_build_options",
+            metavar="OPTIONS",
+            default=None,
+            help=(
+                "Extra flags passed verbatim to 'docker build' (e.g. '--no-cache --network host'). "
+                "Overrides 'build_options' in the registry container definition."
+            )
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -1301,6 +1312,7 @@ def main() -> int:
             target = getattr(args, "target", None)
             task = getattr(args, "task", None)
             build_path = getattr(args, "build_path", None)
+            docker_build_options = getattr(args, "docker_build_options", None)
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -1319,6 +1331,7 @@ def main() -> int:
                     flash_after_build=flash_after_build,
                     flash_target=flash_target,
                     flash_overrides=flash_overrides,
+                    docker_build_options=docker_build_options,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -1344,6 +1357,7 @@ def main() -> int:
                     flash_after_build=flash_after_build,
                     flash_target=flash_target,
                     flash_overrides=flash_overrides,
+                    docker_build_options=docker_build_options,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(

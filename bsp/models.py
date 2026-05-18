@@ -79,6 +79,11 @@ class Docker:
                       ``run`` command (e.g. ``-p 2222:2222
                       --device=/dev/net/tun --cap-add=NET_ADMIN``).
                       Passed to kas-container via ``--runtime-args``.
+        build_options: Extra flags appended to the ``docker build`` command
+                       (e.g. ``--no-cache --network host``).  The value is
+                       split with shell quoting rules so flags with embedded
+                       spaces can be quoted.  CLI ``--docker-build-options``
+                       overrides this field when provided.
         privileged: Run container in privileged mode (enables --isar for kas-container)
         copy: List of ``{source: destination}`` file-copy entries executed
               before every build that uses this container.  Both paths are
@@ -96,6 +101,7 @@ class Docker:
     file: Optional[str]
     args: List[DockerArg] = field(default_factory=empty_list)
     runtime_args: Optional[str] = None
+    build_options: Optional[str] = None
     privileged: bool = False
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     volumes: List[DockerVolume] = field(default_factory=empty_list)

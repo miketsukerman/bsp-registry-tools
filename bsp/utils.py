@@ -4,6 +4,7 @@ YAML parsing utilities and Docker build helper for BSP registry tools.
 
 import logging
 import os
+import shlex
 import subprocess
 import sys
 
@@ -304,7 +305,8 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
 
 def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
                  build_args: Optional[List[DockerArg]] = None,
-                 verbose: bool = False) -> None:
+                 verbose: bool = False,
+                 build_options: Optional[str] = None) -> None:
     """
     Build Docker image from Dockerfile with comprehensive validation.
 
@@ -321,6 +323,9 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         build_args: List of Docker build arguments for parameterized builds
         verbose: If True, stream docker build output live; otherwise show
                  only a status message and suppress build output
+        build_options: Extra flags appended to the ``docker build`` command
+                       before the build context (e.g. ``--no-cache
+                       --network host``).  Split with shell quoting rules.
 
     Raises:
         SystemExit: If Docker build fails, prerequisites are missing, or Docker is unavailable
@@ -349,6 +354,10 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         if build_args:
             for argument in build_args:
                 cmd.extend(["--build-arg", f"{argument.name}={argument.value}"])
+
+        # Add extra build options (e.g. --no-cache, --network host)
+        if build_options:
+            cmd.extend(shlex.split(build_options))
 
         cmd.extend(["."])  # Build context is current directory
 

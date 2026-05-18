@@ -440,6 +440,48 @@ class TestBuildDocker:
         with pytest.raises(SystemExit):
             build_docker(str(tmp_path), "Dockerfile", "test:latest")
 
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_appended_before_context(self, mock_run, tmp_path):
+        """build_options tokens appear in the docker command before the build context '.'."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options="--no-cache --network host")
+
+        cmd = mock_run.call_args[0][0]
+        dot_index = cmd.index(".")
+        assert "--no-cache" in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--no-cache") < dot_index
+        assert cmd.index("--network") < dot_index
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_none_does_not_add_flags(self, mock_run, tmp_path):
+        """When build_options is None no extra tokens are inserted."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest", build_options=None)
+
+        cmd = mock_run.call_args[0][0]
+        # Standard flags only: docker build -f Dockerfile -t test-image:latest .
+        assert cmd == ["docker", "build", "-f", "Dockerfile", "-t", "test-image:latest", "."]
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_shell_quoting(self, mock_run, tmp_path):
+        """build_options respects shell quoting (quoted values with spaces stay together)."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options='--label "version=1 2"')
+
+        cmd = mock_run.call_args[0][0]
+        assert "--label" in cmd
+        assert "version=1 2" in cmd
+
 
 # =============================================================================
 # Tests for _deep_merge_yaml_dicts
