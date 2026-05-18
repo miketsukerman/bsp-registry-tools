@@ -19,6 +19,7 @@ Schema v2.1 separates the registry into independent sections:
 | `vendors`      | Optional top-level vendor definitions (cross-release vendor KAS includes) |
 | `include`      | Optional list of additional registry files to merge in        |
 | `deploy`       | Optional cloud deployment configuration (Azure / AWS)         |
+| `flash`        | Optional SD-card / block-device flashing configuration        |
 
 Builds can be driven either by a **named preset** (`bsp build my-preset`) or by
 composing components directly (`bsp build --device <d> --release <r>`).
@@ -1741,6 +1742,87 @@ registry:
 
 ---
 
+## `flash` (optional)
+
+Top-level SD-card / block-device flashing configuration that applies to every
+build.  A `BspPreset` can also include a `flash:` block to **override** specific
+fields for that preset.
+
+Flashing is triggered explicitly via `bsp flash` or automatically after a
+successful build when `bsp build --flash /dev/sdX` is used.  `--dry-run` shows
+what would be flashed without requiring a real device or `bmaptool` to be
+installed.
+
+```yaml
+flash:
+  tool: bmaptool                  # "bmaptool" (default) | "dd"
+  image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/*.wic.bz2"              # most-compressed variant tried first
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic"
+    - "**/*.sdimg"
+    - "**/*.rpi-sdimg"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  extra_args: null                # extra CLI args forwarded verbatim to the tool
+```
+
+### `flash` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (block-map-accelerated, verified) or `"dd"` (raw copy) |
+| `image_patterns` | list[str] | See above | Glob patterns for image discovery, evaluated in order; first match wins |
+| `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
+| `extra_args` | string (opt.) | `null` | Additional CLI arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
+
+### Preset-level `flash` override
+
+A `BspPreset` can include its own `flash:` block to override specific global
+flash settings for that preset.
+
+**Merge order** (later entries win):
+
+1. **Global `flash:`** — baseline defaults
+2. **Preset `flash:`** — only fields that differ from their `FlashConfig`
+   defaults are applied.  Omitting a field keeps the global value.
+3. **CLI flags** (`--tool`, `--image-pattern`, `--extra-args`, …) — highest priority.
+
+```yaml
+flash:                            # global: bmaptool
+  tool: bmaptool
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: imx8mp-adv-scarthgap
+      description: "Advantech i.MX8MP Scarthgap"
+      device: imx8mp-adv
+      release: scarthgap
+
+    # Skips block-map verification for this board.
+    - name: rpi4-scarthgap
+      description: "Raspberry Pi 4 Scarthgap"
+      device: rpi4
+      release: scarthgap
+      flash:
+        extra_args: "--nobmap"   # ← override: skip .bmap even when present
+
+    # Uses dd instead of bmaptool.
+    - name: legacy-board-scarthgap
+      description: "Legacy Board (no bmap-tools)"
+      device: legacy-board
+      release: scarthgap
+      flash:
+        tool: dd                 # ← override: switch to dd
+```
+
+> See [docs/sd-card-flashing.md](sd-card-flashing.md) for a complete walk-through
+> including image discovery details, bmap handling, and Python API examples.
+
+---
+
 ## CLI Examples
 
 ```bash
@@ -1809,6 +1891,18 @@ bsp deploy imx8mp-adv-scarthgap --provider aws --bucket my-s3-bucket --prefix "r
 
 # Deploy by components with a custom pattern
 bsp deploy --device qemuarm64 --release scarthgap --pattern "**/*.wic.gz"
+
+# Flash a built image to an SD card
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb
+
+# Build and flash in one step
+bsp build imx8mp-adv-scarthgap --flash /dev/sdb
+
+# Dry-run flash (no device required)
+bsp flash imx8mp-adv-scarthgap --dry-run
+
+# Flash by components
+bsp flash --device imx8mp-adv --release scarthgap --target /dev/sdb
 
 # Display registry hierarchy (default detail level)
 bsp tree
