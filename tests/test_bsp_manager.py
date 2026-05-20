@@ -6,7 +6,8 @@ import pytest
 import yaml
 from unittest.mock import patch, MagicMock
 
-from bsp import BspManager, BspPreset, Docker, KasManager, V2Resolver
+from bsp import BspManager, BspPreset, Docker, V2Resolver
+from bsp.kas_manager import KasManager
 from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML
 
 
