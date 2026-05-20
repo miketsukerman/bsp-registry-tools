@@ -17,7 +17,7 @@ from .completions import (
     RemotesCompleter,
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
-from .models import ArchiveConfig
+from .models import ArchiveConfig, YoctoCacheConfig
 from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
 from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION
@@ -55,6 +55,16 @@ def _collect_deploy_overrides(args) -> dict:
             name=archive_name if archive_name is not None else defaults.name,
             format=archive_format if archive_format is not None else defaults.format,
         )
+
+    # Yocto cache upload config
+    deploy_cache = getattr(args, "deploy_cache", None)
+    if deploy_cache is not None:
+        overrides["yocto_cache"] = YoctoCacheConfig(
+            enabled=deploy_cache,
+            downloads=getattr(args, "deploy_cache_downloads", True),
+            sstate=getattr(args, "deploy_cache_sstate", True),
+        )
+
     return overrides
 
 
@@ -337,6 +347,30 @@ def main() -> int:
             metavar="FORMAT",
             choices=["tar.gz", "tar.bz2", "tar.xz", "zip"],
             help="Compression format for the archive bundle (default: tar.gz)"
+        )
+        build_parser.add_argument(
+            "--deploy-cache",
+            action="store_true",
+            default=None,
+            dest="deploy_cache",
+            help=(
+                "Also upload Yocto DL_DIR / SSTATE_DIR caches after build. "
+                "Only effective when --deploy is used."
+            )
+        )
+        build_parser.add_argument(
+            "--no-deploy-cache-downloads",
+            action="store_false",
+            dest="deploy_cache_downloads",
+            default=True,
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)"
+        )
+        build_parser.add_argument(
+            "--no-deploy-cache-sstate",
+            action="store_false",
+            dest="deploy_cache_sstate",
+            default=True,
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)"
         )
         build_parser.add_argument(
             "--test",
@@ -631,10 +665,31 @@ def main() -> int:
             dest="dry_run",
             help="List what would be uploaded without actually uploading"
         )
-
-        # ----------------------------------------------------------------
-        # Gather command
-        # ----------------------------------------------------------------
+        deploy_parser.add_argument(
+            "--deploy-cache",
+            action="store_true",
+            default=None,
+            dest="deploy_cache",
+            help=(
+                "Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage. "
+                "Cache directories are resolved from the registry environment config "
+                "or from the DL_DIR / SSTATE_DIR environment variables."
+            )
+        )
+        deploy_parser.add_argument(
+            "--no-deploy-cache-downloads",
+            action="store_false",
+            dest="deploy_cache_downloads",
+            default=True,
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)"
+        )
+        deploy_parser.add_argument(
+            "--no-deploy-cache-sstate",
+            action="store_false",
+            dest="deploy_cache_sstate",
+            default=True,
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)"
+        )
         gather_parser = subparsers.add_parser(
             "gather",
             help="Download BSP build artifacts from cloud storage"
@@ -719,6 +774,40 @@ def main() -> int:
             action="store_true",
             dest="dry_run",
             help="List what would be downloaded without actually downloading"
+        )
+        gather_parser.add_argument(
+            "--gather-cache",
+            action="store_true",
+            dest="gather_cache",
+            default=False,
+            help=(
+                "Also restore Yocto DL_DIR / SSTATE_DIR caches from cloud storage if "
+                "available. Missing caches are silently skipped."
+            )
+        )
+        gather_parser.add_argument(
+            "--cache-downloads-dir",
+            type=str,
+            dest="cache_downloads_dest",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to restore the Yocto downloads cache into. "
+                "Defaults to the DL_DIR env variable or a 'downloads/' sub-directory "
+                "inside --dest-dir. Only effective with --gather-cache."
+            )
+        )
+        gather_parser.add_argument(
+            "--cache-sstate-dir",
+            type=str,
+            dest="cache_sstate_dest",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to restore the Yocto sstate cache into. "
+                "Defaults to the SSTATE_DIR env variable or a 'sstate/' sub-directory "
+                "inside --dest-dir. Only effective with --gather-cache."
+            )
         )
 
         # ----------------------------------------------------------------
@@ -1184,6 +1273,9 @@ def main() -> int:
             dest_dir = getattr(args, "dest_dir", None)
             dry_run = getattr(args, "dry_run", False)
             date_override = getattr(args, "gather_date", None)
+            gather_cache = getattr(args, "gather_cache", False)
+            cache_downloads_dest = getattr(args, "cache_downloads_dest", None)
+            cache_sstate_dest = getattr(args, "cache_sstate_dest", None)
             gather_overrides = _collect_gather_overrides(args)
 
             if _check_exclusive(bsp_name, device, release, gather_parser):
@@ -1195,6 +1287,9 @@ def main() -> int:
                     deploy_overrides=gather_overrides,
                     dry_run=dry_run,
                     date_override=date_override,
+                    gather_cache=gather_cache,
+                    cache_downloads_dest=cache_downloads_dest,
+                    cache_sstate_dest=cache_sstate_dest,
                 )
             elif device and release:
                 bsp_mgr.gather_by_components(
@@ -1203,6 +1298,9 @@ def main() -> int:
                     deploy_overrides=gather_overrides,
                     dry_run=dry_run,
                     date_override=date_override,
+                    gather_cache=gather_cache,
+                    cache_downloads_dest=cache_downloads_dest,
+                    cache_sstate_dest=cache_sstate_dest,
                 )
             else:
                 logging.error(

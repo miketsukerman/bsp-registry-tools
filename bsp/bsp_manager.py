@@ -17,7 +17,7 @@ from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
-from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
+from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, YoctoCacheConfig
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .storage import create_backend
@@ -1709,6 +1709,70 @@ class BspManager:
 
         return base
 
+    def _resolve_cache_paths(
+        self, deploy_cfg: "DeployConfig"
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Return ``(downloads_path, sstate_path)`` for cache upload.
+
+        Priority order:
+        1. Explicit paths set in ``deploy_cfg.yocto_cache`` (from registry /
+           CLI overrides).
+        2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
+           :class:`~bsp.environment.EnvironmentManager`.
+        3. ``None`` (cache upload skipped for that directory).
+
+        Args:
+            deploy_cfg: Effective deploy configuration.
+
+        Returns:
+            Tuple of (downloads_path, sstate_path); each may be ``None``.
+        """
+        cache_cfg = deploy_cfg.yocto_cache
+        if not cache_cfg or not cache_cfg.enabled:
+            return None, None
+
+        downloads_path: Optional[str] = cache_cfg.downloads_path
+        sstate_path: Optional[str] = cache_cfg.sstate_path
+
+        if cache_cfg.downloads and not downloads_path and self.env_manager:
+            downloads_path = self.env_manager.get_value("DL_DIR")
+        if cache_cfg.sstate and not sstate_path and self.env_manager:
+            sstate_path = self.env_manager.get_value("SSTATE_DIR")
+
+        return downloads_path, sstate_path
+
+    def _resolve_cache_restore_paths(
+        self,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Return ``(downloads_dest, sstate_dest)`` for cache restore.
+
+        Priority order:
+        1. Explicit CLI/API overrides (*cache_downloads_dest* / *cache_sstate_dest*).
+        2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
+           :class:`~bsp.environment.EnvironmentManager`.
+        3. ``None`` (gatherer uses its own default sub-directory).
+
+        Args:
+            cache_downloads_dest: Explicit downloads destination or ``None``.
+            cache_sstate_dest: Explicit sstate destination or ``None``.
+
+        Returns:
+            Tuple of (downloads_dest, sstate_dest); each may be ``None``.
+        """
+        downloads_dest = cache_downloads_dest
+        sstate_dest = cache_sstate_dest
+
+        if not downloads_dest and self.env_manager:
+            downloads_dest = self.env_manager.get_value("DL_DIR")
+        if not sstate_dest and self.env_manager:
+            sstate_dest = self.env_manager.get_value("SSTATE_DIR")
+
+        return downloads_dest, sstate_dest
+
     def _deploy_resolved(
         self,
         resolved: ResolvedConfig,
@@ -1771,6 +1835,9 @@ class BspManager:
             logging.error("Failed to initialize storage backend: %s", exc)
             sys.exit(1)
 
+        # Resolve Yocto cache paths from the environment (if cache upload is requested)
+        downloads_path, sstate_path = self._resolve_cache_paths(deploy_cfg)
+
         deployer = ArtifactDeployer(deploy_cfg, backend)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
@@ -1781,6 +1848,8 @@ class BspManager:
             release=resolved.release.slug,
             distro=resolved.effective_distro or "",
             vendor=resolved.device.vendor,
+            downloads_path=downloads_path,
+            sstate_path=sstate_path,
         )
 
         # Print summary
@@ -1793,6 +1862,12 @@ class BspManager:
                 print(f"  manifest.json → {result.manifest_url}")
         else:
             print("No artifacts found to deploy.")
+
+        if result.cache_uploads:
+            cache_action = "[dry-run] Would upload" if dry_run else "Uploaded"
+            print(f"\n{cache_action} {len(result.cache_uploads)} Yocto cache archive(s):")
+            for cu in result.cache_uploads:
+                print(f"  {cu.cache_type}: {cu.local_archive.name} → {cu.remote_url}")
 
         return result
 
@@ -1864,6 +1939,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download build artifacts for the given :class:`~bsp.resolver.ResolvedConfig`.
@@ -1884,6 +1962,14 @@ class BspManager:
                      actually downloading anything.
             date_override: Override for the ``{date}`` placeholder in the
                            prefix template (``YYYY-MM-DD``).
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives from cloud storage.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+                                  Falls back to the env ``DL_DIR`` or a default
+                                  sub-directory when ``None``.
+            cache_sstate_dest: Local path to restore the sstate cache into.
+                                Falls back to the env ``SSTATE_DIR`` or a
+                                default sub-directory when ``None``.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with the local paths of every
@@ -1925,6 +2011,12 @@ class BspManager:
             logging.error("Failed to initialize storage backend: %s", exc)
             sys.exit(1)
 
+        # Resolve cache destination directories (CLI overrides > env > default)
+        effective_downloads_dest, effective_sstate_dest = self._resolve_cache_restore_paths(
+            cache_downloads_dest=cache_downloads_dest,
+            cache_sstate_dest=cache_sstate_dest,
+        )
+
         effective_dest = dest_dir if dest_dir is not None else resolved.build_path
 
         gatherer = ArtifactGatherer(deploy_cfg, backend)
@@ -1935,6 +2027,9 @@ class BspManager:
             distro=resolved.effective_distro or "",
             vendor=resolved.device.vendor,
             date_override=date_override,
+            gather_cache=gather_cache,
+            downloads_dest=effective_downloads_dest,
+            sstate_dest=effective_sstate_dest,
         )
 
         # Print summary
@@ -1946,6 +2041,12 @@ class BspManager:
         else:
             print(f"No artifacts found to gather from '{provider}' storage.")
 
+        if result.cache_artifacts:
+            cache_action = "[dry-run] Would restore" if dry_run else "Restored"
+            print(f"\n{cache_action} {len(result.cache_artifacts)} Yocto cache(s):")
+            for cp in result.cache_artifacts:
+                print(f"  {cp}")
+
         return result
 
     def gather_bsp(
@@ -1955,6 +2056,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download artifacts for a BSP preset from cloud storage.
@@ -1967,6 +2071,10 @@ class BspManager:
             dry_run: When ``True`` log what would be downloaded without
                      actually downloading anything.
             date_override: Override for the ``{date}`` prefix placeholder.
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives alongside the regular artifacts.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+            cache_sstate_dest: Local path to restore the sstate cache into.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with download metadata.
@@ -1981,6 +2089,9 @@ class BspManager:
                 deploy_overrides=deploy_overrides,
                 dry_run=dry_run,
                 date_override=date_override,
+                gather_cache=gather_cache,
+                cache_downloads_dest=cache_downloads_dest,
+                cache_sstate_dest=cache_sstate_dest,
             )
 
     def gather_by_components(
@@ -1992,6 +2103,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download artifacts by specifying device, release, and features directly.
@@ -2006,6 +2120,10 @@ class BspManager:
             dry_run: When ``True`` log what would be downloaded without
                      actually downloading anything.
             date_override: Override for the ``{date}`` prefix placeholder.
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives alongside the regular artifacts.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+            cache_sstate_dest: Local path to restore the sstate cache into.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with download metadata.
@@ -2021,6 +2139,9 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             dry_run=dry_run,
             date_override=date_override,
+            gather_cache=gather_cache,
+            cache_downloads_dest=cache_downloads_dest,
+            cache_sstate_dest=cache_sstate_dest,
         )
 
     # ------------------------------------------------------------------

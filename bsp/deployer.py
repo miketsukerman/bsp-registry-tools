@@ -33,9 +33,20 @@ class UploadedArtifact:
 
 
 @dataclass
+class UploadedCache:
+    """Metadata for a single uploaded Yocto cache archive."""
+    cache_type: str       # "downloads" or "sstate"
+    local_archive: Path
+    remote_url: str
+    size_bytes: int
+    sha256: str
+
+
+@dataclass
 class DeployResult:
     """Result of a full deployment run."""
     artifacts: List[UploadedArtifact] = field(default_factory=list)
+    cache_uploads: List[UploadedCache] = field(default_factory=list)
     manifest_url: Optional[str] = None
     dry_run: bool = False
 
@@ -185,9 +196,16 @@ class ArtifactDeployer:
         release: str = "",
         distro: str = "",
         vendor: str = "",
+        downloads_path: Optional[str] = None,
+        sstate_path: Optional[str] = None,
     ) -> DeployResult:
         """
         Collect and upload all matching artifacts.
+
+        When ``DeployConfig.yocto_cache`` is enabled and *downloads_path* /
+        *sstate_path* point to existing directories the corresponding cache
+        directories are packed into ``tar.gz`` archives and uploaded under
+        ``{prefix}/cache/``.
 
         Args:
             build_path: Top-level Yocto build output directory.
@@ -195,6 +213,11 @@ class ArtifactDeployer:
             release: Release slug.
             distro: Effective distro slug.
             vendor: Board vendor slug.
+            downloads_path: Optional absolute path to the ``DL_DIR`` cache
+                            directory.  Passed by :class:`~bsp.bsp_manager.BspManager`
+                            when Yocto cache upload is enabled.
+            sstate_path: Optional absolute path to the ``SSTATE_DIR`` cache
+                         directory.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact and,
@@ -275,6 +298,17 @@ class ArtifactDeployer:
                 len(artifacts),
             )
 
+        # --- Yocto cache upload ---
+        cache_cfg = self.config.yocto_cache
+        if cache_cfg and cache_cfg.enabled:
+            result.cache_uploads = self._upload_caches(
+                prefix=prefix,
+                downloads_path=downloads_path,
+                sstate_path=sstate_path,
+                include_downloads=cache_cfg.downloads,
+                include_sstate=cache_cfg.sstate,
+            )
+
         if self.config.include_manifest and result.artifacts:
             manifest_url = self._upload_manifest(result, prefix, device, release, distro, vendor)
             result.manifest_url = manifest_url
@@ -294,7 +328,8 @@ class ArtifactDeployer:
         vendor: str = "",
     ) -> str:
         """
-        Build a JSON manifest describing all uploaded artifacts.
+        Build a JSON manifest describing all uploaded artifacts and, when
+        present, any uploaded Yocto cache archives.
 
         Args:
             result: Completed ``DeployResult``.
@@ -306,7 +341,7 @@ class ArtifactDeployer:
         Returns:
             JSON string.
         """
-        manifest = {
+        manifest: Dict = {
             "schema_version": "1",
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "build": {
@@ -328,7 +363,117 @@ class ArtifactDeployer:
             ],
             "total_size_bytes": result.total_bytes,
         }
+
+        if result.cache_uploads:
+            manifest["yocto_cache"] = {
+                uc.cache_type: {
+                    "name": uc.local_archive.name,
+                    "remote_url": uc.remote_url,
+                    "size_bytes": uc.size_bytes,
+                    "sha256": uc.sha256,
+                }
+                for uc in result.cache_uploads
+            }
+
         return json.dumps(manifest, indent=2)
+
+    def _upload_caches(
+        self,
+        prefix: str,
+        downloads_path: Optional[str],
+        sstate_path: Optional[str],
+        include_downloads: bool = True,
+        include_sstate: bool = True,
+    ) -> List["UploadedCache"]:
+        """
+        Pack and upload Yocto cache directories.
+
+        Each enabled cache directory that exists on disk is packed into a
+        ``tar.gz`` archive and uploaded under ``{prefix}/cache/``.  Missing or
+        disabled cache directories are silently skipped.
+
+        Args:
+            prefix: Resolved remote path prefix (e.g. ``"acme/myboard/scarthgap/2025-01-15"``).
+            downloads_path: Local path to ``DL_DIR``.
+            sstate_path: Local path to ``SSTATE_DIR``.
+            include_downloads: Whether to upload the downloads cache.
+            include_sstate: Whether to upload the sstate cache.
+
+        Returns:
+            List of :class:`UploadedCache` entries for each successfully
+            uploaded cache archive.
+        """
+        cache_prefix = f"{prefix}/cache"
+        uploaded: List[UploadedCache] = []
+
+        candidates = []
+        if include_downloads and downloads_path:
+            candidates.append(("downloads", downloads_path))
+        if include_sstate and sstate_path:
+            candidates.append(("sstate", sstate_path))
+
+        for cache_type, local_dir in candidates:
+            dir_path = Path(local_dir)
+            if not dir_path.is_dir():
+                self.logger.info(
+                    "Yocto cache dir not found, skipping upload: %s (%s)",
+                    local_dir, cache_type,
+                )
+                continue
+
+            archive_name = f"{cache_type}.tar.gz"
+            remote_path = f"{cache_prefix}/{archive_name}"
+
+            if self.backend.dry_run:
+                self.logger.info(
+                    "[dry-run] Would pack and upload Yocto %s cache: %s → %s",
+                    cache_type, local_dir, remote_path,
+                )
+                uploaded.append(
+                    UploadedCache(
+                        cache_type=cache_type,
+                        local_archive=dir_path / archive_name,
+                        remote_url=f"dry-run:{remote_path}",
+                        size_bytes=0,
+                        sha256="",
+                    )
+                )
+                continue
+
+            tmp_dir = Path(tempfile.mkdtemp(prefix="bsp_cache_"))
+            archive_path = tmp_dir / archive_name
+            try:
+                self.logger.info(
+                    "Packing Yocto %s cache: %s → %s",
+                    cache_type, local_dir, archive_path,
+                )
+                with tarfile.open(archive_path, "w:gz") as tar:
+                    tar.add(str(dir_path), arcname=cache_type)
+
+                self.logger.info(
+                    "Uploading Yocto %s cache archive (%d bytes) → %s",
+                    cache_type, archive_path.stat().st_size, remote_path,
+                )
+                url = self.backend.upload_file(archive_path, remote_path)
+                size = archive_path.stat().st_size
+                sha = self._sha256(archive_path)
+                uploaded.append(
+                    UploadedCache(
+                        cache_type=cache_type,
+                        local_archive=archive_path,
+                        remote_url=url,
+                        size_bytes=size,
+                        sha256=sha,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.error(
+                    "Failed to upload Yocto %s cache: %s", cache_type, exc
+                )
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        return uploaded
 
     def _upload_manifest(
         self,
