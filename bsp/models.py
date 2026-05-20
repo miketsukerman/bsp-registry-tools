@@ -1007,6 +1007,45 @@ class Registry:
 
 
 @dataclass
+class YoctoCacheConfig:
+    """
+    Configuration for uploading and restoring Yocto build caches alongside
+    regular build artifacts.
+
+    Supported caches:
+
+    * **downloads** – Yocto source download cache (``DL_DIR``).
+    * **sstate** – Shared-state cache (``SSTATE_DIR``).
+
+    Each enabled cache directory is packed into a compressed ``tar.gz`` archive
+    and uploaded to ``{prefix}/cache/downloads.tar.gz`` or
+    ``{prefix}/cache/sstate.tar.gz`` respectively.  The ``bsp gather
+    --gather-cache`` command downloads and extracts those archives back to the
+    configured local directories.
+
+    Attributes:
+        enabled: Master switch.  When ``False`` (default) neither upload nor
+                 restore is attempted even when this block is present.
+        downloads: When ``True`` (default), include the ``DL_DIR`` download
+                   cache in the upload / restore.
+        sstate: When ``True`` (default), include the ``SSTATE_DIR`` shared-state
+                cache in the upload / restore.
+        downloads_path: Override the local ``DL_DIR`` path.  When ``None``
+                        (default) the path is taken from the ``DL_DIR``
+                        environment variable resolved by the
+                        :class:`~bsp.environment.EnvironmentManager`.
+        sstate_path: Override the local ``SSTATE_DIR`` path.  When ``None``
+                     (default) the path is taken from the ``SSTATE_DIR``
+                     environment variable.
+    """
+    enabled: bool = False
+    downloads: bool = True
+    sstate: bool = True
+    downloads_path: Optional[str] = None
+    sstate_path: Optional[str] = None
+
+
+@dataclass
 class ArchiveConfig:
     """
     Configuration for bundling all build artifacts into a single compressed
@@ -1072,6 +1111,10 @@ class DeployConfig:
                  individually.
         region: AWS region override (``"aws"`` provider only).
         profile: AWS credential profile name (``"aws"`` provider only).
+        yocto_cache: Optional configuration for uploading / restoring Yocto
+                     build caches (``DL_DIR`` / ``SSTATE_DIR``).  When
+                     ``None`` (default) or ``enabled: false`` cache handling
+                     is skipped entirely, preserving backward compatibility.
     """
     provider: str = "azure"
     container: Optional[str] = None
@@ -1097,6 +1140,7 @@ class DeployConfig:
     archive: Optional["ArchiveConfig"] = None
     region: Optional[str] = None
     profile: Optional[str] = None
+    yocto_cache: Optional["YoctoCacheConfig"] = None
 
 
 @dataclass
