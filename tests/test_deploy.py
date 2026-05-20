@@ -940,3 +940,338 @@ class TestUploadDirectory:
         urls = backend.upload_directory(tmp_path, "my/prefix", "*.wic.gz")
         assert len(urls) == 1
         assert "image.wic.gz" in urls[0]
+
+
+# =============================================================================
+# YoctoCacheConfig model tests
+# =============================================================================
+
+
+class TestYoctoCacheConfig:
+    def test_defaults_disabled(self):
+        from bsp.models import YoctoCacheConfig
+        cfg = YoctoCacheConfig()
+        assert cfg.enabled is False
+
+    def test_defaults_include_both(self):
+        from bsp.models import YoctoCacheConfig
+        cfg = YoctoCacheConfig(enabled=True)
+        assert cfg.downloads is True
+        assert cfg.sstate is True
+
+    def test_custom_paths(self):
+        from bsp.models import YoctoCacheConfig
+        cfg = YoctoCacheConfig(
+            enabled=True,
+            downloads_path="/mnt/dl",
+            sstate_path="/mnt/ss",
+        )
+        assert cfg.downloads_path == "/mnt/dl"
+        assert cfg.sstate_path == "/mnt/ss"
+
+    def test_deploy_config_yocto_cache_defaults_none(self):
+        cfg = DeployConfig()
+        assert cfg.yocto_cache is None
+
+    def test_deploy_config_yocto_cache_set(self):
+        from bsp.models import YoctoCacheConfig
+        cache_cfg = YoctoCacheConfig(enabled=True)
+        cfg = DeployConfig(yocto_cache=cache_cfg)
+        assert cfg.yocto_cache is not None
+        assert cfg.yocto_cache.enabled is True
+
+    def test_yocto_cache_yaml_parsing(self, tmp_path):
+        from bsp.utils import get_registry_from_yaml_file
+
+        yaml_content = """
+specification:
+  version: "2.0"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+deploy:
+  provider: azure
+  container: my-artifacts
+  yocto_cache:
+    enabled: true
+    downloads: true
+    sstate: false
+    downloads_path: /mnt/downloads
+"""
+        registry_file = tmp_path / "registry.yaml"
+        registry_file.write_text(yaml_content)
+        root = get_registry_from_yaml_file(registry_file)
+
+        assert root.deploy is not None
+        cache = root.deploy.yocto_cache
+        assert cache is not None
+        assert cache.enabled is True
+        assert cache.downloads is True
+        assert cache.sstate is False
+        assert cache.downloads_path == "/mnt/downloads"
+
+
+# =============================================================================
+# ArtifactDeployer cache upload tests
+# =============================================================================
+
+
+class TestArtifactDeployerCacheUpload:
+    """Test Yocto cache pack-and-upload logic."""
+
+    def _make_deployer(self, enabled=True, downloads=True, sstate=True, backend=None):
+        from bsp.models import YoctoCacheConfig
+        cfg = DeployConfig(
+            provider="azure",
+            container="bsp-artifacts",
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            yocto_cache=YoctoCacheConfig(
+                enabled=enabled,
+                downloads=downloads,
+                sstate=sstate,
+            ),
+        )
+        if backend is None:
+            backend = _FakeBackend()
+        return ArtifactDeployer(cfg, backend)
+
+    def test_cache_upload_uploads_downloads_dir(self, tmp_path):
+        # Create a build dir with an artifact so deploy() doesn't early-exit
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        # Create a fake DL_DIR
+        dl_dir = tmp_path / "downloads"
+        dl_dir.mkdir()
+        (dl_dir / "source.tar.gz").write_bytes(b"src")
+
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+        result = deployer.deploy(
+            str(tmp_path), device="mydev", release="rel",
+            downloads_path=str(dl_dir),
+        )
+
+        assert len(result.cache_uploads) == 1
+        assert result.cache_uploads[0].cache_type == "downloads"
+        # Check the archive was uploaded under cache/ sub-prefix
+        uploaded_keys = list(backend.uploaded.keys())
+        assert any("cache/downloads.tar.gz" in k for k in uploaded_keys)
+
+    def test_cache_upload_uploads_sstate_dir(self, tmp_path):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        ss_dir = tmp_path / "sstate"
+        ss_dir.mkdir()
+        (ss_dir / "sig.siginfo").write_bytes(b"sig")
+
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+        result = deployer.deploy(
+            str(tmp_path), device="mydev", release="rel",
+            sstate_path=str(ss_dir),
+        )
+
+        assert len(result.cache_uploads) == 1
+        assert result.cache_uploads[0].cache_type == "sstate"
+        uploaded_keys = list(backend.uploaded.keys())
+        assert any("cache/sstate.tar.gz" in k for k in uploaded_keys)
+
+    def test_cache_upload_both_dirs(self, tmp_path):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        dl_dir = tmp_path / "downloads"
+        dl_dir.mkdir()
+        ss_dir = tmp_path / "sstate"
+        ss_dir.mkdir()
+
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+        result = deployer.deploy(
+            str(tmp_path), device="mydev", release="rel",
+            downloads_path=str(dl_dir),
+            sstate_path=str(ss_dir),
+        )
+
+        assert len(result.cache_uploads) == 2
+        types = {uc.cache_type for uc in result.cache_uploads}
+        assert types == {"downloads", "sstate"}
+
+    def test_cache_upload_skipped_when_disabled(self, tmp_path):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        dl_dir = tmp_path / "downloads"
+        dl_dir.mkdir()
+
+        deployer = self._make_deployer(enabled=False)
+        result = deployer.deploy(
+            str(tmp_path), downloads_path=str(dl_dir),
+        )
+
+        assert result.cache_uploads == []
+
+    def test_cache_upload_skipped_for_missing_dir(self, tmp_path, caplog):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+        import logging
+        with caplog.at_level(logging.INFO):
+            result = deployer.deploy(
+                str(tmp_path),
+                downloads_path=str(tmp_path / "nonexistent"),
+            )
+
+        assert result.cache_uploads == []
+        assert "not found" in caplog.text.lower() or "skipping" in caplog.text.lower()
+
+    def test_cache_upload_dry_run(self, tmp_path):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        dl_dir = tmp_path / "downloads"
+        dl_dir.mkdir()
+
+        backend = _FakeBackend(dry_run=True)
+        deployer = self._make_deployer(backend=backend)
+        result = deployer.deploy(
+            str(tmp_path), device="d", release="r",
+            downloads_path=str(dl_dir),
+        )
+
+        assert len(result.cache_uploads) == 1
+        assert result.cache_uploads[0].remote_url.startswith("dry-run:")
+        # Nothing actually uploaded
+        assert len(backend.uploaded) == 0
+
+    def test_generate_manifest_includes_yocto_cache(self, tmp_path):
+        from bsp.deployer import UploadedCache
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+
+        result = DeployResult(dry_run=False)
+        result.artifacts = [
+            UploadedArtifact(
+                local_path=tmp_path / "img.wic.gz",
+                remote_url="fake://pfx/img.wic.gz",
+                size_bytes=100,
+                sha256="abc",
+            )
+        ]
+        result.cache_uploads = [
+            UploadedCache(
+                cache_type="downloads",
+                local_archive=tmp_path / "downloads.tar.gz",
+                remote_url="fake://pfx/cache/downloads.tar.gz",
+                size_bytes=200,
+                sha256="def",
+            )
+        ]
+
+        manifest_json = deployer.generate_manifest(result, device="dev", release="rel")
+        manifest = json.loads(manifest_json)
+
+        assert "yocto_cache" in manifest
+        assert "downloads" in manifest["yocto_cache"]
+        assert manifest["yocto_cache"]["downloads"]["remote_url"] == "fake://pfx/cache/downloads.tar.gz"
+        assert manifest["yocto_cache"]["downloads"]["sha256"] == "def"
+
+    def test_generate_manifest_no_yocto_cache_when_empty(self):
+        backend = _FakeBackend()
+        deployer = self._make_deployer(backend=backend)
+        result = DeployResult(dry_run=False)
+        result.artifacts = [
+            UploadedArtifact(
+                local_path=Path("/tmp/img.wic"),
+                remote_url="fake://pfx/img.wic",
+                size_bytes=10,
+                sha256="aa",
+            )
+        ]
+        manifest = json.loads(deployer.generate_manifest(result))
+        assert "yocto_cache" not in manifest
+
+    def test_only_downloads_flag(self, tmp_path):
+        """--no-deploy-cache-sstate skips the sstate upload."""
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"wic")
+
+        dl_dir = tmp_path / "downloads"
+        dl_dir.mkdir()
+        ss_dir = tmp_path / "sstate"
+        ss_dir.mkdir()
+
+        backend = _FakeBackend()
+        deployer = self._make_deployer(downloads=True, sstate=False, backend=backend)
+        result = deployer.deploy(
+            str(tmp_path), downloads_path=str(dl_dir), sstate_path=str(ss_dir),
+        )
+
+        assert len(result.cache_uploads) == 1
+        assert result.cache_uploads[0].cache_type == "downloads"
+
+
+# =============================================================================
+# _collect_deploy_overrides cache extension tests
+# =============================================================================
+
+
+class TestCollectDeployOverridesCache:
+    def _make_args(self, **kwargs):
+        import argparse
+        ns = argparse.Namespace()
+        for k, v in kwargs.items():
+            setattr(ns, k, v)
+        return ns
+
+    def test_no_deploy_cache_flag_no_override(self):
+        from bsp.cli import _collect_deploy_overrides
+        args = self._make_args(
+            deploy_provider=None, deploy_container=None, deploy_prefix=None,
+            deploy_patterns=None, deploy_archive_name=None, deploy_archive_format=None,
+            deploy_cache=None,
+        )
+        overrides = _collect_deploy_overrides(args)
+        assert "yocto_cache" not in overrides
+
+    def test_deploy_cache_true_creates_yocto_cache(self):
+        from bsp.cli import _collect_deploy_overrides
+        from bsp.models import YoctoCacheConfig
+        args = self._make_args(
+            deploy_provider=None, deploy_container=None, deploy_prefix=None,
+            deploy_patterns=None, deploy_archive_name=None, deploy_archive_format=None,
+            deploy_cache=True, deploy_cache_downloads=True, deploy_cache_sstate=True,
+        )
+        overrides = _collect_deploy_overrides(args)
+        assert "yocto_cache" in overrides
+        assert isinstance(overrides["yocto_cache"], YoctoCacheConfig)
+        assert overrides["yocto_cache"].enabled is True
+        assert overrides["yocto_cache"].downloads is True
+        assert overrides["yocto_cache"].sstate is True
+
+    def test_deploy_cache_no_downloads(self):
+        from bsp.cli import _collect_deploy_overrides
+        args = self._make_args(
+            deploy_provider=None, deploy_container=None, deploy_prefix=None,
+            deploy_patterns=None, deploy_archive_name=None, deploy_archive_format=None,
+            deploy_cache=True, deploy_cache_downloads=False, deploy_cache_sstate=True,
+        )
+        overrides = _collect_deploy_overrides(args)
+        assert overrides["yocto_cache"].downloads is False
+        assert overrides["yocto_cache"].sstate is True
+
