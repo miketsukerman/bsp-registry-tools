@@ -741,7 +741,8 @@ Once started, the following interfaces are available:
 #### `deploy` — Upload build artifacts to cloud storage
 
 Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
-to Azure Blob Storage or AWS S3.
+to Azure Blob Storage or AWS S3.  Optionally also upload Yocto build caches
+(`DL_DIR` / `SSTATE_DIR`) with `--deploy-cache`.
 
 ```bash
 bsp deploy <bsp_name> [OPTIONS]
@@ -756,6 +757,9 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage |
+| `--no-deploy-cache-downloads` | Skip the DL_DIR upload (use with `--deploy-cache`) |
+| `--no-deploy-cache-sstate` | Skip the SSTATE_DIR upload (use with `--deploy-cache`) |
 | `--dry-run` | List what would be uploaded without uploading (no credentials required) |
 
 ---
@@ -763,7 +767,9 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 #### `gather` — Download build artifacts from cloud storage
 
 Downloads Yocto build artifacts that were previously uploaded by `bsp deploy`
-from Azure Blob Storage or AWS S3 to a local directory.
+from Azure Blob Storage or AWS S3 to a local directory.  With `--gather-cache`
+it also restores Yocto build caches (`DL_DIR` / `SSTATE_DIR`) from cloud
+storage — a missing cache is skipped silently, so the command always succeeds.
 
 ```bash
 bsp gather <bsp_name> [OPTIONS]
@@ -777,6 +783,9 @@ bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`) |
 | `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
 | `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
+| `--gather-cache` | Also download and restore Yocto cache archives (DL_DIR / SSTATE_DIR) if available |
+| `--cache-downloads-dir PATH` | Local path to restore the DL_DIR cache into (default: `DL_DIR` env var or `downloads/` inside `--dest-dir`) |
+| `--cache-sstate-dir PATH` | Local path to restore the SSTATE_DIR cache into (default: `SSTATE_DIR` env var or `sstate/` inside `--dest-dir`) |
 | `--dry-run` | List what would be downloaded without downloading (no credentials required) |
 
 **Examples:**
@@ -796,6 +805,12 @@ bsp gather poky-qemuarm64-scarthgap --dry-run
 
 # Component-based gather
 bsp gather --device qemuarm64 --release scarthgap --dest-dir /mnt/artifacts
+
+# Restore artifacts + Yocto caches
+bsp gather poky-qemuarm64-scarthgap \
+    --gather-cache \
+    --cache-downloads-dir /mnt/yocto/downloads \
+    --cache-sstate-dir /mnt/yocto/sstate
 ```
 
 ---
