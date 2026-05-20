@@ -1603,6 +1603,14 @@ deploy:
   # archive:
   #   name: "firmware-{device}-{release}-{date}"
   #   format: tar.gz
+
+  # Optional: upload Yocto DL_DIR / SSTATE_DIR caches (opt-in, disabled by default)
+  # yocto_cache:
+  #   enabled: true
+  #   downloads: true          # upload DL_DIR
+  #   sstate: true             # upload SSTATE_DIR
+  #   downloads_path: /mnt/yocto/downloads   # override DL_DIR location
+  #   sstate_path: /mnt/yocto/sstate         # override SSTATE_DIR location
 ```
 
 ### `deploy` fields
@@ -1620,6 +1628,7 @@ deploy:
 | `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [ArchiveConfig](#archiveconfig) below. |
 | `region`           | string (opt.) | —       | AWS region (boto3 default if omitted) |
 | `profile`          | string (opt.) | —       | AWS credentials profile name |
+| `yocto_cache`      | object (opt.) | —       | Upload / restore Yocto DL_DIR / SSTATE_DIR caches. See [YoctoCacheConfig](#yoctocacheconfig) below. |
 
 **Default `patterns`:**
 
@@ -1659,6 +1668,48 @@ deploy:
 | `format` | string | `"tar.gz"`                    | Compression format: `tar.gz`, `tar.bz2`, `tar.xz`, or `zip`. |
 
 The appropriate extension is appended automatically.
+
+### YoctoCacheConfig
+
+When a `yocto_cache:` block is present and `enabled: true`, the tool also packs
+the Yocto download cache (`DL_DIR`) and/or the shared-state cache (`SSTATE_DIR`)
+into `tar.gz` archives and uploads them under `{prefix}/cache/`:
+
+```
+{prefix}/cache/downloads.tar.gz
+{prefix}/cache/sstate.tar.gz
+```
+
+Cache metadata is stored in the `yocto_cache` section of `manifest.json` so
+`bsp gather --gather-cache` can locate the archives without guessing.
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  yocto_cache:
+    enabled: true          # required — disabled by default
+    downloads: true        # include DL_DIR (default: true)
+    sstate: true           # include SSTATE_DIR (default: true)
+    # Optionally hard-code paths instead of relying on DL_DIR / SSTATE_DIR env vars
+    # downloads_path: /mnt/yocto/downloads
+    # sstate_path: /mnt/yocto/sstate
+```
+
+| Field            | Type          | Default | Description |
+|------------------|---------------|---------|-------------|
+| `enabled`        | bool          | `false` | Master switch. Set to `true` to upload Yocto caches. |
+| `downloads`      | bool          | `true`  | Include the `DL_DIR` downloads cache in the upload / restore. |
+| `sstate`         | bool          | `true`  | Include the `SSTATE_DIR` shared-state cache in the upload / restore. |
+| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to the `DL_DIR` environment variable when omitted. |
+| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to the `SSTATE_DIR` environment variable when omitted. |
+
+Cache upload is **opt-in** and backward-compatible: omitting the `yocto_cache:`
+block (or setting `enabled: false`) leaves the existing artifact deployment
+pipeline completely unchanged.
+
+CLI flags for cache upload/restore are documented in
+[`docs/artifact-deployment.md`](artifact-deployment.md#yocto-cache-upload).
 
 ### Preset-level `deploy` override
 
