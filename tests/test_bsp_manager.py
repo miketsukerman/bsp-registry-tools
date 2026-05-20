@@ -6,7 +6,7 @@ import pytest
 import yaml
 from unittest.mock import patch, MagicMock
 
-from bsp import BspManager, BspPreset, Docker, V2Resolver
+from bsp import BspManager, BspPreset, Docker, KasManager, V2Resolver
 from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML
 
 
@@ -604,9 +604,6 @@ class TestBspManagerMisc:
 
     def test_build_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """build_docker must be called with the registry file's directory, not CWD."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
-
         # Create a Dockerfile next to the registry file in a subdirectory
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
@@ -665,9 +662,6 @@ registry:
 
     def test_shell_into_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """shell_into_bsp must resolve Dockerfile relative to the registry file, not CWD."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
-
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
         dockerfile = registry_dir / "Dockerfile.ubuntu"
@@ -724,8 +718,6 @@ registry:
 
     def test_kas_manager_gets_registry_dir_as_search_path(self, tmp_dir):
         """KasManager must include the registry file's directory in its search paths."""
-        from bsp.kas_manager import KasManager
-
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
         kas_file = registry_dir / "test.yaml"
@@ -1182,9 +1174,6 @@ class TestGlobalCopy:
 class TestShellCopyFiles:
     def test_shell_executes_named_env_copy(self, registry_with_named_env_copy_file):
         """_copy_files is called during shell_into_bsp so named-env copy entries are applied."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
@@ -2633,8 +2622,6 @@ class TestBuildBspWithCopy:
         carries a copy entry.  After calling build_bsp() the copied file must
         appear at the destination path relative to the preset's build directory.
         """
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
@@ -2663,8 +2650,6 @@ class TestBuildBspWithCopy:
         are resolved relative to the registry directory (backward-compatible
         behaviour documented in _copy_files).
         """
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
