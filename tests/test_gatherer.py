@@ -912,3 +912,25 @@ deploy:
         assert ss == str(base_dir / "sstate-cache")
         assert (base_dir / "downloads").is_dir()
         assert (base_dir / "sstate-cache").is_dir()
+
+    def test_resolve_cache_restore_paths_nested_artifact_dirs(
+        self, tmp_path, gather_registry_file2
+    ):
+        """build/ prefix in artifact_dirs → restore defaults under base_dir/build/."""
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        base_dir = tmp_path / "bsp-build"
+        dl, ss = mgr._resolve_cache_restore_paths(
+            base_dir=str(base_dir),
+            artifact_dirs=["build/tmp/deploy/images", "build/tmp/deploy/sdk"],
+            create_dirs=True,
+        )
+        assert dl == str(base_dir / "build" / "downloads")
+        assert ss == str(base_dir / "build" / "sstate-cache")
+        assert (base_dir / "build" / "downloads").is_dir()
+        assert (base_dir / "build" / "sstate-cache").is_dir()

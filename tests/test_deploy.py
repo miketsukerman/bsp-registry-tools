@@ -1325,6 +1325,7 @@ deploy:
         mgr.env_manager = MagicMock()
         mgr.env_manager.get_value.return_value = None
 
+        # Default artifact_dirs = ["tmp/deploy/images"] → TOPDIR = build_path
         cfg = DeployConfig(
             yocto_cache=YoctoCacheConfig(
                 enabled=True,
@@ -1336,6 +1337,49 @@ deploy:
 
         assert dl == "/tmp/yocto-build/downloads"
         assert ss == "/tmp/yocto-build/sstate-cache"
+
+    def test_resolve_cache_paths_nested_artifact_dirs(
+        self, deploy_registry_file
+    ):
+        """artifact_dirs with build/ prefix → TOPDIR = build_path/build/."""
+        from bsp.bsp_manager import BspManager
+        from bsp.models import YoctoCacheConfig
+
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        cfg = DeployConfig(
+            artifact_dirs=["build/tmp/deploy/images", "build/tmp/deploy/sdk"],
+            yocto_cache=YoctoCacheConfig(
+                enabled=True,
+                downloads=True,
+                sstate=True,
+            )
+        )
+        dl, ss = mgr._resolve_cache_paths(cfg, build_path="/tmp/yocto-build")
+
+        assert dl == "/tmp/yocto-build/build/downloads"
+        assert ss == "/tmp/yocto-build/build/sstate-cache"
+
+    def test_infer_yocto_topdir_default_artifact_dirs(self, deploy_registry_file):
+        from bsp.bsp_manager import BspManager
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        assert mgr._infer_yocto_topdir("/bp", ["tmp/deploy/images"]) == "/bp"
+
+    def test_infer_yocto_topdir_nested_build_prefix(self, deploy_registry_file):
+        from bsp.bsp_manager import BspManager
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        result = mgr._infer_yocto_topdir("/bp", ["build/tmp/deploy/images"])
+        assert result == "/bp/build"
+
+    def test_infer_yocto_topdir_no_tmp_segment(self, deploy_registry_file):
+        from bsp.bsp_manager import BspManager
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        # No tmp → fall back to build_path
+        result = mgr._infer_yocto_topdir("/bp", ["some/other/path"])
+        assert result == "/bp"
 
     def test_resolve_cache_paths_prefers_env_values_over_default(
         self, deploy_registry_file
