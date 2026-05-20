@@ -1026,7 +1026,6 @@ class TestDistros:
     def test_resolver_get_distro_not_found(self, registry_with_distro_file):
         manager = BspManager(config_path=str(registry_with_distro_file))
         manager.initialize()
-        import pytest
         with pytest.raises(SystemExit):
             manager.resolver.get_distro("nonexistent-distro")
 
