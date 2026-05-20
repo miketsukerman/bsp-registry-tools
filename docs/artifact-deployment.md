@@ -397,7 +397,6 @@ bsp gather my-preset --dry-run --gather-cache
 > environment variables as default restore destinations (same as the deploy
 > side).  Explicit `--cache-downloads-dir` / `--cache-sstate-dir` flags take
 > priority.  If neither is set, archives are extracted into
-> archives are extracted into
 > `<topdir>/downloads` and `<topdir>/sstate-cache`, where TOPDIR is the
 > Yocto build directory inferred from the `artifact_dirs` configuration
 > (e.g. `build/tmp/deploy/images` → TOPDIR = `<dest-dir>/build/`).
