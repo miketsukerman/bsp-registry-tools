@@ -12,6 +12,8 @@ from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
+import yaml
+
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
@@ -1375,6 +1377,83 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
+    @staticmethod
+    def _extract_targets_from_kas_config(config_output: Optional[str]) -> List[str]:
+        """Return normalized targets from ``kas dump`` YAML output."""
+        if not config_output:
+            return []
+        try:
+            config = yaml.safe_load(config_output) or {}
+        except yaml.YAMLError as exc:
+            logging.debug(f"Unable to parse KAS dump for targets: {exc}")
+            return []
+        if not isinstance(config, dict):
+            return []
+        targets = config.get("target")
+        if isinstance(targets, str):
+            return [targets]
+        if isinstance(targets, list):
+            return [str(target) for target in targets if target]
+        return []
+
+    def _fetch_resolved(
+        self,
+        resolved: ResolvedConfig,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+        label: str = "",
+    ) -> None:
+        """
+        Fetch all sources required for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+            label: Descriptive label for log messages
+        """
+        logging.info(f"Fetching sources for {label or resolved.device.slug}")
+
+        if resolved.container:
+            container = resolved.container
+            if container.file and container.image:
+                build_docker(
+                    str(self.config_path.parent),
+                    container.file,
+                    container.image,
+                    container.args,
+                    verbose=self.verbose,
+                )
+
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
+
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved,
+            use_container=True,
+            build_path_override=build_path_override,
+        )
+
+        try:
+            config_output = kas_mgr.dump_config(show_output=False)
+            if config_output:
+                logging.debug("Configuration dump:\n" + config_output)
+
+            targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+            if not targets:
+                logging.error(
+                    "No BitBake targets found for source fetch. "
+                    "Provide --target or configure targets in the KAS configuration."
+                )
+                sys.exit(1)
+
+            kas_mgr.fetch_project(targets=targets)
+        finally:
+            self._cleanup_temp_kas_file()
+
     def build_bsp(
         self,
         bsp_name: str,
@@ -1432,6 +1511,34 @@ class BspManager:
                 flash_after_build=flash_after_build,
                 flash_target=flash_target,
                 flash_overrides=flash_overrides,
+            )
+
+    def fetch_bsp(
+        self,
+        bsp_name: str,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+        feature_slugs: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Fetch all sources for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset to fetch
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+            feature_slugs: Additional feature slugs to enable
+        """
+        logging.info(f"Fetching BSP preset: {bsp_name}")
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(
+            bsp_name, extra_feature_slugs=feature_slugs
+        )
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            self._fetch_resolved(
+                resolved,
+                target=target,
+                build_path_override=build_path_override,
+                label=f"{preset.name} - {preset.description}",
             )
 
     def build_by_components(
@@ -1493,6 +1600,36 @@ class BspManager:
             flash_after_build=flash_after_build,
             flash_target=flash_target,
             flash_overrides=flash_overrides,
+        )
+
+    def fetch_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+    ) -> None:
+        """
+        Fetch all sources by specifying device, release, and optional features.
+
+        Args:
+            device_slug: Device slug
+            release_slug: Release slug
+            feature_slugs: Optional list of feature slugs to enable
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+        """
+        logging.info(
+            f"Fetching sources for device={device_slug} release={release_slug} "
+            f"features={feature_slugs or []}"
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        self._fetch_resolved(
+            resolved,
+            target=target,
+            build_path_override=build_path_override,
+            label=f"{device_slug}/{release_slug}",
         )
 
     # ------------------------------------------------------------------
