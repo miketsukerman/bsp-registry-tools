@@ -596,7 +596,7 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
-| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition. Supports environment variable references such as `$ENV{MY_FLAGS}`. |
+| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
 **Examples:**
 
