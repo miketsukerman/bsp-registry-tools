@@ -449,11 +449,11 @@ bsp containers list
 
 # Build all containers that have a Dockerfile
 bsp containers build
-bsp containers build --no-cache          # force clean Docker rebuild
+bsp containers build --docker-no-cache   # force clean Docker rebuild
 
 # Build a single named container
 bsp containers build debian-bookworm
-bsp containers build debian-bookworm --no-cache
+bsp containers build debian-bookworm --docker-no-cache
 
 # Multi-registry: target a specific registry
 bsp containers build upstream:debian-bookworm
@@ -464,7 +464,7 @@ The `build` action iterates every container in the registry that has both an
 `image` (pre-built images pulled from a registry) are skipped with a warning.
 Pass a name to build only that single container.
 
-`--no-cache` passes Docker’s `--no-cache` flag to the build invocation,
+`--docker-no-cache` passes Docker’s `--no-cache` flag to the build invocation,
 bypassing the layer cache.
 
 The `build_options` field in the registry and the `--docker-build-options` CLI
@@ -595,8 +595,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--lava-server URL` | LAVA server base URL override (overrides registry `lava.server`) |
 | `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
-| `--no-cache` | Disable Docker layer cache when building the BSP container image |
-| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition. Supports environment variable references such as `${MY_FLAGS}`. |
+| `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
+| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition. Supports environment variable references such as `$ENV{MY_FLAGS}`. |
 
 **Examples:**
 
@@ -632,7 +632,7 @@ bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-conta
 bsp build poky-qemuarm64-scarthgap --test --wait
 
 # Force a clean Docker build (no layer cache)
-bsp build poky-qemuarm64-scarthgap --no-cache
+bsp build poky-qemuarm64-scarthgap --docker-no-cache
 
 # Pass extra Docker build flags (e.g. use host network during build)
 bsp build poky-qemuarm64-scarthgap --docker-build-options "--network host"

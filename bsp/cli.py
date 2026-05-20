@@ -508,7 +508,7 @@ def main() -> int:
             )
         )
         build_parser.add_argument(
-            "--no-cache",
+            "--docker-no-cache",
             dest="no_cache",
             action="store_true",
             default=False,
@@ -611,7 +611,7 @@ def main() -> int:
             ),
         ).completer = ContainerCompleter()
         containers_parser.add_argument(
-            "--no-cache",
+            "--docker-no-cache",
             dest="no_cache",
             action="store_true",
             default=False,

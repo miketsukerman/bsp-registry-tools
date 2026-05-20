@@ -270,7 +270,7 @@ class TestContainersCommand:
     def test_containers_build_no_cache_dispatches_to_manager(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
-            "containers", "build", "ubuntu-22.04", "--no-cache"
+            "containers", "build", "ubuntu-22.04", "--docker-no-cache"
         ]):
             with patch.object(BspManager, "build_containers") as mock_build:
                 exit_code = bsp.main()
@@ -294,7 +294,7 @@ class TestContainersCommand:
     def test_containers_build_all_no_cache(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
-            "containers", "build", "--no-cache"
+            "containers", "build", "--docker-no-cache"
         ]):
             with patch.object(BspManager, "build_containers") as mock_build:
                 exit_code = bsp.main()
@@ -328,7 +328,7 @@ class TestBuildNoCacheFlag:
     def test_bsp_build_no_cache_passes_docker_build_options(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
-            "build", "test-bsp", "--no-cache"
+            "build", "test-bsp", "--docker-no-cache"
         ]):
             with patch.object(BspManager, "build_bsp") as mock_build_bsp:
                 exit_code = bsp.main()
@@ -342,7 +342,7 @@ class TestBuildNoCacheFlag:
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file),
             "build", "test-bsp",
-            "--no-cache", "--docker-build-options", "--network host"
+            "--docker-no-cache", "--docker-build-options", "--network host"
         ]):
             with patch.object(BspManager, "build_bsp") as mock_build_bsp:
                 exit_code = bsp.main()
