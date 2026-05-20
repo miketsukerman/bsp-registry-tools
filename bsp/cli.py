@@ -497,6 +497,50 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
+        # Fetch command
+        # ----------------------------------------------------------------
+        fetch_parser = subparsers.add_parser("fetch", help="Fetch sources for BSP")
+        fetch_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset to fetch, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        fetch_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based fetch)"
+        ).completer = DevicesCompleter()
+        fetch_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based fetch)"
+        ).completer = ReleasesCompleter()
+        fetch_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        fetch_parser.add_argument(
+            "--target",
+            type=str,
+            dest="target",
+            metavar="TARGET",
+            help="BitBake target to fetch (defaults to targets resolved from the KAS configuration)"
+        )
+        fetch_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
+        )
+
+        # ----------------------------------------------------------------
         # List command (with optional subtype)
         # ----------------------------------------------------------------
         list_parser = subparsers.add_parser("list", help="List available BSPs and components")
@@ -1362,6 +1406,38 @@ def main() -> int:
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 build_parser.print_help()
+                return 1
+
+        elif args.command == "fetch":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            target = getattr(args, "target", None)
+            build_path = getattr(args, "build_path", None)
+
+            if _check_exclusive(bsp_name, device, release, fetch_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.fetch_bsp(
+                    bsp_name,
+                    target=target,
+                    build_path_override=build_path,
+                    feature_slugs=features,
+                )
+            elif device and release:
+                bsp_mgr.fetch_by_components(
+                    device,
+                    release,
+                    features,
+                    target=target,
+                    build_path_override=build_path,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                fetch_parser.print_help()
                 return 1
 
         elif args.command == "list":

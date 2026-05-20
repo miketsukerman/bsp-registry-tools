@@ -533,6 +533,45 @@ class TestBspManagerBuildByComponents:
         assert feature_slugs.count("ota") == 1
 
 
+class TestBspManagerFetch:
+    def test_fetch_bsp_passes_explicit_target_to_kas(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.fetch_bsp("imx8-scarthgap-ota", target="my-image")
+        mock_fetch.assert_called_once_with(targets=["my-image"])
+
+    def test_fetch_bsp_uses_targets_from_kas_dump(self, registry_with_preset_local_conf_and_targets_file):
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- ros-image-core\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.fetch_bsp("modular-ros-bsp-rsb3720")
+        mock_fetch.assert_called_once_with(targets=["ros-image-core"])
+
+    def test_fetch_by_components_requires_target_when_kas_dump_has_none(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="header:\n  version: 14\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch.object(manager, "prepare_build_directory"):
+            with pytest.raises(SystemExit):
+                manager.fetch_by_components("imx8-board", "scarthgap")
+        mock_fetch.assert_not_called()
+
+
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):
         manager = BspManager(config_path=str(registry_file))
