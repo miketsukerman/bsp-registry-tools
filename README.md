@@ -784,8 +784,8 @@ bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
 | `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
 | `--gather-cache` | Also download and restore Yocto cache archives (DL_DIR / SSTATE_DIR) if available |
-| `--cache-downloads-dir PATH` | Local path to restore the DL_DIR cache into (default: `DL_DIR` env var or `<dest-dir>/downloads`) |
-| `--cache-sstate-dir PATH` | Local path to restore the SSTATE_DIR cache into (default: `SSTATE_DIR` env var or `<dest-dir>/sstate-cache`) |
+| `--cache-downloads-dir PATH` | Local path to restore the DL_DIR cache into (default: `DL_DIR` env var or `<topdir>/downloads`, where TOPDIR is inferred from `artifact_dirs`) |
+| `--cache-sstate-dir PATH` | Local path to restore the SSTATE_DIR cache into (default: `SSTATE_DIR` env var or `<topdir>/sstate-cache`, where TOPDIR is inferred from `artifact_dirs`) |
 | `--dry-run` | List what would be downloaded without downloading (no credentials required) |
 
 **Examples:**
