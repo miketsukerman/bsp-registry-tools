@@ -796,6 +796,45 @@ class TestBspManagerBuildByComponents:
         assert feature_slugs.count("ota") == 1
 
 
+class TestBspManagerFetch:
+    def test_fetch_bsp_passes_explicit_target_to_kas(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.fetch_bsp("imx8-scarthgap-ota", target="my-image")
+        mock_fetch.assert_called_once_with(targets=["my-image"])
+
+    def test_fetch_bsp_uses_targets_from_kas_dump(self, registry_with_preset_local_conf_and_targets_file):
+        manager = BspManager(
+            config_path=str(registry_with_preset_local_conf_and_targets_file)
+        )
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- ros-image-core\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.fetch_bsp("modular-ros-bsp-rsb3720")
+        mock_fetch.assert_called_once_with(targets=["ros-image-core"])
+
+    def test_fetch_by_components_requires_target_when_kas_dump_has_none(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.fetch_project") as mock_fetch, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="header:\n  version: 14\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch.object(manager, "prepare_build_directory"):
+            with pytest.raises(SystemExit):
+                manager.fetch_by_components("imx8-board", "scarthgap")
+        mock_fetch.assert_not_called()
+
+
 class TestBspManagerMisc:
     def test_prepare_build_directory(self, tmp_dir, registry_file):
         manager = BspManager(config_path=str(registry_file))
@@ -828,8 +867,6 @@ class TestBspManagerMisc:
 
     def test_build_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """build_docker must be called with the registry file's directory, not CWD."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
 
         # Create a Dockerfile next to the registry file in a subdirectory
         registry_dir = tmp_dir / "remote_cache"
@@ -877,9 +914,9 @@ registry:
         manager.initialize()
 
         with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
-            with patch.object(KasManager, "build_project"):
+            with patch("bsp.kas_manager.KasManager.build_project"):
                 with patch.object(manager, "prepare_build_directory"):
-                    with patch.object(KasManager, "dump_config", return_value=None):
+                    with patch("bsp.kas_manager.KasManager.dump_config", return_value=None):
                         manager.build_bsp("test-bsp")
 
         # The first argument to build_docker must be the registry file's parent dir
@@ -1068,9 +1105,6 @@ registry:
 
     def test_shell_into_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """shell_into_bsp must resolve Dockerfile relative to the registry file, not CWD."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
-
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
         dockerfile = registry_dir / "Dockerfile.ubuntu"
@@ -1116,9 +1150,9 @@ registry:
         manager.initialize()
 
         with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
-            with patch.object(KasManager, "shell_session"):
+            with patch("bsp.kas_manager.KasManager.shell_session"):
                 with patch.object(manager, "prepare_build_directory"):
-                    with patch.object(KasManager, "dump_config", return_value=None):
+                    with patch("bsp.kas_manager.KasManager.dump_config", return_value=None):
                         manager.shell_into_bsp("test-bsp")
 
         assert mock_build_docker.called
@@ -1127,8 +1161,6 @@ registry:
 
     def test_kas_manager_gets_registry_dir_as_search_path(self, tmp_dir):
         """KasManager must include the registry file's directory in its search paths."""
-        from bsp.kas_manager import KasManager
-
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
         kas_file = registry_dir / "test.yaml"
@@ -1437,7 +1469,6 @@ class TestDistros:
     def test_resolver_get_distro_not_found(self, registry_with_distro_file):
         manager = BspManager(config_path=str(registry_with_distro_file))
         manager.initialize()
-        import pytest
         with pytest.raises(SystemExit):
             manager.resolver.get_distro("nonexistent-distro")
 
@@ -1585,9 +1616,6 @@ class TestGlobalCopy:
 class TestShellCopyFiles:
     def test_shell_executes_named_env_copy(self, registry_with_named_env_copy_file):
         """_copy_files is called during shell_into_bsp so named-env copy entries are applied."""
-        from unittest.mock import patch
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
@@ -1596,7 +1624,7 @@ class TestShellCopyFiles:
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
         (base / "build" / "isar").mkdir(parents=True, exist_ok=True)
 
-        with patch.object(KasManager, "shell_session"):
+        with patch("bsp.kas_manager.KasManager.shell_session"):
             with patch.object(manager, "prepare_build_directory"):
                 manager.shell_by_components("isar-board", "isar-v0.11")
 
@@ -3036,8 +3064,6 @@ class TestBuildBspWithCopy:
         carries a copy entry.  After calling build_bsp() the copied file must
         appear at the destination path relative to the preset's build directory.
         """
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
@@ -3045,8 +3071,8 @@ class TestBuildBspWithCopy:
         (base / "isar" / "scripts").mkdir(parents=True, exist_ok=True)
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
 
-        with patch.object(KasManager, "build_project"), \
-             patch.object(KasManager, "dump_config", return_value=None), \
+        with patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
              patch.object(manager, "prepare_build_directory"):
             manager.build_bsp("isar-v0.11-build")
 
@@ -3066,8 +3092,6 @@ class TestBuildBspWithCopy:
         are resolved relative to the registry directory (backward-compatible
         behaviour documented in _copy_files).
         """
-        from bsp.kas_manager import KasManager
-
         manager = BspManager(config_path=str(registry_with_named_env_copy_file))
         manager.initialize()
 
@@ -3075,8 +3099,8 @@ class TestBuildBspWithCopy:
         (base / "isar" / "scripts").mkdir(parents=True, exist_ok=True)
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
 
-        with patch.object(KasManager, "build_project"), \
-             patch.object(KasManager, "dump_config", return_value=None), \
+        with patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
              patch.object(manager, "prepare_build_directory"):
             manager.build_by_components("isar-board", "isar-v0.11")
 

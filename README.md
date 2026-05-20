@@ -644,6 +644,34 @@ bsp build poky-qemuarm64-scarthgap --test --wait \
   --artifact-url http://files.example.com/builds
 ```
 
+#### `fetch` — Fetch all sources for a BSP
+
+```bash
+bsp fetch <bsp_name> [--feature FEATURE...] [--target TARGET] [--path PATH]
+bsp fetch --device <device> --release <release> [--feature FEATURE...] [--target TARGET] [--path PATH]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
+| `--target TARGET` | BitBake target to fetch. If omitted, `bsp fetch` uses targets resolved from the KAS configuration or preset. |
+| `--path PATH` | Override the output build directory path defined in the registry |
+
+`bsp fetch` runs BitBake with `--runall=fetch`, which downloads the full source dependency set without starting a full image build.
+
+**Examples:**
+
+```bash
+# Fetch sources for a preset using its configured target(s)
+bsp fetch poky-qemuarm64-scarthgap
+
+# Fetch sources for a specific image target
+bsp fetch poky-qemuarm64-scarthgap --target core-image-minimal
+
+# Fetch sources for a component-based selection into a custom build directory
+bsp fetch --device qemuarm64 --release scarthgap --target core-image-minimal --path /mnt/fast-ssd/build
+```
+
 #### `shell` — Interactive shell in build environment
 
 ```bash

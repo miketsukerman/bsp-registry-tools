@@ -3,6 +3,7 @@ Tests for KasManager KAS/Yocto build orchestration.
 """
 
 import os
+import pytest
 from unittest.mock import patch
 
 from bsp import KasManager
@@ -257,6 +258,34 @@ class TestKasManager:
             container_privileged=True
         )
         assert manager.container_privileged is True
+
+    def test_fetch_project_runs_bitbake_runall_fetch(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+        )
+        with patch.object(manager.env_manager, "validate_environment", return_value=True), \
+             patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command") as mock_run:
+            manager.fetch_project(["core-image-minimal", "packagegroup-core-boot"])
+        mock_run.assert_called_once_with(
+            [
+                "shell",
+                str(kas_config_file),
+                "--command",
+                "bitbake --runall=fetch core-image-minimal packagegroup-core-boot",
+            ],
+            True,
+        )
+
+    def test_fetch_project_requires_targets(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+        )
+        with pytest.raises(SystemExit):
+            manager.fetch_project([])
 
     def test_container_volumes_default_empty(self, kas_config_file):
         manager = KasManager(

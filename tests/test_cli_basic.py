@@ -354,3 +354,31 @@ class TestBuildNoCacheFlag:
         assert "--no-cache" in tokens
         assert "--network" in tokens
         assert "host" in tokens
+
+class TestFetchCommand:
+    def test_fetch_target_passed_to_fetch_bsp(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "fetch", "test-bsp", "--target", "my-image"
+        ]):
+            with patch("bsp.BspManager.fetch_bsp") as mock_fetch:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_fetch.assert_called_once()
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("target") == "my-image"
+
+    def test_fetch_by_components_passes_target_and_path(self, registry_file, tmp_dir):
+        custom_path = str(tmp_dir / "fetch-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "fetch", "--device", "test-device", "--release", "test-release",
+            "--target", "core-image-minimal", "--path", custom_path
+        ]):
+            with patch("bsp.BspManager.fetch_by_components") as mock_fetch:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_fetch.assert_called_once()
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("target") == "core-image-minimal"
+        assert kwargs.get("build_path_override") == custom_path

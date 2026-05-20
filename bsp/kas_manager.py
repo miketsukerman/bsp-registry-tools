@@ -657,6 +657,46 @@ class KasManager:
             logging.error(f"Build failed: {e}")
             sys.exit(1)
 
+    def fetch_project(self, targets: List[str], show_output: bool = True) -> None:
+        """
+        Fetch all sources required for the given BitBake targets.
+
+        Args:
+            targets: BitBake targets whose dependency trees should be fetched
+            show_output: Whether to show fetch output in real-time
+
+        Raises:
+            SystemExit: If fetch fails or prerequisites are not met
+        """
+        if not targets:
+            logging.error("At least one BitBake target is required for source fetch")
+            sys.exit(1)
+
+        if not self.env_manager.validate_environment():
+            logging.error("Environment configuration validation failed")
+            sys.exit(1)
+
+        if not self.validate_kas_files(check_includes=True):
+            logging.error("Cannot fetch due to missing files")
+            sys.exit(1)
+
+        if not self.check_kas_available():
+            logging.error("KAS is not available. Please install KAS (e.g., 'pip install kas' or use your package manager)")
+            sys.exit(1)
+
+        kas_files_str = self._get_kas_files_string()
+        bitbake_cmd = "bitbake --runall=fetch " + " ".join(targets)
+        args = ["shell", kas_files_str, "--command", bitbake_cmd]
+
+        try:
+            self._run_kas_command(args, show_output)
+            logging.info("Source fetch completed successfully!")
+        except SystemExit:
+            raise
+        except Exception as e:
+            logging.error(f"Source fetch failed: {e}")
+            sys.exit(1)
+
     def checkout_project(self, show_output: bool = True) -> None:
         """
         Checkout/validate the Yocto project repositories using KAS.
