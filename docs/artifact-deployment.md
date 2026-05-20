@@ -356,8 +356,8 @@ deploy:
 | `enabled`        | bool          | `false` | Master switch.  Must be `true` to upload any caches. |
 | `downloads`      | bool          | `true`  | Include `DL_DIR` in the upload / restore. |
 | `sstate`         | bool          | `true`  | Include `SSTATE_DIR` in the upload / restore. |
-| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to the `DL_DIR` environment variable. |
-| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to the `SSTATE_DIR` environment variable. |
+| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to `DL_DIR`, then `<build_path>/downloads`. |
+| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to `SSTATE_DIR`, then `<build_path>/sstate-cache`. |
 
 ### CLI flags
 
@@ -396,8 +396,8 @@ bsp gather my-preset --dry-run --gather-cache
 > **Note**: `bsp gather --gather-cache` uses the `DL_DIR` and `SSTATE_DIR`
 > environment variables as default restore destinations (same as the deploy
 > side).  Explicit `--cache-downloads-dir` / `--cache-sstate-dir` flags take
-> priority.  If neither is set, archives are extracted into `downloads/` and
-> `sstate/` sub-directories inside `--dest-dir`.
+> priority.  If neither is set, archives are extracted into
+> `<dest-dir>/downloads` and `<dest-dir>/sstate-cache`.
 
 ### Manifest with cache entries
 

@@ -2111,8 +2111,15 @@ class BspManager:
 
         return base
 
+    @staticmethod
+    def _normalize_cache_path(path: str) -> str:
+        """Normalize a cache path to an absolute string."""
+        return str(Path(path).expanduser().resolve())
+
     def _resolve_cache_paths(
-        self, deploy_cfg: "DeployConfig"
+        self,
+        deploy_cfg: "DeployConfig",
+        build_path: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Return ``(downloads_path, sstate_path)`` for cache upload.
@@ -2122,10 +2129,13 @@ class BspManager:
            CLI overrides).
         2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
            :class:`~bsp.environment.EnvironmentManager`.
-        3. ``None`` (cache upload skipped for that directory).
+        3. Yocto defaults under *build_path* (``<build_path>/downloads`` and
+           ``<build_path>/sstate-cache``) when *build_path* is provided.
+        4. ``None`` (cache upload skipped for that directory).
 
         Args:
             deploy_cfg: Effective deploy configuration.
+            build_path: Effective build path used for Yocto default fallbacks.
 
         Returns:
             Tuple of (downloads_path, sstate_path); each may be ``None``.
@@ -2142,12 +2152,26 @@ class BspManager:
         if cache_cfg.sstate and not sstate_path and self.env_manager:
             sstate_path = self.env_manager.get_value("SSTATE_DIR")
 
+        if build_path:
+            build_root = Path(build_path)
+            if cache_cfg.downloads and not downloads_path:
+                downloads_path = str(build_root / "downloads")
+            if cache_cfg.sstate and not sstate_path:
+                sstate_path = str(build_root / "sstate-cache")
+
+        if downloads_path:
+            downloads_path = self._normalize_cache_path(downloads_path)
+        if sstate_path:
+            sstate_path = self._normalize_cache_path(sstate_path)
+
         return downloads_path, sstate_path
 
     def _resolve_cache_restore_paths(
         self,
         cache_downloads_dest: Optional[str] = None,
         cache_sstate_dest: Optional[str] = None,
+        base_dir: Optional[str] = None,
+        create_dirs: bool = False,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Return ``(downloads_dest, sstate_dest)`` for cache restore.
@@ -2156,11 +2180,15 @@ class BspManager:
         1. Explicit CLI/API overrides (*cache_downloads_dest* / *cache_sstate_dest*).
         2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
            :class:`~bsp.environment.EnvironmentManager`.
-        3. ``None`` (gatherer uses its own default sub-directory).
+        3. Yocto defaults under *base_dir* (``<base_dir>/downloads`` and
+           ``<base_dir>/sstate-cache``) when *base_dir* is provided.
+        4. ``None`` (gatherer uses its own fallback behavior).
 
         Args:
             cache_downloads_dest: Explicit downloads destination or ``None``.
             cache_sstate_dest: Explicit sstate destination or ``None``.
+            base_dir: Base directory for Yocto default fallbacks.
+            create_dirs: When ``True``, create resolved directories.
 
         Returns:
             Tuple of (downloads_dest, sstate_dest); each may be ``None``.
@@ -2172,6 +2200,22 @@ class BspManager:
             downloads_dest = self.env_manager.get_value("DL_DIR")
         if not sstate_dest and self.env_manager:
             sstate_dest = self.env_manager.get_value("SSTATE_DIR")
+
+        if base_dir:
+            base = Path(base_dir)
+            if not downloads_dest:
+                downloads_dest = str(base / "downloads")
+            if not sstate_dest:
+                sstate_dest = str(base / "sstate-cache")
+
+        if downloads_dest:
+            downloads_dest = self._normalize_cache_path(downloads_dest)
+            if create_dirs:
+                Path(downloads_dest).mkdir(parents=True, exist_ok=True)
+        if sstate_dest:
+            sstate_dest = self._normalize_cache_path(sstate_dest)
+            if create_dirs:
+                Path(sstate_dest).mkdir(parents=True, exist_ok=True)
 
         return downloads_dest, sstate_dest
 
@@ -2237,13 +2281,16 @@ class BspManager:
             logging.error("Failed to initialize storage backend: %s", exc)
             sys.exit(1)
 
-        # Resolve Yocto cache paths from the environment (if cache upload is requested)
-        downloads_path, sstate_path = self._resolve_cache_paths(deploy_cfg)
-
-        deployer = ArtifactDeployer(deploy_cfg, backend)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )
+        # Resolve Yocto cache paths from config/env/default Yocto locations.
+        downloads_path, sstate_path = self._resolve_cache_paths(
+            deploy_cfg,
+            build_path=effective_build_path,
+        )
+
+        deployer = ArtifactDeployer(deploy_cfg, backend)
         result = deployer.deploy(
             build_path=effective_build_path,
             device=resolved.device.slug,
@@ -2413,13 +2460,15 @@ class BspManager:
             logging.error("Failed to initialize storage backend: %s", exc)
             sys.exit(1)
 
-        # Resolve cache destination directories (CLI overrides > env > default)
+        effective_dest = dest_dir if dest_dir is not None else resolved.build_path
+
+        # Resolve cache destination directories (CLI overrides > env > Yocto defaults)
         effective_downloads_dest, effective_sstate_dest = self._resolve_cache_restore_paths(
             cache_downloads_dest=cache_downloads_dest,
             cache_sstate_dest=cache_sstate_dest,
+            base_dir=effective_dest,
+            create_dirs=(gather_cache and not dry_run),
         )
-
-        effective_dest = dest_dir if dest_dir is not None else resolved.build_path
 
         gatherer = ArtifactGatherer(deploy_cfg, backend)
         result = gatherer.gather(

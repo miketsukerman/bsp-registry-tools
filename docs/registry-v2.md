@@ -1703,8 +1703,8 @@ deploy:
 | `enabled`        | bool          | `false` | Master switch. Set to `true` to upload Yocto caches. |
 | `downloads`      | bool          | `true`  | Include the `DL_DIR` downloads cache in the upload / restore. |
 | `sstate`         | bool          | `true`  | Include the `SSTATE_DIR` shared-state cache in the upload / restore. |
-| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to the `DL_DIR` environment variable when omitted. |
-| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to the `SSTATE_DIR` environment variable when omitted. |
+| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to `DL_DIR`, then `<build_path>/downloads` when omitted. |
+| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to `SSTATE_DIR`, then `<build_path>/sstate-cache` when omitted. |
 
 Cache upload is **opt-in** and backward-compatible: omitting the `yocto_cache:`
 block (or setting `enabled: false`) leaves the existing artifact deployment
