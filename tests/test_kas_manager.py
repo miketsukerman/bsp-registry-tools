@@ -3,6 +3,7 @@ Tests for KasManager KAS/Yocto build orchestration.
 """
 
 import os
+import pytest
 from unittest.mock import patch
 
 from bsp import KasManager
@@ -279,8 +280,6 @@ class TestKasManager:
         )
 
     def test_fetch_project_requires_targets(self, kas_config_file):
-        import pytest
-
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build"),
