@@ -11,8 +11,6 @@ from contextlib import contextmanager
 from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
-import yaml
-
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
@@ -1379,6 +1377,8 @@ class BspManager:
     @staticmethod
     def _extract_targets_from_kas_config(config_output: Optional[str]) -> List[str]:
         """Return normalized targets from ``kas dump`` YAML output."""
+        import yaml
+
         if not config_output:
             return []
         try:

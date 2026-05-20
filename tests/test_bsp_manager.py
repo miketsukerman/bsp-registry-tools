@@ -7,7 +7,6 @@ import yaml
 from unittest.mock import patch, MagicMock
 
 from bsp import BspManager, BspPreset, Docker, V2Resolver
-from bsp.kas_manager import KasManager
 from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML
 
 
@@ -651,9 +650,9 @@ registry:
         manager.initialize()
 
         with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
-            with patch.object(KasManager, "build_project"):
+            with patch("bsp.kas_manager.KasManager.build_project"):
                 with patch.object(manager, "prepare_build_directory"):
-                    with patch.object(KasManager, "dump_config", return_value=None):
+                    with patch("bsp.kas_manager.KasManager.dump_config", return_value=None):
                         manager.build_bsp("test-bsp")
 
         # The first argument to build_docker must be the registry file's parent dir
@@ -708,9 +707,9 @@ registry:
         manager.initialize()
 
         with patch("bsp.bsp_manager.build_docker") as mock_build_docker:
-            with patch.object(KasManager, "shell_session"):
+            with patch("bsp.kas_manager.KasManager.shell_session"):
                 with patch.object(manager, "prepare_build_directory"):
-                    with patch.object(KasManager, "dump_config", return_value=None):
+                    with patch("bsp.kas_manager.KasManager.dump_config", return_value=None):
                         manager.shell_into_bsp("test-bsp")
 
         assert mock_build_docker.called
@@ -1182,7 +1181,7 @@ class TestShellCopyFiles:
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
         (base / "build" / "isar").mkdir(parents=True, exist_ok=True)
 
-        with patch.object(KasManager, "shell_session"):
+        with patch("bsp.kas_manager.KasManager.shell_session"):
             with patch.object(manager, "prepare_build_directory"):
                 manager.shell_by_components("isar-board", "isar-v0.11")
 
@@ -2629,8 +2628,8 @@ class TestBuildBspWithCopy:
         (base / "isar" / "scripts").mkdir(parents=True, exist_ok=True)
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
 
-        with patch.object(KasManager, "build_project"), \
-             patch.object(KasManager, "dump_config", return_value=None), \
+        with patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
              patch.object(manager, "prepare_build_directory"):
             manager.build_bsp("isar-v0.11-build")
 
@@ -2657,8 +2656,8 @@ class TestBuildBspWithCopy:
         (base / "isar" / "scripts").mkdir(parents=True, exist_ok=True)
         (base / "isar" / "scripts" / "isar-runqemu.sh").write_text("#!/bin/sh\n")
 
-        with patch.object(KasManager, "build_project"), \
-             patch.object(KasManager, "dump_config", return_value=None), \
+        with patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
              patch.object(manager, "prepare_build_directory"):
             manager.build_by_components("isar-board", "isar-v0.11")
 
