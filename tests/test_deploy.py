@@ -1275,3 +1275,88 @@ class TestCollectDeployOverridesCache:
         assert overrides["yocto_cache"].downloads is False
         assert overrides["yocto_cache"].sstate is True
 
+
+# =============================================================================
+# BspManager cache-path fallback tests
+# =============================================================================
+
+
+class TestBspManagerDeployCachePathResolution:
+    @pytest.fixture()
+    def deploy_registry_file(self, tmp_path):
+        yaml_content = """
+specification:
+  version: "2.0"
+registry:
+  devices:
+    - slug: dev
+      description: "Device"
+      vendor: acme
+      soc_vendor: arm
+      includes:
+        - kas/dev.yaml
+  releases:
+    - slug: rel
+      description: "Release"
+      includes:
+        - kas/rel.yaml
+  features: []
+  bsp:
+    - name: dev-rel
+      description: "Preset"
+      device: dev
+      release: rel
+deploy:
+  provider: azure
+  container: bsp-artifacts
+"""
+        reg_file = tmp_path / "bsp-registry.yaml"
+        reg_file.write_text(yaml_content)
+        return reg_file
+
+    def test_resolve_cache_paths_falls_back_to_yocto_defaults_when_unset(
+        self, deploy_registry_file
+    ):
+        from bsp.bsp_manager import BspManager
+        from bsp.models import YoctoCacheConfig
+
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        cfg = DeployConfig(
+            yocto_cache=YoctoCacheConfig(
+                enabled=True,
+                downloads=True,
+                sstate=True,
+            )
+        )
+        dl, ss = mgr._resolve_cache_paths(cfg, build_path="/tmp/yocto-build")
+
+        assert dl == "/tmp/yocto-build/downloads"
+        assert ss == "/tmp/yocto-build/sstate-cache"
+
+    def test_resolve_cache_paths_prefers_env_values_over_default(
+        self, deploy_registry_file
+    ):
+        from bsp.bsp_manager import BspManager
+        from bsp.models import YoctoCacheConfig
+
+        mgr = BspManager(config_path=str(deploy_registry_file))
+        mgr.initialize()
+        mock_env = MagicMock()
+        mock_env.get_value.side_effect = lambda key: "/env/dl" if key == "DL_DIR" else "/env/ss"
+        mgr.env_manager = mock_env
+
+        cfg = DeployConfig(
+            yocto_cache=YoctoCacheConfig(
+                enabled=True,
+                downloads=True,
+                sstate=True,
+            )
+        )
+        dl, ss = mgr._resolve_cache_paths(cfg, build_path="/tmp/yocto-build")
+
+        assert dl == "/env/dl"
+        assert ss == "/env/ss"

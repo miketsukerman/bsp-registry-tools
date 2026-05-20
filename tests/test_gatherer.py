@@ -892,3 +892,23 @@ deploy:
 
         dl, ss = mgr._resolve_cache_restore_paths(cache_downloads_dest="/cli/dl")
         assert dl == "/cli/dl"  # CLI wins
+
+    def test_resolve_cache_restore_paths_falls_back_to_yocto_defaults(
+        self, tmp_path, gather_registry_file2
+    ):
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        base_dir = tmp_path / "build"
+        dl, ss = mgr._resolve_cache_restore_paths(
+            base_dir=str(base_dir),
+            create_dirs=True,
+        )
+        assert dl == str(base_dir / "downloads")
+        assert ss == str(base_dir / "sstate-cache")
+        assert (base_dir / "downloads").is_dir()
+        assert (base_dir / "sstate-cache").is_dir()
