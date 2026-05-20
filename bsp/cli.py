@@ -363,14 +363,14 @@ def main() -> int:
             action="store_false",
             dest="deploy_cache_downloads",
             default=True,
-            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)"
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)."
         )
         build_parser.add_argument(
             "--no-deploy-cache-sstate",
             action="store_false",
             dest="deploy_cache_sstate",
             default=True,
-            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)"
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
         )
         build_parser.add_argument(
             "--test",
@@ -681,14 +681,14 @@ def main() -> int:
             action="store_false",
             dest="deploy_cache_downloads",
             default=True,
-            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)"
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)."
         )
         deploy_parser.add_argument(
             "--no-deploy-cache-sstate",
             action="store_false",
             dest="deploy_cache_sstate",
             default=True,
-            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)"
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
         )
         gather_parser = subparsers.add_parser(
             "gather",
