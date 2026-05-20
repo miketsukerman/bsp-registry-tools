@@ -604,6 +604,7 @@ class TestBspManagerMisc:
 
     def test_build_bsp_uses_registry_dir_for_dockerfile(self, tmp_dir):
         """build_docker must be called with the registry file's directory, not CWD."""
+
         # Create a Dockerfile next to the registry file in a subdirectory
         registry_dir = tmp_dir / "remote_cache"
         registry_dir.mkdir()
