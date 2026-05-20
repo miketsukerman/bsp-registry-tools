@@ -1714,6 +1714,46 @@ class BspManager:
         """Normalize a cache path to an absolute string."""
         return str(Path(path).expanduser().resolve())
 
+    @staticmethod
+    def _infer_yocto_topdir(build_path: str, artifact_dirs: List[str]) -> str:
+        """
+        Infer the Yocto TOPDIR from *build_path* and *artifact_dirs*.
+
+        Yocto's ``DL_DIR`` and ``SSTATE_DIR`` default to subdirectories of
+        ``TOPDIR`` (the directory passed to ``oe-init-build-env``).  The
+        ``artifact_dirs`` in :class:`~bsp.models.DeployConfig` are relative
+        to *build_path* and typically contain a ``tmp/`` segment, e.g.
+        ``build/tmp/deploy/images``.  The prefix before the ``tmp/`` segment
+        is the path from *build_path* to TOPDIR.
+
+        Examples::
+
+            artifact_dirs = ["tmp/deploy/images"]
+            # tmp/ is at index 0 → no prefix → TOPDIR = build_path
+
+            artifact_dirs = ["build/tmp/deploy/images"]
+            # tmp/ is at index 1 → prefix = "build" → TOPDIR = build_path/build
+
+        Args:
+            build_path: Absolute or relative path to the BSP build directory.
+            artifact_dirs: List of artifact directory paths relative to
+                           *build_path*, as configured in
+                           :attr:`~bsp.models.DeployConfig.artifact_dirs`.
+
+        Returns:
+            Inferred Yocto TOPDIR path string.  Falls back to *build_path*
+            when no ``tmp/`` segment can be found in any artifact dir.
+        """
+        for adir in artifact_dirs:
+            parts = Path(adir).parts
+            if "tmp" in parts:
+                tmp_idx = parts.index("tmp")
+                if tmp_idx == 0:
+                    return build_path
+                prefix = Path(*parts[:tmp_idx])
+                return str(Path(build_path) / prefix)
+        return build_path
+
     def _resolve_cache_paths(
         self,
         deploy_cfg: "DeployConfig",
@@ -1727,8 +1767,10 @@ class BspManager:
            CLI overrides).
         2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
            :class:`~bsp.environment.EnvironmentManager`.
-        3. Yocto defaults under *build_path* (``<build_path>/downloads`` and
-           ``<build_path>/sstate-cache``) when *build_path* is provided.
+        3. Yocto defaults under the inferred TOPDIR
+           (``<topdir>/downloads`` and ``<topdir>/sstate-cache``) where
+           TOPDIR is derived from *build_path* and
+           ``deploy_cfg.artifact_dirs``.
         4. ``None`` (cache upload skipped for that directory).
 
         Args:
@@ -1751,11 +1793,13 @@ class BspManager:
             sstate_path = self.env_manager.get_value("SSTATE_DIR")
 
         if build_path:
-            build_root = Path(build_path)
+            yocto_topdir = Path(
+                self._infer_yocto_topdir(build_path, deploy_cfg.artifact_dirs)
+            )
             if cache_cfg.downloads and not downloads_path:
-                downloads_path = str(build_root / "downloads")
+                downloads_path = str(yocto_topdir / "downloads")
             if cache_cfg.sstate and not sstate_path:
-                sstate_path = str(build_root / "sstate-cache")
+                sstate_path = str(yocto_topdir / "sstate-cache")
 
         if downloads_path:
             downloads_path = self._normalize_cache_path(downloads_path)
@@ -1769,6 +1813,7 @@ class BspManager:
         cache_downloads_dest: Optional[str] = None,
         cache_sstate_dest: Optional[str] = None,
         base_dir: Optional[str] = None,
+        artifact_dirs: Optional[List[str]] = None,
         create_dirs: bool = False,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -1778,14 +1823,20 @@ class BspManager:
         1. Explicit CLI/API overrides (*cache_downloads_dest* / *cache_sstate_dest*).
         2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
            :class:`~bsp.environment.EnvironmentManager`.
-        3. Yocto defaults under *base_dir* (``<base_dir>/downloads`` and
-           ``<base_dir>/sstate-cache``) when *base_dir* is provided.
+        3. Yocto defaults under the inferred TOPDIR
+           (``<topdir>/downloads`` and ``<topdir>/sstate-cache``) where
+           TOPDIR is derived from *base_dir* and *artifact_dirs* via
+           :meth:`_infer_yocto_topdir`.
         4. ``None`` (gatherer uses its own fallback behavior).
 
         Args:
             cache_downloads_dest: Explicit downloads destination or ``None``.
             cache_sstate_dest: Explicit sstate destination or ``None``.
             base_dir: Base directory for Yocto default fallbacks.
+            artifact_dirs: Artifact directory list used to infer the Yocto
+                           TOPDIR relative to *base_dir*.  Defaults to the
+                           standard ``["tmp/deploy/images"]`` pattern when
+                           ``None``.
             create_dirs: When ``True``, create resolved directories.
 
         Returns:
@@ -1800,11 +1851,14 @@ class BspManager:
             sstate_dest = self.env_manager.get_value("SSTATE_DIR")
 
         if base_dir:
-            base = Path(base_dir)
+            effective_artifact_dirs = artifact_dirs or ["tmp/deploy/images"]
+            yocto_topdir = Path(
+                self._infer_yocto_topdir(base_dir, effective_artifact_dirs)
+            )
             if not downloads_dest:
-                downloads_dest = str(base / "downloads")
+                downloads_dest = str(yocto_topdir / "downloads")
             if not sstate_dest:
-                sstate_dest = str(base / "sstate-cache")
+                sstate_dest = str(yocto_topdir / "sstate-cache")
 
         if downloads_dest:
             downloads_dest = self._normalize_cache_path(downloads_dest)
@@ -2065,6 +2119,7 @@ class BspManager:
             cache_downloads_dest=cache_downloads_dest,
             cache_sstate_dest=cache_sstate_dest,
             base_dir=effective_dest,
+            artifact_dirs=deploy_cfg.artifact_dirs,
             create_dirs=(gather_cache and not dry_run),
         )
 
