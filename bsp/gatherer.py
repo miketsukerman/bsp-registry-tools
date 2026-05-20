@@ -295,7 +295,18 @@ class ArtifactGatherer:
                     "Extracting Yocto %s cache → %s", cache_type, local_dest
                 )
                 with tarfile.open(tmp_archive, "r:gz") as tar:
-                    tar.extractall(local_dest)  # noqa: S202
+                    # Guard against path traversal: only extract members
+                    # whose resolved path stays inside the destination directory.
+                    dest_resolved = Path(local_dest).resolve()
+                    for member in tar.getmembers():
+                        member_path = (dest_resolved / member.name).resolve()
+                        if not str(member_path).startswith(str(dest_resolved)):
+                            self.logger.warning(
+                                "Skipping potentially unsafe tar member: %s",
+                                member.name,
+                            )
+                            continue
+                        tar.extract(member, local_dest)  # noqa: S202
                 extracted.append(Path(local_dest))
                 self.logger.info(
                     "Restored Yocto %s cache into %s", cache_type, local_dest
