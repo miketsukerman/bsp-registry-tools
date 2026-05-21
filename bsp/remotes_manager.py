@@ -145,18 +145,20 @@ class RemotesManager:
             branch=branch,
         )
         try:
-            self.add(
-                name=default_entry.name,
-                url=default_entry.url,
-                branch=default_entry.branch,
-            )
-            return [default_entry]
-        except SystemExit:
-            # Extremely defensive fallback: if add() raced with another process
-            # and the default remote now exists, just load whatever is present.
-            pass
+            self.save([default_entry])
+        except OSError as exc:
+            self.logger.warning("Could not bootstrap default remote '%s': %s", default_entry.name, exc)
+            return []
+
         remotes = self.load()
-        return remotes or [default_entry]
+        if remotes:
+            return remotes
+
+        self.logger.debug(
+            "Default remote '%s' saved but not readable yet; using in-memory fallback",
+            default_entry.name,
+        )
+        return [default_entry]
 
     def save(self, remotes: List[RemoteEntry]) -> None:
         """Persist the given list of remotes to disk.
