@@ -802,6 +802,47 @@ class TestBspManagerBuildByComponents:
         assert data["build"]["target"] == "custom-image"
         assert data["build"]["resolved_targets"] == ["custom-image"]
 
+    def test_build_by_components_manifest_uses_dump_targets_when_cli_target_missing(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-dump-targets"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- from-dump\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_by_components(
+                "imx8-board",
+                "scarthgap",
+                ["ota"],
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["build"]["target"] is None
+        assert data["build"]["resolved_targets"] == ["from-dump"]
+
+    def test_build_manifest_handles_non_string_dump_config(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-non-string-dump"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value={"target": ["invalid"]}), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "imx8-scarthgap-ota",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["build"]["resolved_targets"] == []
+
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
         manager.initialize()
