@@ -1545,7 +1545,7 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
+            if isinstance(config_output, str) and config_output:
                 logging.debug("Configuration dump:\n" + config_output)
             self._write_build_manifest(
                 resolved=resolved,
@@ -1726,10 +1726,14 @@ class BspManager:
         docker_build_options: Optional[str],
     ) -> Path:
         """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
-        manifest_path = Path(build_path) / "build-manifest.json"
+        if build_path is not None and str(build_path).strip():
+            effective_build_path = build_path
+        else:
+            effective_build_path = resolved.build_path or "build"
+        manifest_path = Path(effective_build_path) / "build-manifest.json"
         manifest = self._generate_build_manifest(
             resolved=resolved,
-            build_path=build_path,
+            build_path=effective_build_path,
             checkout_only=checkout_only,
             preset=preset,
             target=target,
@@ -1785,7 +1789,7 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
+            if isinstance(config_output, str) and config_output:
                 logging.debug("Configuration dump:\n" + config_output)
 
             targets = [target] if target else self._extract_targets_from_kas_config(config_output)
