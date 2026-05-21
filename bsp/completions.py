@@ -236,7 +236,7 @@ class RemotesCompleter:
 
     def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
         try:
-            branch = getattr(parsed_args, "branch", DEFAULT_BRANCH) or DEFAULT_BRANCH
+            branch = getattr(parsed_args, "branch", None) or DEFAULT_BRANCH
             return [r.name for r in RemotesManager().ensure_default_remote(branch=branch)]
         except (Exception, SystemExit):  # pylint: disable=broad-except
             return []
