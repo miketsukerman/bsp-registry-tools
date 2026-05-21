@@ -613,7 +613,7 @@ class TestKasManager:
 
         log_files = sorted(manager.build_dir.glob("bsp-invocation-*.log"))
         assert log_files
-        assert re.fullmatch(r"bsp-invocation-\d{8}-\d{6}\.log", log_files[-1].name)
+        assert re.fullmatch(r"bsp-invocation-\d{8}-\d{6}-\d{6}\.log", log_files[-1].name)
         content = log_files[-1].read_text(encoding="utf-8")
         assert "Command:" in content
         assert "stdout line" in content

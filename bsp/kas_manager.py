@@ -577,7 +577,7 @@ class KasManager:
 
         try:
             if show_output:
-                combined_output = ""
+                output_lines: List[str] = []
                 with subprocess.Popen(
                     cmd,
                     cwd=self.build_dir,
@@ -590,16 +590,17 @@ class KasManager:
                     assert proc.stdout is not None
                     for line in proc.stdout:
                         print(line, end="")
-                        combined_output += line
+                        output_lines.append(line)
                         self._write_log_output(log_file, line)
                     return_code = proc.wait()
+                    combined_output = "".join(output_lines)
                     if return_code != 0:
                         raise subprocess.CalledProcessError(
                             return_code, cmd, output=combined_output, stderr=""
                         )
                 result = subprocess.CompletedProcess(
                     args=cmd,
-                    returncode=0,
+                    returncode=return_code,
                     stdout=combined_output,
                     stderr="",
                 )
@@ -638,7 +639,7 @@ class KasManager:
 
     def _create_invocation_log_file(self) -> Path:
         """Create a timestamped invocation log file in the build directory."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         return self.build_dir / f"bsp-invocation-{timestamp}.log"
 
     def _write_log_line(self, log_file: Path, message: str) -> None:
