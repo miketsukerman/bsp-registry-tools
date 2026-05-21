@@ -1596,7 +1596,7 @@ class BspManager:
         """Return normalized targets from ``kas dump`` YAML output."""
         import yaml
 
-        if not config_output:
+        if not config_output or not isinstance(config_output, str):
             return []
         try:
             config = yaml.safe_load(config_output) or {}
@@ -1737,6 +1737,7 @@ class BspManager:
             config_output=config_output,
             docker_build_options=docker_build_options,
         )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
         logging.info("Build manifest generated: %s", manifest_path)
         return manifest_path
