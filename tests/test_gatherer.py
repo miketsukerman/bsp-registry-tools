@@ -315,6 +315,88 @@ class TestArtifactGathererGather:
 
 
 # =============================================================================
+# ArtifactGatherer progress output tests
+# =============================================================================
+
+
+class TestGatherProgressOutput:
+    """Verify that gather() emits progress messages to stdout without --verbose."""
+
+    def _make_gatherer_with_artifacts(self, tmp_path):
+        backend = _FakeBackend()
+        prefix = "vendor/mydev/myrel/2024-01-15"
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic_data"
+        backend.blobs[f"{prefix}/image.tar.gz"] = b"tar_data"
+        manifest = {
+            "schema_version": "1",
+            "artifacts": [
+                {"name": "image.wic.gz"},
+                {"name": "image.tar.gz"},
+            ],
+        }
+        backend.blobs[f"{prefix}/manifest.json"] = json.dumps(manifest).encode()
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        return ArtifactGatherer(cfg, backend)
+
+    def test_gather_banner_printed(self, tmp_path, capsys):
+        gatherer = self._make_gatherer_with_artifacts(tmp_path)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "Gathering artifacts" in out
+        assert "mydev" in out
+        assert "myrel" in out
+
+    def test_per_file_download_printed(self, tmp_path, capsys):
+        gatherer = self._make_gatherer_with_artifacts(tmp_path)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "Downloading image.wic.gz" in out
+        assert "Downloading image.tar.gz" in out
+
+    def test_dry_run_banner_printed(self, tmp_path, capsys):
+        backend = _FakeBackend(dry_run=True)
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        gatherer = ArtifactGatherer(cfg, backend)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "[dry-run]" in out
+        assert "Would download" in out
+
+    def test_gather_cache_dry_run_message_printed(self, tmp_path, capsys):
+        backend = _FakeBackend(dry_run=True)
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        gatherer = ArtifactGatherer(cfg, backend)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+            gather_cache=True,
+        )
+        out = capsys.readouterr().out
+        assert "Would restore Yocto caches" in out
+
+
+# =============================================================================
 # AzureStorageBackend.download_file tests
 # =============================================================================
 

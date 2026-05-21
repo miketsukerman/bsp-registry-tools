@@ -227,17 +227,16 @@ class ArtifactDeployer:
         artifacts = self.collect_artifacts(build_path)
 
         if not artifacts:
-            self.logger.warning("No artifacts found in '%s'. Nothing to deploy.", build_path)
+            print(f"No artifacts found in '{build_path}'. Nothing to deploy.")
             return result
 
         prefix = self.compose_remote_prefix(
             device=device, release=release, distro=distro, vendor=vendor
         )
-        self.logger.info(
-            "Deploying %d artifact(s) to %s provider under prefix '%s'",
-            len(artifacts),
-            self.config.provider,
-            prefix,
+        action_verb = "[dry-run] Would upload" if self.backend.dry_run else "Deploying"
+        print(
+            f"{action_verb} {len(artifacts)} artifact(s) to {self.config.provider} "
+            f"under prefix '{prefix}'..."
         )
 
         failed: List[Tuple[Path, Exception]] = []
@@ -247,6 +246,7 @@ class ArtifactDeployer:
             archive_basename = self.compose_archive_name(
                 device=device, release=release, distro=distro, vendor=vendor
             )
+            print(f"  Creating archive {archive_basename}...")
             tmp_archive = self._create_archive(
                 artifacts,
                 archive_basename,
@@ -254,6 +254,7 @@ class ArtifactDeployer:
             )
             try:
                 archive_remote = f"{prefix}/{tmp_archive.name}"
+                print(f"  Uploading {tmp_archive.name}...")
                 url = self.backend.upload_file(tmp_archive, archive_remote)
                 size = tmp_archive.stat().st_size if not self.backend.dry_run else 0
                 sha = self._sha256(tmp_archive) if not self.backend.dry_run else ""
@@ -275,6 +276,7 @@ class ArtifactDeployer:
             for local_path in artifacts:
                 rel = local_path.name
                 remote_path = f"{prefix}/{rel}"
+                print(f"  Uploading {rel}...")
                 try:
                     url = self.backend.upload_file(local_path, remote_path)
                     size = local_path.stat().st_size if not self.backend.dry_run else 0
@@ -425,9 +427,9 @@ class ArtifactDeployer:
             remote_path = f"{cache_prefix}/{archive_name}"
 
             if self.backend.dry_run:
-                self.logger.info(
-                    "[dry-run] Would pack and upload Yocto %s cache: %s → %s",
-                    cache_type, local_dir, remote_path,
+                print(
+                    f"[dry-run] Would pack and upload Yocto {cache_type} cache: "
+                    f"{local_dir} → {remote_path}"
                 )
                 uploaded.append(
                     UploadedCache(
@@ -443,16 +445,13 @@ class ArtifactDeployer:
             tmp_dir = Path(tempfile.mkdtemp(prefix="bsp_cache_"))
             archive_path = tmp_dir / archive_name
             try:
-                self.logger.info(
-                    "Packing Yocto %s cache: %s → %s",
-                    cache_type, local_dir, archive_path,
-                )
+                print(f"  Packing Yocto {cache_type} cache: {local_dir} → {archive_path}")
                 with tarfile.open(archive_path, "w:gz") as tar:
                     tar.add(str(dir_path), arcname=cache_type)
 
-                self.logger.info(
-                    "Uploading Yocto %s cache archive (%d bytes) → %s",
-                    cache_type, archive_path.stat().st_size, remote_path,
+                print(
+                    f"  Uploading Yocto {cache_type} cache archive "
+                    f"({archive_path.stat().st_size} bytes) → {remote_path}"
                 )
                 url = self.backend.upload_file(archive_path, remote_path)
                 size = archive_path.stat().st_size

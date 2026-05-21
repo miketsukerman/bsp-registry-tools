@@ -167,19 +167,16 @@ class ArtifactGatherer:
             date_override=date_override,
         )
 
-        self.logger.info(
-            "Gathering artifacts for device=%s release=%s from prefix '%s'",
-            device or "unknown",
-            release or "unknown",
-            prefix,
+        print(
+            f"Gathering artifacts for device={device or 'unknown'} "
+            f"release={release or 'unknown'} from prefix '{prefix}'..."
         )
 
         if self.backend.dry_run:
-            self.logger.info("[dry-run] Would download artifacts from '%s' → %s", prefix, dest_dir)
+            print(f"[dry-run] Would download artifacts from '{prefix}' → {dest_dir}")
             if gather_cache:
-                self.logger.info(
-                    "[dry-run] Would restore Yocto caches from '%s/cache/' if available",
-                    prefix,
+                print(
+                    f"[dry-run] Would restore Yocto caches from '{prefix}/cache/' if available"
                 )
             return result
 
@@ -337,6 +334,7 @@ class ArtifactGatherer:
                 continue
             remote_path = f"{prefix}/{name}"
             local_path = dest / name
+            print(f"  Downloading {name}...")
             try:
                 self.backend.download_file(remote_path, local_path)
                 downloaded.append(local_path)
