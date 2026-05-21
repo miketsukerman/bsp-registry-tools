@@ -153,7 +153,7 @@ class RemotesManager:
             return [default_entry]
         except SystemExit:
             # Extremely defensive fallback: if add() raced with another process
-            # and now exists, just load whatever is present.
+            # and the default remote now exists, just load whatever is present.
             pass
         remotes = self.load()
         return remotes or [default_entry]
