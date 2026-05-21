@@ -513,7 +513,7 @@ class TestKasManager:
             with mock_patch("subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0
                 try:
-                    manager._run_kas_command(["build", str(kas_config_file)])
+                    manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
                 except SystemExit:
                     pass
         assert any("--runtime-args" in record.message for record in caplog.records)
@@ -531,7 +531,7 @@ class TestKasManager:
             with mock_patch("subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0
                 try:
-                    manager._run_kas_command(["build", str(kas_config_file)])
+                    manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
                 except SystemExit:
                     pass
         assert not any("--runtime-args" in record.message for record in caplog.records)
@@ -548,11 +548,11 @@ class TestKasManager:
             container_volumes=vols,
         )
         with mock_patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            try:
-                manager._run_kas_command(["build", str(kas_config_file)])
-            except SystemExit:
-                pass
+                mock_run.return_value.returncode = 0
+                try:
+                    manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
+                except SystemExit:
+                    pass
         called_cmd = mock_run.call_args[0][0]
         assert "--runtime-args" in called_cmd
         rt_idx = called_cmd.index("--runtime-args")
@@ -567,11 +567,11 @@ class TestKasManager:
             use_container=True,
         )
         with mock_patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            try:
-                manager._run_kas_command(["build", str(kas_config_file)])
-            except SystemExit:
-                pass
+                mock_run.return_value.returncode = 0
+                try:
+                    manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
+                except SystemExit:
+                    pass
         called_cmd = mock_run.call_args[0][0]
         assert "--runtime-args" not in called_cmd
 
@@ -589,7 +589,7 @@ class TestKasManager:
         with mock_patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             try:
-                manager._run_kas_command(["build", str(kas_config_file)])
+                manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
             except SystemExit:
                 pass
         # env is passed as a keyword arg
@@ -613,6 +613,7 @@ class TestKasManager:
 
         log_files = sorted(manager.build_dir.glob("bsp-invocation-*.log"))
         assert log_files
+        assert re.fullmatch(r"bsp-invocation-\d{8}-\d{6}\.log", log_files[-1].name)
         content = log_files[-1].read_text(encoding="utf-8")
         assert "Command:" in content
         assert "stdout line" in content

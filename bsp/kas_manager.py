@@ -576,40 +576,61 @@ class KasManager:
         self._write_log_line(log_file, "----- command output start -----")
 
         try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                cwd=self.build_dir,
-                capture_output=True,
-                text=True,
-                env=env
-            )
-            self._write_log_output(log_file, result.stdout)
-            self._write_log_output(log_file, result.stderr)
+            if show_output:
+                combined_output = ""
+                with subprocess.Popen(
+                    cmd,
+                    cwd=self.build_dir,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                ) as proc:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        print(line, end="")
+                        combined_output += line
+                        self._write_log_output(log_file, line)
+                    return_code = proc.wait()
+                    if return_code != 0:
+                        raise subprocess.CalledProcessError(
+                            return_code, cmd, output=combined_output, stderr=""
+                        )
+                result = subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=combined_output,
+                    stderr="",
+                )
+            else:
+                result = subprocess.run(
+                    cmd,
+                    check=True,
+                    cwd=self.build_dir,
+                    capture_output=True,
+                    text=True,
+                    env=env
+                )
+                self._write_log_output(log_file, result.stdout)
+                self._write_log_output(log_file, result.stderr)
             self._write_log_line(log_file, "----- command output end -----")
             self._write_log_line(log_file, f"Return code: {result.returncode}")
             logging.info(f"Invocation log saved: {log_file}")
-            if show_output:
-                if result.stdout:
-                    print(result.stdout, end="")
-                if result.stderr:
-                    print(result.stderr, file=sys.stderr, end="")
             return result
 
         except subprocess.CalledProcessError as e:
-            self._write_log_output(log_file, e.stdout)
-            self._write_log_output(log_file, e.stderr)
+            stderr_output = getattr(e, "stderr", None)
+            stdout_output = getattr(e, "stdout", None)
+            fallback_output = getattr(e, "output", None)
+            self._write_log_output(log_file, stdout_output)
+            self._write_log_output(log_file, stderr_output or fallback_output)
             self._write_log_line(log_file, "----- command output end -----")
             self._write_log_line(log_file, f"Return code: {e.returncode}")
             logging.error(f"Invocation log saved: {log_file}")
             logging.error(f"KAS command failed with return code {e.returncode}")
-            if not show_output and e.stderr:
-                logging.error(f"Error output: {e.stderr}")
-            if show_output:
-                if e.stdout:
-                    print(e.stdout, end="")
-                if e.stderr:
-                    print(e.stderr, file=sys.stderr, end="")
+            if not show_output and (stderr_output or fallback_output):
+                logging.error(f"Error output: {stderr_output or fallback_output}")
             sys.exit(1)
         except KeyboardInterrupt:
             logging.error("Command interrupted by user")
