@@ -139,17 +139,24 @@ class RemotesManager:
         if remotes:
             return remotes
 
+        default_entry = RemoteEntry(
+            name=DEFAULT_REMOTE_NAME,
+            url=DEFAULT_REMOTE_URL,
+            branch=branch,
+        )
         try:
             self.add(
-                name=DEFAULT_REMOTE_NAME,
-                url=DEFAULT_REMOTE_URL,
-                branch=branch,
+                name=default_entry.name,
+                url=default_entry.url,
+                branch=default_entry.branch,
             )
+            return [default_entry]
         except SystemExit:
             # Extremely defensive fallback: if add() raced with another process
             # and now exists, just load whatever is present.
             pass
-        return self.load()
+        remotes = self.load()
+        return remotes or [default_entry]
 
     def save(self, remotes: List[RemoteEntry]) -> None:
         """Persist the given list of remotes to disk.
