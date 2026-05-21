@@ -19,7 +19,7 @@ from .completions import (
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig, YoctoCacheConfig
-from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher
 from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION
 
@@ -154,11 +154,7 @@ def _dispatch_remotes(args) -> int:
 
     if subcmd is None:
         # Plain ``bsp remotes`` — list all remotes
-        remotes = mgr.load()
-        if not remotes:
-            print("(no remotes configured)")
-            print(f"Use 'bsp remotes add <name> <url>' to register a remote.")
-            return 0
+        remotes = mgr.ensure_default_remote(branch=getattr(args, "branch", DEFAULT_BRANCH))
         verbose = getattr(args, "remotes_verbose", False)
         for r in remotes:
             if verbose:
@@ -1400,31 +1396,19 @@ def main() -> int:
             if args.remote:
                 remotes_raw = args.remote
             else:
-                stored = RemotesManager().load()
-                if stored:
-                    # Encode stored remotes as URL@BRANCH@name=NAME strings so the
-                    # existing parse / fetch_multiple path handles them uniformly.
-                    remotes_raw = [
-                        f"{r.url}@{r.branch}@name={r.name}" for r in stored
-                    ]
-                    logging.info(
-                        "Using %d configured remote(s): %s",
-                        len(stored),
-                        [r.name for r in stored],
-                    )
-                else:
-                    remotes_raw = [DEFAULT_REMOTE_URL]
+                stored = RemotesManager().ensure_default_remote(branch=args.branch)
+                # Encode stored remotes as URL@BRANCH@name=NAME strings so the
+                # existing parse / fetch_multiple path handles them uniformly.
+                remotes_raw = [
+                    f"{r.url}@{r.branch}@name={r.name}" for r in stored
+                ]
+                logging.info(
+                    "Using %d configured remote(s): %s",
+                    len(stored),
+                    [r.name for r in stored],
+                )
 
-            if len(remotes_raw) == 1 and remotes_raw[0] == DEFAULT_REMOTE_URL and not args.remote:
-                # Single default remote — use the legacy single-registry path for backward compat
-                registry_path = str(fetcher.fetch_registry(
-                    repo_url=DEFAULT_REMOTE_URL,
-                    branch=args.branch,
-                    update=args.update,
-                ))
-                logging.info("Using remote registry cached at: %s", registry_path)
-                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
-            elif len(remotes_raw) == 1:
+            if len(remotes_raw) == 1:
                 # Single explicit remote — backward-compat single-registry path
                 spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=args.branch)
                 registry_path = str(fetcher.fetch_registry(

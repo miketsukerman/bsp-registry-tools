@@ -269,10 +269,10 @@ class TestRemotesCompleter:
         assert "origin" in completions
         assert "upstream" in completions
 
-    def test_returns_empty_when_no_remotes_file(self, tmp_path):
+    def test_bootstraps_default_when_no_remotes_file(self, tmp_path):
         with patch.dict(os.environ, {"BSP_REMOTES_CONFIG": str(tmp_path / "missing.yaml")}):
             completions = RemotesCompleter()("", SimpleNamespace())
-        assert completions == []
+        assert "advantech-europe" in completions
 
     def test_does_not_raise_on_exception(self):
         with patch("bsp.completions.RemotesManager", side_effect=RuntimeError("boom")):
