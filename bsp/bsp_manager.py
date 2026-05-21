@@ -1680,7 +1680,7 @@ class BspManager:
                 },
                 "distro": {
                     "slug": effective_distro,
-                    "framework": distro_obj.framework if distro_obj else None,
+                    "framework": getattr(distro_obj, "framework", None) if distro_obj else None,
                 },
                 "features": [
                     {"slug": feature.slug, "description": feature.description}
