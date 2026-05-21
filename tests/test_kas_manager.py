@@ -3,6 +3,8 @@ Tests for KasManager KAS/Yocto build orchestration.
 """
 
 import os
+import re
+import subprocess
 import pytest
 from unittest.mock import patch
 
@@ -593,3 +595,26 @@ class TestKasManager:
         # env is passed as a keyword arg
         called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
+
+    def test_run_kas_command_writes_timestamped_invocation_log(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+            use_container=False,
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["kas", "build"],
+                returncode=0,
+                stdout="stdout line\n",
+                stderr="stderr line\n",
+            )
+            manager._run_kas_command(["build", str(kas_config_file)], show_output=False)
+
+        log_files = sorted(manager.build_dir.glob("bsp-invocation-*.log"))
+        assert log_files
+        content = log_files[-1].read_text(encoding="utf-8")
+        assert "Command:" in content
+        assert "stdout line" in content
+        assert "stderr line" in content
+        assert re.search(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\]", content, re.MULTILINE)

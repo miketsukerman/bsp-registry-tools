@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -565,35 +566,72 @@ class KasManager:
             if var in env:
                 logging.info(f"Using {var}: {env[var]}")
 
+        log_file = self._create_invocation_log_file()
+        self._write_log_line(log_file, f"Command: {' '.join(cmd)}")
+        self._write_log_line(log_file, f"Build directory: {self.build_dir}")
+        self._write_log_line(log_file, f"Using container: {self.use_container}")
+        for var in important_vars:
+            if var in env:
+                self._write_log_line(log_file, f"{var}: {env[var]}")
+        self._write_log_line(log_file, "----- command output start -----")
+
         try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                cwd=self.build_dir,
+                capture_output=True,
+                text=True,
+                env=env
+            )
+            self._write_log_output(log_file, result.stdout)
+            self._write_log_output(log_file, result.stderr)
+            self._write_log_line(log_file, "----- command output end -----")
+            self._write_log_line(log_file, f"Return code: {result.returncode}")
+            logging.info(f"Invocation log saved: {log_file}")
             if show_output:
-                # Show live output to console for build progress
-                result = subprocess.run(
-                    cmd,
-                    check=True,
-                    cwd=self.build_dir,
-                    env=env
-                )
-            else:
-                # Capture output for programmatic use (export, validation)
-                result = subprocess.run(
-                    cmd,
-                    check=True,
-                    cwd=self.build_dir,
-                    capture_output=True,
-                    text=True,
-                    env=env
-                )
+                if result.stdout:
+                    print(result.stdout, end="")
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr, end="")
             return result
 
         except subprocess.CalledProcessError as e:
+            self._write_log_output(log_file, e.stdout)
+            self._write_log_output(log_file, e.stderr)
+            self._write_log_line(log_file, "----- command output end -----")
+            self._write_log_line(log_file, f"Return code: {e.returncode}")
+            logging.error(f"Invocation log saved: {log_file}")
             logging.error(f"KAS command failed with return code {e.returncode}")
             if not show_output and e.stderr:
                 logging.error(f"Error output: {e.stderr}")
+            if show_output:
+                if e.stdout:
+                    print(e.stdout, end="")
+                if e.stderr:
+                    print(e.stderr, file=sys.stderr, end="")
             sys.exit(1)
         except KeyboardInterrupt:
             logging.error("Command interrupted by user")
             sys.exit(1)
+
+    def _create_invocation_log_file(self) -> Path:
+        """Create a timestamped invocation log file in the build directory."""
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return self.build_dir / f"bsp-invocation-{timestamp}.log"
+
+    def _write_log_line(self, log_file: Path, message: str) -> None:
+        """Append a timestamped line to the invocation log file."""
+        line_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(f"[{line_ts}] {message}\n")
+
+    def _write_log_output(self, log_file: Path, output: Optional[str]) -> None:
+        """Append timestamped subprocess output to the invocation log file."""
+        if not output or not isinstance(output, str):
+            return
+        for line in output.splitlines():
+            self._write_log_line(log_file, line)
 
     def build_project(self, target: str = None, task: str = None, show_output: bool = True) -> None:
         """
