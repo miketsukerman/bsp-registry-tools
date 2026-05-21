@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .bsp_manager import BspManager
-from .registry_fetcher import DEFAULT_BRANCH, DEFAULT_REMOTE_URL, RegistryFetcher, RemoteRegistrySpec
+from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher, RemoteRegistrySpec
 from .remotes_manager import RemotesManager
 
 logger = logging.getLogger(__name__)
@@ -63,13 +63,10 @@ def _build_manager_for_completion(parsed_args) -> Optional[BspManager]:
             if remote_arg:
                 remotes_raw = remote_arg if isinstance(remote_arg, list) else [remote_arg]
             else:
-                stored = RemotesManager().load()
-                if stored:
-                    remotes_raw = [
-                        f"{r.url}@{r.branch}@name={r.name}" for r in stored
-                    ]
-                else:
-                    remotes_raw = [DEFAULT_REMOTE_URL]
+                stored = RemotesManager().ensure_default_remote(branch=branch_arg)
+                remotes_raw = [
+                    f"{r.url}@{r.branch}@name={r.name}" for r in stored
+                ]
 
             if len(remotes_raw) == 1:
                 spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=branch_arg)
@@ -239,7 +236,8 @@ class RemotesCompleter:
 
     def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
         try:
-            return [r.name for r in RemotesManager().load()]
+            branch = getattr(parsed_args, "branch", DEFAULT_BRANCH) or DEFAULT_BRANCH
+            return [r.name for r in RemotesManager().ensure_default_remote(branch=branch)]
         except (Exception, SystemExit):  # pylint: disable=broad-except
             return []
 

@@ -31,7 +31,7 @@ from typing import List, Optional
 
 import yaml
 
-from .registry_fetcher import DEFAULT_BRANCH
+from .registry_fetcher import DEFAULT_BRANCH, DEFAULT_REMOTE_URL
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ from .registry_fetcher import DEFAULT_BRANCH
 # ---------------------------------------------------------------------------
 
 DEFAULT_REMOTES_CONFIG = Path.home() / ".config" / "bsp" / "remotes.yaml"
+DEFAULT_REMOTE_NAME = "advantech-europe"
 
 
 def _remotes_config_path() -> Path:
@@ -126,6 +127,29 @@ class RemotesManager:
                 branch=str(item.get("branch", DEFAULT_BRANCH)),
             ))
         return result
+
+    def ensure_default_remote(self, branch: str = DEFAULT_BRANCH) -> List[RemoteEntry]:
+        """Ensure there is at least one configured remote.
+
+        When the remotes config is empty/non-existent, bootstrap a default
+        named remote ``advantech-europe`` pointing to the built-in Advantech
+        registry URL.
+        """
+        remotes = self.load()
+        if remotes:
+            return remotes
+
+        try:
+            self.add(
+                name=DEFAULT_REMOTE_NAME,
+                url=DEFAULT_REMOTE_URL,
+                branch=branch,
+            )
+        except SystemExit:
+            # Extremely defensive fallback: if add() raced with another process
+            # and now exists, just load whatever is present.
+            pass
+        return self.load()
 
     def save(self, remotes: List[RemoteEntry]) -> None:
         """Persist the given list of remotes to disk.

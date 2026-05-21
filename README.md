@@ -960,6 +960,10 @@ stored in `~/.config/bsp/remotes.yaml` (overridable via the
 `--remote` flag is passed and no local registry file exists, configured remotes
 are used automatically.
 
+If no remotes are configured yet, `bsp` bootstraps a default remote named
+`advantech-europe` pointing to
+`https://github.com/Advantech-EECC/bsp-registry.git`.
+
 **List remotes**
 
 ```bash
@@ -973,12 +977,12 @@ bsp remotes -v
 Example output:
 
 ```
-advantech
+advantech-europe
 myorg
 ```
 
 ```
-advantech  https://github.com/Advantech-EECC/bsp-registry.git (branch: main)
+advantech-europe  https://github.com/Advantech-EECC/bsp-registry.git (branch: main)
 myorg      https://github.com/my-org/bsp-registry.git (branch: develop)
 ```
 
@@ -990,7 +994,7 @@ bsp remotes add <name> <url> [--branch BRANCH]
 
 ```bash
 # Add the default Advantech registry under a friendly name
-bsp remotes add advantech https://github.com/Advantech-EECC/bsp-registry.git
+bsp remotes add advantech-europe https://github.com/Advantech-EECC/bsp-registry.git
 
 # Add a private registry on a non-default branch
 bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch develop
