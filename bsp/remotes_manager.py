@@ -158,10 +158,6 @@ class RemotesManager:
             "Default remote '%s' was saved but remotes config is still empty; using in-memory fallback",
             default_entry.name,
         )
-        self.logger.debug(
-            "Default remote '%s' saved but not readable yet; using in-memory fallback",
-            default_entry.name,
-        )
         return [default_entry]
 
     def save(self, remotes: List[RemoteEntry]) -> None:
