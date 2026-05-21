@@ -467,6 +467,89 @@ class TestDeployRun:
 
 
 # =============================================================================
+# ArtifactDeployer progress output tests
+# =============================================================================
+
+
+class TestDeployProgressOutput:
+    """Verify that deploy() emits progress messages to stdout without --verbose."""
+
+    def _make_deploy_dir(self, tmp_path, filenames=("core-image.wic.gz",)):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        for name in filenames:
+            (deploy_dir / name).write_bytes(b"data")
+
+    def test_deploy_banner_printed(self, tmp_path, capsys):
+        self._make_deploy_dir(tmp_path)
+        cfg = DeployConfig(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            prefix="acme/board/scarthgap",
+        )
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        deployer.deploy(str(tmp_path), device="board", vendor="acme")
+        out = capsys.readouterr().out
+        assert "Deploying" in out
+        assert "1 artifact(s)" in out
+
+    def test_per_file_upload_printed(self, tmp_path, capsys):
+        self._make_deploy_dir(tmp_path)
+        cfg = DeployConfig(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            prefix="acme/board/scarthgap",
+        )
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        deployer.deploy(str(tmp_path))
+        out = capsys.readouterr().out
+        assert "Uploading core-image.wic.gz" in out
+
+    def test_no_artifacts_message_printed(self, tmp_path, capsys):
+        # Empty dir — no matching files
+        (tmp_path / "tmp" / "deploy" / "images").mkdir(parents=True)
+        cfg = DeployConfig(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+        )
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        deployer.deploy(str(tmp_path))
+        out = capsys.readouterr().out
+        assert "No artifacts found" in out
+
+    def test_dry_run_banner_printed(self, tmp_path, capsys):
+        self._make_deploy_dir(tmp_path)
+        cfg = DeployConfig(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            prefix="acme/board/scarthgap",
+        )
+        deployer = ArtifactDeployer(cfg, _FakeBackend(dry_run=True))
+        deployer.deploy(str(tmp_path))
+        out = capsys.readouterr().out
+        assert "[dry-run]" in out
+        assert "1 artifact(s)" in out
+
+    def test_multiple_files_each_printed(self, tmp_path, capsys):
+        self._make_deploy_dir(tmp_path, filenames=("a.wic.gz", "b.wic.gz"))
+        cfg = DeployConfig(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            prefix="acme/board/scarthgap",
+        )
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        deployer.deploy(str(tmp_path))
+        out = capsys.readouterr().out
+        assert "Uploading a.wic.gz" in out
+        assert "Uploading b.wic.gz" in out
+
+
+# =============================================================================
 # Storage backend tests (mocked SDK)
 # =============================================================================
 
