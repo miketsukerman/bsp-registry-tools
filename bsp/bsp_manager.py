@@ -1726,7 +1726,7 @@ class BspManager:
         docker_build_options: Optional[str],
     ) -> Path:
         """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
-        if build_path is not None and str(build_path).strip():
+        if build_path and str(build_path).strip():
             effective_build_path = build_path
         else:
             effective_build_path = resolved.build_path or "build"
