@@ -598,6 +598,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--checko
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
 | `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
+Each build/fetch invocation writes a full DEBUG-level execution log into the effective build directory as `bsp-build-YYYYMMDD-HHMMSS-ffffff.log` (including Docker/KAS flow), even when `--verbose` is not enabled.
+
 **Examples:**
 
 ```bash

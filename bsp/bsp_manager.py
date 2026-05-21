@@ -10,6 +10,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from dataclasses import replace, fields as dataclass_fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
@@ -1252,6 +1253,32 @@ class BspManager:
         logging.info(f"Preparing build directory: {build_path}")
         resolver.ensure_directory(build_path)
 
+    @contextmanager
+    def _capture_build_log(self, build_path: str) -> Iterator[None]:
+        """Capture complete DEBUG-level logs into the build directory."""
+        build_dir = Path(build_path).resolve()
+        resolver.ensure_directory(str(build_dir))
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        log_path = build_dir / f"bsp-build-{timestamp}.log"
+
+        root_logger = logging.getLogger()
+        previous_level = root_logger.level
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        ))
+
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(file_handler)
+        try:
+            logging.info("Build log file: %s", log_path)
+            yield
+        finally:
+            root_logger.removeHandler(file_handler)
+            file_handler.close()
+            root_logger.setLevel(previous_level)
+
     def _copy_files(
         self, resolved: ResolvedConfig, build_path_override: Optional[str] = None
     ) -> None:
@@ -1505,69 +1532,70 @@ class BspManager:
                                   Overrides ``build_options`` from the registry container
                                   definition when provided.
         """
-        action = "Checking out" if checkout_only else "Building"
-        logging.info(f"{action} {label or resolved.device.slug}")
-
-        # Build Docker image if needed (skip in checkout mode)
-        if not checkout_only and resolved.container:
-            self._build_container_image(
-                resolved.container,
-                label=label or resolved.device.slug,
-                docker_build_options=docker_build_options,
-            )
-        else:
-            if checkout_only:
-                logging.info("Skipping Docker build in checkout mode")
-
-        if build_path_override is not None:
-            logging.info(f"Overriding build path: {build_path_override}")
         build_path = build_path_override or resolved.build_path
-        self.prepare_build_directory(build_path)
-        self._copy_files(resolved, build_path_override=build_path_override)
+        with self._capture_build_log(build_path):
+            if build_path_override is not None:
+                logging.info(f"Overriding build path: {build_path_override}")
+            action = "Checking out" if checkout_only else "Building"
+            logging.info(f"{action} {label or resolved.device.slug}")
 
-        kas_mgr = self._get_kas_manager_for_resolved(
-            resolved,
-            use_container=not checkout_only,
-            build_path_override=build_path_override,
-        )
-
-        try:
-            config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
-                logging.debug("Configuration dump:\n" + config_output)
-
-            if checkout_only:
-                logging.info("Performing checkout and validation (no build)...")
-                kas_mgr.checkout_project()
-                logging.info(f"Checkout and validation completed successfully!")
+            # Build Docker image if needed (skip in checkout mode)
+            if not checkout_only and resolved.container:
+                self._build_container_image(
+                    resolved.container,
+                    label=label or resolved.device.slug,
+                    docker_build_options=docker_build_options,
+                )
             else:
-                kas_mgr.build_project(target=target, task=task)
-                logging.info(f"Build completed successfully!")
-                if deploy_after_build:
-                    self._deploy_resolved(
-                        resolved,
-                        preset=preset,
-                        deploy_overrides=deploy_overrides or {},
-                        build_path_override=build_path_override,
-                    )
-                if scan_after_build:
-                    self._scan_resolved(
-                        resolved,
-                        preset=preset,
-                        scan_overrides=scan_overrides or {},
-                        build_path_override=build_path_override,
-                    )
-                if flash_after_build and flash_target:
-                    self._flash_resolved(
-                        resolved,
-                        target_device=flash_target,
-                        preset=preset,
-                        build_target=target,
-                        flash_overrides=flash_overrides or {},
-                        build_path_override=build_path_override,
-                    )
-        finally:
-            self._cleanup_temp_kas_file()
+                if checkout_only:
+                    logging.info("Skipping Docker build in checkout mode")
+
+            self.prepare_build_directory(build_path)
+            self._copy_files(resolved, build_path_override=build_path_override)
+
+            kas_mgr = self._get_kas_manager_for_resolved(
+                resolved,
+                use_container=not checkout_only,
+                build_path_override=build_path_override,
+            )
+
+            try:
+                config_output = kas_mgr.dump_config(show_output=False)
+                if config_output:
+                    logging.debug("Configuration dump:\n" + config_output)
+
+                if checkout_only:
+                    logging.info("Performing checkout and validation (no build)...")
+                    kas_mgr.checkout_project()
+                    logging.info(f"Checkout and validation completed successfully!")
+                else:
+                    kas_mgr.build_project(target=target, task=task)
+                    logging.info(f"Build completed successfully!")
+                    if deploy_after_build:
+                        self._deploy_resolved(
+                            resolved,
+                            preset=preset,
+                            deploy_overrides=deploy_overrides or {},
+                            build_path_override=build_path_override,
+                        )
+                    if scan_after_build:
+                        self._scan_resolved(
+                            resolved,
+                            preset=preset,
+                            scan_overrides=scan_overrides or {},
+                            build_path_override=build_path_override,
+                        )
+                    if flash_after_build and flash_target:
+                        self._flash_resolved(
+                            resolved,
+                            target_device=flash_target,
+                            preset=preset,
+                            build_target=target,
+                            flash_overrides=flash_overrides or {},
+                            build_path_override=build_path_override,
+                        )
+            finally:
+                self._cleanup_temp_kas_file()
 
     @staticmethod
     def _extract_targets_from_kas_config(config_output: Optional[str]) -> List[str]:
@@ -1608,45 +1636,46 @@ class BspManager:
         """
         logging.info(f"Fetching sources for {label or resolved.device.slug}")
 
-        if resolved.container:
-            container = resolved.container
-            if container.file and container.image:
-                build_docker(
-                    str(self.config_path.parent),
-                    container.file,
-                    container.image,
-                    container.args,
-                    verbose=self.verbose,
-                )
-
-        if build_path_override is not None:
-            logging.info(f"Overriding build path: {build_path_override}")
         build_path = build_path_override or resolved.build_path
-        self.prepare_build_directory(build_path)
-        self._copy_files(resolved, build_path_override=build_path_override)
+        with self._capture_build_log(build_path):
+            if build_path_override is not None:
+                logging.info(f"Overriding build path: {build_path_override}")
+            if resolved.container:
+                container = resolved.container
+                if container.file and container.image:
+                    build_docker(
+                        str(self.config_path.parent),
+                        container.file,
+                        container.image,
+                        container.args,
+                        verbose=self.verbose,
+                    )
 
-        kas_mgr = self._get_kas_manager_for_resolved(
-            resolved,
-            use_container=True,
-            build_path_override=build_path_override,
-        )
+            self.prepare_build_directory(build_path)
+            self._copy_files(resolved, build_path_override=build_path_override)
 
-        try:
-            config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            kas_mgr = self._get_kas_manager_for_resolved(
+                resolved,
+                use_container=True,
+                build_path_override=build_path_override,
+            )
 
-            targets = [target] if target else self._extract_targets_from_kas_config(config_output)
-            if not targets:
-                logging.error(
-                    "No BitBake targets found for source fetch. "
-                    "Provide --target or configure targets in the KAS configuration."
-                )
-                sys.exit(1)
+            try:
+                config_output = kas_mgr.dump_config(show_output=False)
+                if config_output:
+                    logging.debug("Configuration dump:\n" + config_output)
 
-            kas_mgr.fetch_project(targets=targets)
-        finally:
-            self._cleanup_temp_kas_file()
+                targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+                if not targets:
+                    logging.error(
+                        "No BitBake targets found for source fetch. "
+                        "Provide --target or configure targets in the KAS configuration."
+                    )
+                    sys.exit(1)
+
+                kas_mgr.fetch_project(targets=targets)
+            finally:
+                self._cleanup_temp_kas_file()
 
     def build_bsp(
         self,

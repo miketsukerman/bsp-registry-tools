@@ -2,7 +2,10 @@
 Tests for BspManager registry operations (v2.0 schema).
 """
 
+import logging
+from pathlib import Path
 import pytest
+import re
 import shlex
 import yaml
 from unittest.mock import patch, MagicMock
@@ -847,6 +850,29 @@ class TestBspManagerMisc:
         manager = BspManager(config_path=str(registry_file))
         manager.initialize()
         manager.cleanup()  # Should not raise
+
+    def test_build_bsp_writes_verbose_equivalent_log_in_build_directory(self, registry_with_features_file):
+        manager = BspManager(config_path=str(registry_with_features_file), verbose=False)
+        manager.initialize()
+        resolved, _ = manager.resolver.resolve_preset("imx8-scarthgap-ota")
+        build_dir = Path(resolved.build_path).resolve()
+        before = set(build_dir.glob("bsp-build-*.log"))
+
+        with patch("bsp.bsp_manager.build_docker") as mock_build_docker, \
+             patch("bsp.kas_manager.KasManager.build_project") as mock_build_project, \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="header:\n  version: 14\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            mock_build_docker.side_effect = lambda *_args, **_kwargs: logging.debug("docker debug output line")
+            mock_build_project.side_effect = lambda *_args, **_kwargs: logging.debug("kas debug output line")
+            manager.build_bsp("imx8-scarthgap-ota")
+
+        log_files = sorted(set(build_dir.glob("bsp-build-*.log")) - before)
+        assert log_files, "Expected bsp-build log file in build directory"
+        assert re.fullmatch(r"bsp-build-\d{8}-\d{6}-\d{6}\.log", log_files[-1].name)
+        content = log_files[-1].read_text(encoding="utf-8")
+        assert "docker debug output line" in content
+        assert "kas debug output line" in content
 
     def test_initialize(self, registry_with_env_file):
         manager = BspManager(config_path=str(registry_with_env_file))

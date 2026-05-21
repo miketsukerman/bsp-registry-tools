@@ -1262,22 +1262,24 @@ def main() -> int:
 
         args = parser.parse_args()
 
-        # Setup logging based on verbosity
-        log_level = logging.DEBUG if args.verbose else logging.WARNING
+        # Configure logging so file handlers can always capture DEBUG records.
+        # Console verbosity remains controlled by --verbose.
+        root_logger = logging.getLogger()
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        root_logger.setLevel(logging.DEBUG)
 
-        # Setup logging colors
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
         if args.no_color or not COLORAMA_AVAILABLE:
-            logging.basicConfig(
-                level=log_level,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-        else:
-            logging.basicConfig(level=log_level)
-            logger = logging.getLogger()
-            handler = logger.handlers[0]
-            handler.setFormatter(ColoramaFormatter(
+            console_handler.setFormatter(logging.Formatter(
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             ))
+        else:
+            console_handler.setFormatter(ColoramaFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            ))
+        root_logger.addHandler(console_handler)
 
         # ----------------------------------------------------------------
         # Dispatch remotes commands — these do NOT need a loaded registry.
