@@ -601,6 +601,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
 | `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
+Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run.
+
 **Examples:**
 
 ```bash

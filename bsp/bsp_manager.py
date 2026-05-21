@@ -4,14 +4,16 @@ Main BSP management class coordinating registry, builds, and exports.
 
 import logging
 import os
+import json
 import shlex
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
@@ -1545,6 +1547,16 @@ class BspManager:
             config_output = kas_mgr.dump_config(show_output=False)
             if config_output:
                 logging.debug("Configuration dump:\n" + config_output)
+            self._write_build_manifest(
+                resolved=resolved,
+                build_path=build_path,
+                checkout_only=checkout_only,
+                preset=preset,
+                target=target,
+                task=task,
+                config_output=config_output,
+                docker_build_options=docker_build_options,
+            )
 
             if checkout_only:
                 logging.info("Performing checkout and validation (no build)...")
@@ -1599,6 +1611,135 @@ class BspManager:
         if isinstance(targets, list):
             return [str(target) for target in targets if target]
         return []
+
+    def _generate_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[str],
+        docker_build_options: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build a JSON-serializable manifest with resolved build components."""
+        effective_distro = resolved.effective_distro or resolved.release.distro or ""
+        distro_obj = None
+        if effective_distro:
+            distro_obj = next(
+                (d for d in self.model.registry.distro if d.slug == effective_distro),
+                None,
+            )
+
+        selected_targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+
+        container_name = None
+        if resolved.container:
+            for name, definition in self.containers.items():
+                if definition is resolved.container:
+                    container_name = name
+                    break
+
+        return {
+            "schema_version": "1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "registry": {
+                "path": str(self.config_path),
+            },
+            "preset": (
+                {
+                    "name": preset.name,
+                    "description": preset.description,
+                    "vendor_release": preset.vendor_release,
+                    "override": preset.override,
+                }
+                if preset
+                else None
+            ),
+            "build": {
+                "path": build_path,
+                "checkout_only": checkout_only,
+                "target": target,
+                "task": task,
+                "docker_build_options": docker_build_options,
+                "resolved_targets": selected_targets,
+            },
+            "components": {
+                "device": {
+                    "slug": resolved.device.slug,
+                    "vendor": resolved.device.vendor,
+                    "soc_vendor": resolved.device.soc_vendor,
+                    "soc_family": resolved.device.soc_family,
+                    "architecture": resolved.device.architecture,
+                },
+                "release": {
+                    "slug": resolved.release.slug,
+                    "yocto_version": resolved.release.yocto_version,
+                    "isar_version": resolved.release.isar_version,
+                },
+                "distro": {
+                    "slug": effective_distro,
+                    "framework": distro_obj.framework if distro_obj else None,
+                },
+                "features": [
+                    {"slug": feature.slug, "description": feature.description}
+                    for feature in resolved.features
+                ],
+                "container": (
+                    {
+                        "name": container_name,
+                        "image": resolved.container.image,
+                        "file": resolved.container.file,
+                        "runtime_args": resolved.container.runtime_args,
+                        "build_options": resolved.container.build_options,
+                        "privileged": resolved.container.privileged,
+                        "args": [
+                            {"name": arg.name, "value": arg.value}
+                            for arg in resolved.container.args
+                        ],
+                    }
+                    if resolved.container
+                    else None
+                ),
+            },
+            "inputs": {
+                "kas_files": list(resolved.kas_files),
+                "local_conf": list(resolved.local_conf),
+                "environment_variables": [
+                    {"name": env_var.name, "value": env_var.value}
+                    for env_var in resolved.env
+                ],
+                "copy": list(resolved.copy),
+            },
+        }
+
+    def _write_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[str],
+        docker_build_options: Optional[str],
+    ) -> Path:
+        """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
+        manifest_path = Path(build_path) / "build-manifest.json"
+        manifest = self._generate_build_manifest(
+            resolved=resolved,
+            build_path=build_path,
+            checkout_only=checkout_only,
+            preset=preset,
+            target=target,
+            task=task,
+            config_output=config_output,
+            docker_build_options=docker_build_options,
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        logging.info("Build manifest generated: %s", manifest_path)
+        return manifest_path
 
     def _fetch_resolved(
         self,

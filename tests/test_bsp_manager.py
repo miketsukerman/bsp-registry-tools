@@ -3,6 +3,7 @@ Tests for BspManager registry operations (v2.0 schema).
 """
 
 import pytest
+import json
 import shlex
 import yaml
 from unittest.mock import patch, MagicMock
@@ -748,6 +749,58 @@ class TestBspManagerBuildByComponents:
              patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
             manager.build_by_components("imx8-board", "scarthgap", target="core-image-minimal")
         mock_build.assert_called_once_with(target="core-image-minimal", task=None)
+
+    def test_build_bsp_writes_build_manifest(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-preset"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- core-image-base\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "imx8-scarthgap-ota",
+                build_path_override=str(output_dir),
+                task="compile",
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"]["name"] == "imx8-scarthgap-ota"
+        assert data["components"]["device"]["slug"] == "imx8-board"
+        assert data["components"]["release"]["slug"] == "scarthgap"
+        assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
+        assert data["build"]["task"] == "compile"
+        assert data["build"]["resolved_targets"] == ["core-image-base"]
+
+    def test_build_by_components_writes_build_manifest(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-components"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- ignored\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_by_components(
+                "imx8-board",
+                "scarthgap",
+                ["ota"],
+                target="custom-image",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"] is None
+        assert data["components"]["device"]["slug"] == "imx8-board"
+        assert data["components"]["release"]["slug"] == "scarthgap"
+        assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
+        assert data["build"]["target"] == "custom-image"
+        assert data["build"]["resolved_targets"] == ["custom-image"]
 
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
