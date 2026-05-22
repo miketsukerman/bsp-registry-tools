@@ -279,7 +279,11 @@ class BspManager:
             self.config_path = old_config_path
 
     def _resolve_preset_multi(
-        self, bsp_name: str, extra_feature_slugs: Optional[List[str]] = None
+        self,
+        bsp_name: str,
+        extra_feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
     ) -> Tuple[ResolvedConfig, BspPreset, str, object, V2Resolver, Path]:
         """Resolve a BSP preset across all loaded registries.
 
@@ -304,7 +308,10 @@ class BspManager:
             for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
                 if reg_name == registry_hint:
                     resolved, preset = reg_resolver.resolve_preset(
-                        preset_name, extra_feature_slugs=extra_feature_slugs
+                        preset_name,
+                        extra_feature_slugs=extra_feature_slugs,
+                        vendor_release_slug_override=vendor_release_slug,
+                        override_slug_override=override_slug,
                     )
                     return resolved, preset, reg_name, reg_model, reg_resolver, reg_path
             logging.error(
@@ -345,7 +352,10 @@ class BspManager:
 
         reg_name, reg_model, reg_resolver, reg_path = found_in[0]
         resolved, preset = reg_resolver.resolve_preset(
-            preset_name, extra_feature_slugs=extra_feature_slugs
+            preset_name,
+            extra_feature_slugs=extra_feature_slugs,
+            vendor_release_slug_override=vendor_release_slug,
+            override_slug_override=override_slug,
         )
         return resolved, preset, reg_name, reg_model, reg_resolver, reg_path
 
@@ -1663,6 +1673,8 @@ class BspManager:
         flash_after_build: bool = False,
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
         docker_build_options: Optional[str] = None,
     ) -> None:
         """
@@ -1682,6 +1694,8 @@ class BspManager:
             flash_after_build: If True, flash artifacts to *flash_target* after a successful build
             flash_target: Block device path used when *flash_after_build* is True
             flash_overrides: CLI-level overrides for the flash configuration
+            vendor_release_slug: Optional vendor sub-release slug to override preset/default selection
+            override_slug: Optional vendor override slug to force a specific vendor override
             docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
                                   Overrides ``build_options`` from the registry container
                                   definition when provided.
@@ -1691,7 +1705,10 @@ class BspManager:
         """
         logging.info(f"{'Checking out' if checkout_only else 'Building'} BSP preset: {bsp_name}")
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(
-            bsp_name, extra_feature_slugs=feature_slugs
+            bsp_name,
+            extra_feature_slugs=feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
         )
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._build_resolved(
@@ -1718,6 +1735,8 @@ class BspManager:
         target: Optional[str] = None,
         build_path_override: Optional[str] = None,
         feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
     ) -> None:
         """
         Fetch all sources for a BSP preset.
@@ -1727,10 +1746,15 @@ class BspManager:
             target: Optional BitBake target to fetch instead of configured targets
             build_path_override: If provided, overrides the build output path
             feature_slugs: Additional feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug to override preset/default selection
+            override_slug: Optional vendor override slug to force a specific vendor override
         """
         logging.info(f"Fetching BSP preset: {bsp_name}")
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(
-            bsp_name, extra_feature_slugs=feature_slugs
+            bsp_name,
+            extra_feature_slugs=feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
         )
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._fetch_resolved(
@@ -1745,6 +1769,8 @@ class BspManager:
         device_slug: str,
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
         checkout_only: bool = False,
         deploy_after_build: bool = False,
         deploy_overrides: Optional[Dict] = None,
@@ -1765,6 +1791,8 @@ class BspManager:
             device_slug: Device slug
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug
+            override_slug: Optional vendor override slug
             checkout_only: If True, only checkout and validate without building
             deploy_after_build: If True, deploy artifacts after a successful build
             deploy_overrides: CLI-level overrides for the deploy configuration
@@ -1788,7 +1816,13 @@ class BspManager:
             f"device={device_slug} release={release_slug} "
             f"features={feature_slugs or []}"
         )
-        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        resolved = self.resolver.resolve(
+            device_slug,
+            release_slug,
+            feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
+        )
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
@@ -1811,6 +1845,8 @@ class BspManager:
         device_slug: str,
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
         target: Optional[str] = None,
         build_path_override: Optional[str] = None,
     ) -> None:
@@ -1821,6 +1857,8 @@ class BspManager:
             device_slug: Device slug
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug
+            override_slug: Optional vendor override slug
             target: Optional BitBake target to fetch instead of configured targets
             build_path_override: If provided, overrides the build output path
         """
@@ -1828,7 +1866,13 @@ class BspManager:
             f"Fetching sources for device={device_slug} release={release_slug} "
             f"features={feature_slugs or []}"
         )
-        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        resolved = self.resolver.resolve(
+            device_slug,
+            release_slug,
+            feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
+        )
         self._fetch_resolved(
             resolved,
             target=target,

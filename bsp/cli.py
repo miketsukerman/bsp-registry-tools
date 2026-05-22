@@ -327,6 +327,20 @@ def main() -> int:
             help="Release slug (use with --device for component-based build)"
         ).completer = ReleasesCompleter()
         build_parser.add_argument(
+            "--vendor-release",
+            type=str,
+            dest="vendor_release",
+            metavar="SLUG",
+            help="Vendor sub-release slug to resolve for build selection"
+        )
+        build_parser.add_argument(
+            "--override",
+            type=str,
+            dest="override_slug",
+            metavar="SLUG",
+            help="Vendor override slug to resolve for build selection"
+        )
+        build_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
@@ -570,6 +584,20 @@ def main() -> int:
             dest="release",
             help="Release slug (use with --device for component-based fetch)"
         ).completer = ReleasesCompleter()
+        fetch_parser.add_argument(
+            "--vendor-release",
+            type=str,
+            dest="vendor_release",
+            metavar="SLUG",
+            help="Vendor sub-release slug to resolve for fetch selection"
+        )
+        fetch_parser.add_argument(
+            "--override",
+            type=str,
+            dest="override_slug",
+            metavar="SLUG",
+            help="Vendor override slug to resolve for fetch selection"
+        )
         fetch_parser.add_argument(
             "--feature", "-f",
             action="append",
@@ -1469,6 +1497,8 @@ def main() -> int:
             target = getattr(args, "target", None)
             task = getattr(args, "task", None)
             build_path = getattr(args, "build_path", None)
+            vendor_release = getattr(args, "vendor_release", None)
+            override_slug = getattr(args, "override_slug", None)
             docker_build_options = getattr(args, "docker_build_options", None)
             no_cache = getattr(args, "no_cache", False)
             if no_cache:
@@ -1493,6 +1523,8 @@ def main() -> int:
                     flash_after_build=flash_after_build,
                     flash_target=flash_target,
                     flash_overrides=flash_overrides,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
                     docker_build_options=docker_build_options,
                 )
                 if run_test:
@@ -1519,6 +1551,8 @@ def main() -> int:
                     flash_after_build=flash_after_build,
                     flash_target=flash_target,
                     flash_overrides=flash_overrides,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
                     docker_build_options=docker_build_options,
                 )
                 if run_test:
@@ -1547,6 +1581,8 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             target = getattr(args, "target", None)
             build_path = getattr(args, "build_path", None)
+            vendor_release = getattr(args, "vendor_release", None)
+            override_slug = getattr(args, "override_slug", None)
 
             if _check_exclusive(bsp_name, device, release, fetch_parser):
                 return 1
@@ -1556,6 +1592,8 @@ def main() -> int:
                     target=target,
                     build_path_override=build_path,
                     feature_slugs=features,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
                 )
             elif device and release:
                 bsp_mgr.fetch_by_components(
@@ -1564,6 +1602,8 @@ def main() -> int:
                     features,
                     target=target,
                     build_path_override=build_path,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
                 )
             else:
                 logging.error(
