@@ -13,9 +13,11 @@ from .completions import (
     ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
+    OverrideCompleter,
     PresetsCompleter,
     ReleasesCompleter,
     RemotesCompleter,
+    VendorReleaseCompleter,
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig, YoctoCacheConfig
@@ -332,14 +334,14 @@ def main() -> int:
             dest="vendor_release",
             metavar="SLUG",
             help="Vendor sub-release slug to resolve for build selection"
-        )
+        ).completer = VendorReleaseCompleter()
         build_parser.add_argument(
             "--override",
             type=str,
             dest="override_slug",
             metavar="SLUG",
             help="Vendor override slug to resolve for build selection"
-        )
+        ).completer = OverrideCompleter()
         build_parser.add_argument(
             "--feature", "-f",
             action="append",
@@ -590,14 +592,14 @@ def main() -> int:
             dest="vendor_release",
             metavar="SLUG",
             help="Vendor sub-release slug to resolve for fetch selection"
-        )
+        ).completer = VendorReleaseCompleter()
         fetch_parser.add_argument(
             "--override",
             type=str,
             dest="override_slug",
             metavar="SLUG",
             help="Vendor override slug to resolve for fetch selection"
-        )
+        ).completer = OverrideCompleter()
         fetch_parser.add_argument(
             "--feature", "-f",
             action="append",

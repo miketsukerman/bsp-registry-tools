@@ -19,9 +19,11 @@ from bsp.completions import (
     ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
+    OverrideCompleter,
     PresetsCompleter,
     ReleasesCompleter,
     RemotesCompleter,
+    VendorReleaseCompleter,
     _build_manager_for_completion,
 )
 from tests.conftest import (
@@ -267,6 +269,68 @@ class TestFeaturesCompleter:
         args = _parsed_args(registry=None)
         with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
             assert FeaturesCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
+# VendorReleaseCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestVendorReleaseCompleter:
+    def test_returns_vendor_release_slugs(self, registry_with_vendor_overrides_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_overrides_file),
+            device="adv-imx8",
+            release="scarthgap",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert "imx-6.6.53" in completions
+        assert "imx-6.12.0" in completions
+
+    def test_filters_by_selected_device_vendor(self, registry_with_vendor_overrides_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_overrides_file),
+            device="qemu-arm64",
+            release="scarthgap",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert completions == []
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert VendorReleaseCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
+# OverrideCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestOverrideCompleter:
+    def test_returns_override_slugs(self, registry_with_vendor_override_slug_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            release="scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert "imx-6.6.23-2.0.0" in completions
+        assert "imx-6.6.36-2.1.0" in completions
+        assert "imx-xwayland-6.6.52" in completions
+
+    def test_filters_override_slugs_by_device_vendor(self, registry_with_vendor_override_slug_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            device="adv-imx8",
+            release="scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert completions == []
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert OverrideCompleter()("", args) == []
 
 
 # ---------------------------------------------------------------------------
