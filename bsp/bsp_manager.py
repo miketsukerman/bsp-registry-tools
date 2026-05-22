@@ -1591,7 +1591,7 @@ class BspManager:
             self._cleanup_temp_kas_file()
 
     @staticmethod
-    def _extract_targets_from_kas_config(config_output: Optional[str]) -> List[str]:
+    def _extract_targets_from_kas_config(config_output: Optional[Any]) -> List[str]:
         """Return normalized targets from ``kas dump`` YAML output."""
         import yaml
 
@@ -1612,7 +1612,7 @@ class BspManager:
         return []
 
     @staticmethod
-    def _log_config_dump(config_output: Optional[str]) -> None:
+    def _log_config_dump(config_output: Optional[Any]) -> None:
         """Log KAS dump output only when it is a non-empty string."""
         if isinstance(config_output, str) and config_output:
             logging.debug("Configuration dump:\n" + config_output)
@@ -1625,7 +1625,7 @@ class BspManager:
         preset: Optional[BspPreset],
         target: Optional[str],
         task: Optional[str],
-        config_output: Optional[str],
+        config_output: Optional[Any],
         docker_build_options: Optional[str],
     ) -> Dict[str, Any]:
         """Build a JSON-serializable manifest with resolved build components."""
@@ -1735,7 +1735,7 @@ class BspManager:
         preset: Optional[BspPreset],
         target: Optional[str],
         task: Optional[str],
-        config_output: Optional[str],
+        config_output: Optional[Any],
         docker_build_options: Optional[str],
     ) -> Path:
         """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
