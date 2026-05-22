@@ -2042,10 +2042,11 @@ class BspManager:
                     os.unlink(temp_path)
 
         if not output_file:
+            target_label = label or resolved.device.slug
             title = (
-                f"Android Repo Manifest for {label or resolved.device.slug}"
+                f"Android Repo Manifest for {target_label}"
                 if repo_manifest
-                else f"KAS Configuration for {label or resolved.device.slug}"
+                else f"KAS Configuration for {target_label}"
             )
             print("\n" + "=" * 60)
             print(title)
