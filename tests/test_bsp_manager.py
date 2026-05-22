@@ -4425,3 +4425,32 @@ registry:
         assert args[0] == str(reg_b_dir)
         assert args[1] == "Dockerfile.b"
         assert args[2] == "test/shared:b"
+
+class TestExportRepoManifest:
+    def test_export_bsp_config_repo_manifest_uses_kas_repo_export(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", return_value="<manifest/>") as mock_export:
+            manager.export_bsp_config("test-bsp", repo_manifest=True)
+        mock_export.assert_called_once_with(None)
+
+    def test_export_bsp_config_default_uses_kas_config_export(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", return_value="header:\n  version: 14\n") as mock_export:
+            manager.export_bsp_config("test-bsp")
+        mock_export.assert_called_once_with(None)
+
+    def test_export_by_components_repo_manifest_with_output(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        out = str(tmp_dir / "manifest.xml")
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", return_value="<manifest/>") as mock_export:
+            manager.export_by_components(
+                "test-device",
+                "test-release",
+                [],
+                output_file=out,
+                repo_manifest=True,
+            )
+        mock_export.assert_called_once_with(out)

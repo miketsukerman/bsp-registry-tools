@@ -1935,6 +1935,7 @@ class BspManager:
         resolved: ResolvedConfig,
         output_file: Optional[str] = None,
         label: str = "",
+        repo_manifest: bool = False,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -1944,7 +1945,8 @@ class BspManager:
             output_file: Optional file path to save the configuration
             label: Descriptive label for log messages
         """
-        logging.info(f"Exporting KAS configuration for {label or resolved.device.slug}")
+        export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
+        logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
 
         downloads = None
         sstate = None
@@ -1987,22 +1989,33 @@ class BspManager:
                     search_paths=[str(self.config_path.parent)],
                     env_manager=self.env_manager,
                 )
-                config_yaml = kas_mgr.export_kas_config(output_file)
+                if repo_manifest:
+                    exported_content = kas_mgr.export_repo_manifest_xml(output_file)
+                else:
+                    exported_content = kas_mgr.export_kas_config(output_file)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
         if not output_file:
+            title = (
+                f"Android Repo Manifest for {label or resolved.device.slug}"
+                if repo_manifest
+                else f"KAS Configuration for {label or resolved.device.slug}"
+            )
             print("\n" + "=" * 60)
-            print(f"KAS Configuration for {label or resolved.device.slug}")
+            print(title)
             print("=" * 60)
-            print(config_yaml)
+            print(exported_content)
             print("=" * 60)
 
         logging.info("Configuration exported successfully!")
 
     def export_bsp_config(
-        self, bsp_name: str, output_file: Optional[str] = None
+        self,
+        bsp_name: str,
+        output_file: Optional[str] = None,
+        repo_manifest: bool = False,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2021,6 +2034,7 @@ class BspManager:
                 resolved,
                 output_file=output_file,
                 label=f"{preset.name} - {preset.description}",
+                repo_manifest=repo_manifest,
             )
 
     def export_by_components(
@@ -2029,6 +2043,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         output_file: Optional[str] = None,
+        repo_manifest: bool = False,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2051,6 +2066,7 @@ class BspManager:
             resolved,
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
+            repo_manifest=repo_manifest,
         )
 
     # ------------------------------------------------------------------
