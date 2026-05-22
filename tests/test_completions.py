@@ -86,6 +86,25 @@ class TestBuildManagerForCompletion:
         result = _build_manager_for_completion(args)
         assert result is None
 
+    def test_uses_fetch_multiple_for_configured_single_remote(self, tmp_path):
+        reg = _make_registry_file(tmp_path, MINIMAL_REGISTRY_YAML)
+        fetcher_mock = MagicMock()
+        fetcher_mock.fetch_multiple.return_value = [("advantech-europe", reg)]
+        with patch("bsp.completions.RegistryFetcher", return_value=fetcher_mock):
+            with patch("bsp.completions.RemotesManager") as MockRM:
+                from bsp.remotes_manager import RemoteEntry
+                MockRM.return_value.ensure_default_remote.return_value = [
+                    RemoteEntry(
+                        name="advantech-europe",
+                        url="https://github.com/Advantech-EECC/bsp-registry.git",
+                        branch="main",
+                    )
+                ]
+                args = _parsed_args(registry=None, remote=None, branch="main")
+                _build_manager_for_completion(args)
+        fetcher_mock.fetch_registry.assert_not_called()
+        fetcher_mock.fetch_multiple.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # PresetsCompleter

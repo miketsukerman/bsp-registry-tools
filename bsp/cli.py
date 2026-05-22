@@ -1395,6 +1395,7 @@ def main() -> int:
             # If no --remote flags given on the CLI, fall back to configured remotes
             if args.remote:
                 remotes_raw = args.remote
+                using_configured_remotes = False
             else:
                 stored = RemotesManager().ensure_default_remote(branch=args.branch)
                 # Encode stored remotes as URL@BRANCH@name=NAME strings so the
@@ -1402,13 +1403,14 @@ def main() -> int:
                 remotes_raw = [
                     f"{r.url}@{r.branch}@name={r.name}" for r in stored
                 ]
+                using_configured_remotes = True
                 logging.info(
                     "Using %d configured remote(s): %s",
                     len(stored),
                     [r.name for r in stored],
                 )
 
-            if len(remotes_raw) == 1:
+            if len(remotes_raw) == 1 and not using_configured_remotes:
                 # Single explicit remote — backward-compat single-registry path
                 spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=args.branch)
                 registry_path = str(fetcher.fetch_registry(

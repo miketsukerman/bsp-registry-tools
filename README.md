@@ -169,7 +169,8 @@ This installs a single shell hook that covers every tool that calls
 
 If you have no local registry file, `bsp` automatically clones the default
 [Advantech BSP registry](https://github.com/Advantech-EECC/bsp-registry) into
-`~/.cache/bsp/registry` and keeps it up-to-date on every run:
+the cache root `~/.cache/bsp/registry` (under a remote-specific subdirectory)
+and keeps it up-to-date on every run:
 
 ```bash
 # First run: clones the registry, then lists BSPs
@@ -394,7 +395,7 @@ The tool determines which registry file to use in the following order:
 4. **`bsp-registry.yml` exists in the current directory** — auto-detect (alternate extension).
 5. **`--remote URL` flag(s) provided** — fetch the specified remote(s) on-the-fly (no persistence).
 6. **Named remotes configured** — if `bsp remotes add` has registered remotes in `~/.config/bsp/remotes.yaml`, those are fetched automatically.
-7. **Otherwise** — fall back to the default Advantech BSP registry at `~/.cache/bsp/registry`.
+7. **Otherwise** — bootstrap/use the default named remote (`advantech-europe`) and fetch it from the cache root `~/.cache/bsp/registry` using the same remote-specific subdirectory layout as additional remotes.
 
 ### Global Options
 
