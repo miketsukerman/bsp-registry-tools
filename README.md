@@ -572,15 +572,17 @@ BSP Registry
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
+bsp build <bsp_name> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
 bsp build <bsp_name> [--feature FEATURE...] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
 bsp build <bsp_name> [--feature FEATURE...] [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
-bsp build --device <device> --release <release> [--feature FEATURE...] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
+bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
+| `--vendor-release SLUG` | Vendor sub-release slug to resolve (maps to `vendor_release`). Useful for selecting a specific vendor BSP release variant at runtime. |
+| `--override SLUG` | Vendor override slug to resolve (maps to `override`). Useful when a release has multiple vendor override entries with different slugs. |
 | `--checkout` | Validate configuration and checkout repos without building |
 | `--path PATH` | Override the output build directory path defined in the registry |
 | `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
@@ -613,6 +615,12 @@ bsp build poky-qemuarm64-scarthgap --feature secure-boot
 
 # Build with multiple extra features
 bsp build poky-qemuarm64-scarthgap --feature secure-boot --feature ota
+
+# Build using a specific vendor sub-release override
+bsp build adv-imx8-scarthgap-imx6.6.53 --vendor-release imx-6.12.0
+
+# Build using a specific vendor override slug
+bsp build adv-imx8-scarthgap --override imx-xwayland-6.6.52
 
 # Override the output build directory
 bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
@@ -648,13 +656,15 @@ bsp build poky-qemuarm64-scarthgap --test --wait \
 #### `fetch` — Fetch all sources for a BSP
 
 ```bash
-bsp fetch <bsp_name> [--feature FEATURE...] [--target TARGET] [--path PATH]
-bsp fetch --device <device> --release <release> [--feature FEATURE...] [--target TARGET] [--path PATH]
+bsp fetch <bsp_name> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--target TARGET] [--path PATH]
+bsp fetch --device <device> --release <release> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--target TARGET] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
+| `--vendor-release SLUG` | Vendor sub-release slug to resolve (maps to `vendor_release`). |
+| `--override SLUG` | Vendor override slug to resolve (maps to `override`). |
 | `--target TARGET` | BitBake target to fetch. If omitted, `bsp fetch` uses targets resolved from the KAS configuration or preset. |
 | `--path PATH` | Override the output build directory path defined in the registry |
 
@@ -668,6 +678,12 @@ bsp fetch poky-qemuarm64-scarthgap
 
 # Fetch sources for a specific image target
 bsp fetch poky-qemuarm64-scarthgap --target core-image-minimal
+
+# Fetch sources using a specific vendor sub-release override
+bsp fetch adv-imx8-scarthgap-imx6.6.53 --vendor-release imx-6.12.0
+
+# Fetch sources using a specific vendor override slug
+bsp fetch adv-imx8-scarthgap --override imx-xwayland-6.6.52
 
 # Fetch sources for a component-based selection into a custom build directory
 bsp fetch --device qemuarm64 --release scarthgap --target core-image-minimal --path /mnt/fast-ssd/build

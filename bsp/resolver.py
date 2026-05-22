@@ -940,6 +940,8 @@ class V2Resolver:
         self,
         preset_name: str,
         extra_feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug_override: Optional[str] = None,
+        override_slug_override: Optional[str] = None,
     ) -> Tuple[ResolvedConfig, BspPreset]:
         """
         Resolve a named BSP preset to a ResolvedConfig.
@@ -966,6 +968,10 @@ class V2Resolver:
             preset_name: Name of the preset in registry.bsp
             extra_feature_slugs: Additional feature slugs to enable on top of
                 those already listed in the preset definition.
+            vendor_release_slug_override: Optional vendor sub-release slug that,
+                when set, overrides the preset's ``vendor_release`` value.
+            override_slug_override: Optional vendor override slug that, when set,
+                overrides the preset's ``override`` value.
 
         Returns:
             Tuple of (ResolvedConfig, BspPreset)
@@ -996,8 +1002,16 @@ class V2Resolver:
 
         resolved = self.resolve(
             preset.device, preset.release, preset_features,
-            vendor_release_slug=preset.vendor_release,
-            override_slug=preset.override,
+            vendor_release_slug=(
+                vendor_release_slug_override
+                if vendor_release_slug_override is not None
+                else preset.vendor_release
+            ),
+            override_slug=(
+                override_slug_override
+                if override_slug_override is not None
+                else preset.override
+            ),
         )
 
         # Apply preset build overrides
