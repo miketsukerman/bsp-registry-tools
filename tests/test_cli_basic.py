@@ -148,10 +148,10 @@ registry:
         assert kwargs.get("output_file") == str(out)
         assert kwargs.get("repo_manifest") is True
 
-    def test_main_export_mode_flags_mutually_exclusive(self, registry_file):
+    def test_main_export_repo_manifest_rejects_preset_and_components_mix(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file), "export", "test-bsp",
-            "--repo-manifest", "--kas-config",
+            "--repo-manifest", "--device", "test-device", "--release", "test-release",
         ]):
             exit_code = bsp.main()
         assert exit_code != 0
