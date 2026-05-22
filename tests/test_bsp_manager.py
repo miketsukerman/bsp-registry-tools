@@ -843,6 +843,27 @@ class TestBspManagerBuildByComponents:
         data = json.loads(manifest_path.read_text())
         assert data["build"]["resolved_targets"] == []
 
+    def test_build_manifest_resolves_preset_vendor_fields(
+        self, registry_with_feature_vendor_overrides_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-resolved-preset-fields"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "adv-imx8-scarthgap-rauc-no-vendor-release",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"]["vendor_release"] == "imx-6.6.53"
+        assert data["preset"]["override"] == "advantech"
+
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
         manager.initialize()
