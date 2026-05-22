@@ -233,6 +233,74 @@ class FeaturesCompleter:
             return []
 
 
+class VendorReleaseCompleter:
+    """Complete vendor release slugs from release vendor overrides."""
+
+    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
+        try:
+            mgr = _build_manager_for_completion(parsed_args)
+            if mgr is None:
+                return []
+            device_slug: Optional[str] = getattr(parsed_args, "device", None)
+            release_slug: Optional[str] = getattr(parsed_args, "release", None)
+            results: List[str] = []
+            for _reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+                releases = reg_model.registry.releases if reg_model else []
+                if not releases:
+                    continue
+                if release_slug:
+                    releases = [r for r in releases if r.slug == release_slug]
+                device_vendor: Optional[str] = None
+                if device_slug:
+                    try:
+                        device_vendor = reg_resolver.get_device(device_slug).vendor
+                    except SystemExit:
+                        continue
+                for release in releases:
+                    for vo in (release.vendor_overrides or []):
+                        if device_vendor and vo.vendor != device_vendor:
+                            continue
+                        for vr in (vo.releases or []):
+                            results.append(vr.slug)
+            return results
+        except (Exception, SystemExit):  # pylint: disable=broad-except
+            return []
+
+
+class OverrideCompleter:
+    """Complete vendor override slugs from release vendor overrides."""
+
+    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
+        try:
+            mgr = _build_manager_for_completion(parsed_args)
+            if mgr is None:
+                return []
+            device_slug: Optional[str] = getattr(parsed_args, "device", None)
+            release_slug: Optional[str] = getattr(parsed_args, "release", None)
+            results: List[str] = []
+            for _reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+                releases = reg_model.registry.releases if reg_model else []
+                if not releases:
+                    continue
+                if release_slug:
+                    releases = [r for r in releases if r.slug == release_slug]
+                device_vendor: Optional[str] = None
+                if device_slug:
+                    try:
+                        device_vendor = reg_resolver.get_device(device_slug).vendor
+                    except SystemExit:
+                        continue
+                for release in releases:
+                    for vo in (release.vendor_overrides or []):
+                        if device_vendor and vo.vendor != device_vendor:
+                            continue
+                        if vo.slug:
+                            results.append(vo.slug)
+            return results
+        except (Exception, SystemExit):  # pylint: disable=broad-except
+            return []
+
+
 class RemotesCompleter:
     """Complete named remote names from ``~/.config/bsp/remotes.yaml``."""
 
