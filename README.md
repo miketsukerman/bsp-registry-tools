@@ -714,11 +714,15 @@ bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
 ```bash
 bsp export <bsp_name> [--output OUTPUT]
 bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
+bsp export <bsp_name> --repo-manifest [--output OUTPUT]
+bsp export --device <device> --release <release> [--feature FEATURE...] --repo-manifest [--output OUTPUT]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
+| `--repo-manifest` | Export Android repo manifest XML with pinned commit SHAs (CLI only) |
+| `--kas-config` | Explicitly export KAS configuration YAML (default behavior) |
 
 **Examples:**
 
@@ -728,6 +732,9 @@ bsp export poky-qemuarm64-scarthgap
 
 # Save to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
+
+# Export Android repo manifest XML with pinned SHAs
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
 ```
 
 #### `server` — Start an HTTP server (REST + GraphQL)
