@@ -863,6 +863,7 @@ class TestBspManagerBuildByComponents:
         data = json.loads(manifest_path.read_text())
         assert data["preset"]["vendor_release"] == "imx-6.6.53"
         assert data["preset"]["override"] == "advantech"
+        assert data["build"]["resolved_targets"] == []
 
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))

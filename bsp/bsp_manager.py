@@ -1545,8 +1545,7 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if isinstance(config_output, str) and config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            self._log_config_dump(config_output)
             self._write_build_manifest(
                 resolved=resolved,
                 build_path=build_path,
@@ -1611,6 +1610,12 @@ class BspManager:
         if isinstance(targets, list):
             return [str(target) for target in targets if target]
         return []
+
+    @staticmethod
+    def _log_config_dump(config_output: Optional[str]) -> None:
+        """Log KAS dump output only when it is a non-empty string."""
+        if isinstance(config_output, str) and config_output:
+            logging.debug("Configuration dump:\n" + config_output)
 
     def _generate_build_manifest(
         self,
@@ -1797,8 +1802,7 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if isinstance(config_output, str) and config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            self._log_config_dump(config_output)
 
             targets = [target] if target else self._extract_targets_from_kas_config(config_output)
             if not targets:
