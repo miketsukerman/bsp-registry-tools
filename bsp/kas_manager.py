@@ -221,6 +221,11 @@ class KasManager:
 
         return " ".join(parts) if parts else None
 
+    def get_runtime_args(self) -> Optional[str]:
+        """Return resolved runtime args that will be forwarded to kas-container."""
+        env = self._get_environment_with_container_vars()
+        return self._build_runtime_args_str(env)
+
     def _expand_env_vars(self, value: str) -> str:
         """
         Expand ``$ENV{VAR}`` patterns and standard ``$VAR`` / ``%VAR%`` patterns
