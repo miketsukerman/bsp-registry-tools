@@ -1546,6 +1546,12 @@ class BspManager:
         try:
             config_output = kas_mgr.dump_config(show_output=False)
             self._log_config_dump(config_output)
+            runtime_args_value = kas_mgr._build_runtime_args_str(
+                kas_mgr._get_environment_with_container_vars()
+            )
+            manifest_runtime_args = (
+                runtime_args_value if isinstance(runtime_args_value, str) else None
+            )
             self._write_build_manifest(
                 resolved=resolved,
                 build_path=build_path,
@@ -1555,6 +1561,7 @@ class BspManager:
                 task=task,
                 config_output=config_output,
                 docker_build_options=docker_build_options,
+                resolved_runtime_args=manifest_runtime_args,
             )
 
             if checkout_only:
@@ -1617,6 +1624,44 @@ class BspManager:
         if isinstance(config_output, str) and config_output:
             logging.debug("Configuration dump:\n" + config_output)
 
+    @staticmethod
+    def _resolve_manifest_soc_family(
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset],
+    ) -> Optional[str]:
+        """Resolve a best-effort SoC family value for build-manifest output."""
+        if resolved.device.soc_family:
+            return resolved.device.soc_family
+
+        import re
+
+        for source in (
+            resolved.device.description,
+            preset.description if preset else None,
+            resolved.device.slug,
+        ):
+            if not source:
+                continue
+            match = re.search(r"(?:i\.?mx|imx)[\s\-]?([0-9][a-z0-9]*)", source, re.IGNORECASE)
+            if match:
+                return f"imx{match.group(1).lower()}"
+        return None
+
+    @staticmethod
+    def _resolve_manifest_container_build_options(
+        resolved: ResolvedConfig,
+        docker_build_options: Optional[str],
+    ) -> Optional[str]:
+        """Resolve effective docker build options for manifest output."""
+        if not resolved.container:
+            return None
+        base_options = (
+            docker_build_options
+            if docker_build_options is not None
+            else resolved.container.build_options
+        )
+        return BspManager._compose_docker_build_options(base_options, use_cache=None)
+
     def _generate_build_manifest(
         self,
         resolved: ResolvedConfig,
@@ -1627,6 +1672,7 @@ class BspManager:
         task: Optional[str],
         config_output: Optional[Any],
         docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
     ) -> Dict[str, Any]:
         """Build a JSON-serializable manifest with resolved build components."""
         effective_distro = resolved.effective_distro or resolved.release.distro or ""
@@ -1638,6 +1684,10 @@ class BspManager:
             )
 
         selected_targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+        manifest_soc_family = self._resolve_manifest_soc_family(resolved, preset)
+        manifest_container_build_options = self._resolve_manifest_container_build_options(
+            resolved, docker_build_options
+        )
 
         container_name = None
         if resolved.container:
@@ -1683,7 +1733,7 @@ class BspManager:
                     "slug": resolved.device.slug,
                     "vendor": resolved.device.vendor,
                     "soc_vendor": resolved.device.soc_vendor,
-                    "soc_family": resolved.device.soc_family,
+                    "soc_family": manifest_soc_family,
                     "architecture": resolved.device.architecture,
                 },
                 "release": {
@@ -1704,8 +1754,8 @@ class BspManager:
                         "name": container_name,
                         "image": resolved.container.image,
                         "file": resolved.container.file,
-                        "runtime_args": resolved.container.runtime_args,
-                        "build_options": resolved.container.build_options,
+                        "runtime_args": resolved_runtime_args,
+                        "build_options": manifest_container_build_options,
                         "privileged": resolved.container.privileged,
                         "args": [
                             {"name": arg.name, "value": arg.value}
@@ -1737,6 +1787,7 @@ class BspManager:
         task: Optional[str],
         config_output: Optional[Any],
         docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
     ) -> Path:
         """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
         if build_path and str(build_path).strip():
@@ -1753,6 +1804,7 @@ class BspManager:
             task=task,
             config_output=config_output,
             docker_build_options=docker_build_options,
+            resolved_runtime_args=resolved_runtime_args,
         )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")

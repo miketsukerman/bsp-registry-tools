@@ -865,6 +865,79 @@ class TestBspManagerBuildByComponents:
         assert data["preset"]["override"] == "advantech"
         assert data["build"]["resolved_targets"] == []
 
+    def test_build_manifest_resolves_soc_family_and_container_effective_options(
+        self, tmp_dir, tmp_path, monkeypatch
+    ):
+        registry_dir = tmp_dir / "manifest_resolved_fields"
+        registry_dir.mkdir()
+        kas_file = registry_dir / "test.yaml"
+        kas_file.write_text("header:\n  version: 14\nmachine: rsb3720\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "advantech/bsp-registry/ubuntu-22.04/kas:5.2"
+    file: Dockerfile.ubuntu
+    args: []
+    build_options: "$ENV{{BSP_BUILD_OPTS}}"
+    volumes:
+      - host: "$ENV{{BSP_HOST_CACHE}}/sstate"
+        container: "/sstate"
+        read_only: true
+registry:
+  devices:
+    - slug: rsb3720
+      description: "RSB-3720 (i.MX8)"
+      vendor: advantech-europe
+      soc_vendor: nxp
+      architecture: arm64
+      build:
+        includes:
+          - {kas_file}
+  releases:
+    - slug: walnascar
+      description: "Walnascar"
+      includes: []
+  features: []
+  bsp:
+    - name: modular-bsp-rauc-rsb3720-walnascar
+      description: "Advantech RSB-3720 6GB (i.MX8) with RAUC support"
+      device: rsb3720
+      release: walnascar
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/modular-bsp-rauc-rsb3720-walnascar
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        monkeypatch.setenv("KAS_RUNTIME_ARGS", "--ipc host")
+        monkeypatch.setenv("BSP_HOST_CACHE", "/tmp/cache-root")
+        monkeypatch.setenv("BSP_BUILD_OPTS", "--network host")
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-resolved-device-container-fields"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "modular-bsp-rauc-rsb3720-walnascar",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["components"]["device"]["soc_family"] == "imx8"
+        assert data["components"]["container"]["runtime_args"] == \
+            "--ipc host -v /tmp/cache-root/sstate:/sstate:ro"
+        assert data["components"]["container"]["build_options"] == "--network host"
+
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
         manager.initialize()
