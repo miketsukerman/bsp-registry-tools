@@ -1651,8 +1651,16 @@ class BspManager:
                 {
                     "name": preset.name,
                     "description": preset.description,
-                    "vendor_release": preset.vendor_release,
-                    "override": preset.override,
+                    "vendor_release": (
+                        resolved.resolved_vendor_release
+                        if resolved.resolved_vendor_release is not None
+                        else preset.vendor_release
+                    ),
+                    "override": (
+                        resolved.resolved_override
+                        if resolved.resolved_override is not None
+                        else preset.override
+                    ),
                 }
                 if preset
                 else None

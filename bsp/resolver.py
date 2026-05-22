@@ -65,6 +65,13 @@ class ResolvedConfig:
                      (if present) during ``resolve_preset()``; ``None`` when
                      resolving without a preset or when no ``scan`` block is
                      configured.
+        resolved_vendor_release: Effective vendor-release slug selected by the
+                                 resolver (explicit or auto-selected). ``None``
+                                 when no vendor-release applies.
+        resolved_override: Effective vendor-override identifier selected by the
+                           resolver (explicit/auto-selected slug, or vendor
+                           name when the matching override has no slug).
+                           ``None`` when no override applies.
     """
     device: Device
     release: Release
@@ -79,6 +86,8 @@ class ResolvedConfig:
     targets: List[str] = field(default_factory=empty_list)
     scan_config: Optional[ScanConfig] = None
     flash_config: Optional[FlashConfig] = None
+    resolved_vendor_release: Optional[str] = None
+    resolved_override: Optional[str] = None
 
 
 # =============================================================================
@@ -794,6 +803,12 @@ class V2Resolver:
         )
         merged_copy = global_copy + named_env_copy + container_copy + list(device_copy)
 
+        resolved_override_id = (
+            override_slug
+            if override_slug is not None
+            else (active_vendor_override.vendor if active_vendor_override else None)
+        )
+
         return ResolvedConfig(
             device=device,
             release=release,
@@ -805,6 +820,8 @@ class V2Resolver:
             env=env,
             copy=merged_copy,
             effective_distro=effective_distro_slug,
+            resolved_vendor_release=vendor_release_slug,
+            resolved_override=resolved_override_id,
         )
 
     def _compose_build_path(self, resolved: ResolvedConfig) -> str:
