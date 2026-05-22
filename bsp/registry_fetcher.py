@@ -182,7 +182,7 @@ class RegistryFetcher:
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError as e:
                 self.logger.error(
-                    "git %s failed (return code %d): %s", cmd[2], e.returncode, e.stderr
+                    "git %s failed (return code %d): %s", cmd[3], e.returncode, e.stderr
                 )
                 sys.exit(1)
 

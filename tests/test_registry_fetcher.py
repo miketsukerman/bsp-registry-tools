@@ -203,7 +203,7 @@ class TestFetchRegistryPull:
                 fetcher.fetch_registry(update=True)
 
     def test_pull_failure_exits(self, tmp_dir):
-        """Legacy: when both pull and rebase fail the process exits."""
+        """When even the pre-flight fetch/checkout fails (e.g. network down), the process exits."""
         fetcher = _make_fetcher(tmp_dir)
         self._setup_cloned(fetcher)
 
