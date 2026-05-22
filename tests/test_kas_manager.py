@@ -564,3 +564,77 @@ class TestKasManager:
         # env is passed as a keyword arg
         called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
+
+
+class TestRepoManifestExport:
+    def test_export_repo_manifest_xml_uses_locked_dump_and_returns_xml(self, kas_config_file):
+        from types import SimpleNamespace
+
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)) as mock_run:
+            xml = manager.export_repo_manifest_xml()
+
+        args = mock_run.call_args[0][0]
+        assert args[:3] == ["dump", "--lock", "--sort"]
+        assert "<manifest>" in xml
+        assert 'project name="meta-bar"' in xml
+        assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
+
+    def test_export_repo_manifest_xml_rejects_non_sha_revision(self, kas_config_file):
+        from types import SimpleNamespace
+        import pytest
+
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: refs/heads/main
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            with pytest.raises(SystemExit):
+                manager.export_repo_manifest_xml()
+
+    def test_export_repo_manifest_xml_writes_output_file(self, kas_config_file, tmp_dir):
+        from types import SimpleNamespace
+
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: cccccccccccccccccccccccccccccccccccccccc
+"""
+        out = tmp_dir / "manifest.xml"
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            manager.export_repo_manifest_xml(str(out))
+
+        assert out.exists()
+        text = out.read_text()
+        assert "<manifest>" in text
+        assert 'revision="cccccccccccccccccccccccccccccccccccccccc"' in text

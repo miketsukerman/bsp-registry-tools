@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -814,6 +815,136 @@ class KasManager:
             raise
         except Exception as e:
             logging.error(f"Config dump failed: {e}")
+            sys.exit(1)
+
+    @staticmethod
+    def _is_pinned_sha(value: Optional[str]) -> bool:
+        """Return True when *value* looks like a git commit SHA."""
+        if not value or not isinstance(value, str):
+            return False
+        if len(value) < 7 or len(value) > 40:
+            return False
+        return all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+    def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
+        """Parse kas lock YAML and return normalized repository rows."""
+        try:
+            payload = yaml.safe_load(lock_yaml) or {}
+        except Exception as e:
+            logging.error(f"Failed to parse locked KAS configuration: {e}")
+            sys.exit(1)
+
+        repos = payload.get("repos")
+        if not isinstance(repos, dict) or not repos:
+            logging.error("No repositories found in locked KAS configuration")
+            sys.exit(1)
+
+        rows: List[Dict[str, str]] = []
+        for repo_name in sorted(repos.keys()):
+            repo_cfg = repos.get(repo_name)
+            if not isinstance(repo_cfg, dict):
+                continue
+            url = repo_cfg.get("url")
+            if not url:
+                # Skip local/non-fetch repositories
+                continue
+            revision = repo_cfg.get("commit")
+            if not self._is_pinned_sha(revision):
+                logging.error(
+                    "Repository '%s' is not pinned to a commit SHA in lock output",
+                    repo_name,
+                )
+                sys.exit(1)
+            rows.append(
+                {
+                    "name": str(repo_name),
+                    "url": str(url),
+                    "path": str(repo_cfg.get("path") or repo_name),
+                    "revision": revision,
+                }
+            )
+        if not rows:
+            logging.error("No remote repositories with pinned commits found in lock output")
+            sys.exit(1)
+        return rows
+
+    def _build_android_repo_manifest_xml(self, rows: List[Dict[str, str]]) -> str:
+        """Render Android repo manifest XML from normalized repository rows."""
+        urls = sorted({row["url"] for row in rows})
+        remote_name_by_url = {url: f"remote-{idx + 1}" for idx, url in enumerate(urls)}
+
+        manifest = ET.Element("manifest")
+        for url in urls:
+            ET.SubElement(
+                manifest,
+                "remote",
+                {
+                    "name": remote_name_by_url[url],
+                    "fetch": url,
+                },
+            )
+        for row in sorted(rows, key=lambda x: x["name"]):
+            ET.SubElement(
+                manifest,
+                "project",
+                {
+                    "name": row["name"],
+                    "path": row["path"],
+                    "remote": remote_name_by_url[row["url"]],
+                    "revision": row["revision"],
+                },
+            )
+
+        ET.indent(manifest, space="  ")
+        xml_bytes = ET.tostring(manifest, encoding="utf-8", xml_declaration=True)
+        return xml_bytes.decode("utf-8")
+
+    def export_repo_manifest_xml(self, output_file: Optional[str] = None) -> str:
+        """
+        Export Android repo manifest XML with pinned commit SHAs.
+
+        Args:
+            output_file: Optional file path to save the manifest XML
+
+        Returns:
+            Manifest XML string
+
+        Raises:
+            SystemExit: If export fails
+        """
+        logging.info("Exporting Android repo manifest XML...")
+
+        if not self.validate_kas_files(check_includes=True):
+            logging.error("Cannot export repo manifest due to missing files")
+            sys.exit(1)
+
+        if not self.check_kas_available():
+            logging.error("KAS is not available")
+            sys.exit(1)
+
+        kas_files_str = self._get_kas_files_string()
+        args = ["dump", "--lock", "--sort", kas_files_str]
+
+        try:
+            result = self._run_kas_command(args, show_output=False)
+            lock_yaml = result.stdout
+            rows = self._extract_locked_repos(lock_yaml)
+            manifest_xml = self._build_android_repo_manifest_xml(rows)
+
+            if output_file:
+                output_path = Path(output_file)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(manifest_xml)
+                logging.info(f"Android repo manifest exported to: {output_path}")
+            else:
+                logging.info("Android repo manifest exported successfully")
+
+            return manifest_xml
+        except SystemExit:
+            raise
+        except Exception as e:
+            logging.error(f"Failed to export Android repo manifest XML: {e}")
             sys.exit(1)
 
     def export_kas_config(self, output_file: Optional[str] = None) -> str:

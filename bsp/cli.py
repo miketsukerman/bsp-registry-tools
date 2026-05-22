@@ -479,6 +479,19 @@ def main() -> int:
             type=str,
             help="Output file path (default: stdout)"
         )
+        export_mode_group = export_parser.add_mutually_exclusive_group()
+        export_mode_group.add_argument(
+            "--repo-manifest",
+            action="store_true",
+            dest="repo_manifest",
+            help="Export Android repo manifest XML with pinned commit SHAs"
+        )
+        export_mode_group.add_argument(
+            "--kas-config",
+            action="store_true",
+            dest="kas_config",
+            help="Explicitly export KAS configuration (default behavior)"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -1089,14 +1102,23 @@ def main() -> int:
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
             output = getattr(args, "output", None)
+            repo_manifest = getattr(args, "repo_manifest", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.export_bsp_config(bsp_name=bsp_name, output_file=output)
+                bsp_mgr.export_bsp_config(
+                    bsp_name=bsp_name,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
+                )
             elif device and release:
                 bsp_mgr.export_by_components(
-                    device, release, features, output_file=output
+                    device,
+                    release,
+                    features,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
                 )
             else:
                 logging.error(
