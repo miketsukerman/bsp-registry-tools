@@ -722,7 +722,6 @@ bsp export --device <device> --release <release> [--feature FEATURE...] --repo-m
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
 | `--repo-manifest` | Export Android repo manifest XML with pinned commit SHAs (CLI only) |
-| `--kas-config` | Explicitly export KAS configuration YAML (default behavior) |
 
 **Examples:**
 

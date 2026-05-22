@@ -736,18 +736,11 @@ def main() -> int:
             type=str,
             help="Output file path (default: stdout)"
         )
-        export_mode_group = export_parser.add_mutually_exclusive_group()
-        export_mode_group.add_argument(
+        export_parser.add_argument(
             "--repo-manifest",
             action="store_true",
             dest="repo_manifest",
             help="Export Android repo manifest XML with pinned commit SHAs"
-        )
-        export_mode_group.add_argument(
-            "--kas-config",
-            action="store_true",
-            dest="kas_config",
-            help="Explicitly export KAS configuration (default behavior)"
         )
 
         # ----------------------------------------------------------------

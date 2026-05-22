@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -859,10 +860,10 @@ class KasManager:
 
     @staticmethod
     def _is_pinned_sha(value: Optional[str]) -> bool:
-        """Return True when *value* looks like a git commit SHA."""
+        """Return True when *value* is a full 40-character git commit SHA."""
         if not value or not isinstance(value, str):
             return False
-        if len(value) < 7 or len(value) > 40:
+        if len(value) != 40:
             return False
         return all(ch in "0123456789abcdefABCDEF" for ch in value)
 
@@ -910,27 +911,53 @@ class KasManager:
 
     def _build_android_repo_manifest_xml(self, rows: List[Dict[str, str]]) -> str:
         """Render Android repo manifest XML from normalized repository rows."""
-        urls = sorted({row["url"] for row in rows})
-        remote_name_by_url = {url: f"remote-{idx + 1}" for idx, url in enumerate(urls)}
+        def _split_repo_url(url: str) -> Dict[str, str]:
+            parsed = urlparse(url)
+            if parsed.scheme and parsed.netloc:
+                fetch = f"{parsed.scheme}://{parsed.netloc}"
+                name = parsed.path.lstrip("/").removesuffix(".git")
+                return {"fetch": fetch, "name": name}
+            # Handle scp-like syntax: git@host:org/repo.git
+            at_pos = url.find("@")
+            colon_pos = url.find(":")
+            # Match scp-like git URLs (git@host:path), but avoid absolute paths.
+            if (
+                at_pos != -1
+                and colon_pos > at_pos
+                and not url.startswith("/")
+                and url[at_pos + 1:].count(":") == 1
+            ):
+                user_host, repo_path = url.split(":", 1)
+                fetch = f"ssh://{user_host}"
+                name = repo_path.lstrip("/").removesuffix(".git")
+                return {"fetch": fetch, "name": name}
+            logging.warning("Could not split repository URL '%s' into fetch/name for Android manifest", url)
+            return {"fetch": url, "name": ""}
+
+        split = {row["url"]: _split_repo_url(row["url"]) for row in rows}
+        fetches = sorted({v["fetch"] for v in split.values()})
+        remote_name_by_fetch = {fetch: f"remote-{idx + 1}" for idx, fetch in enumerate(fetches)}
 
         manifest = ET.Element("manifest")
-        for url in urls:
+        for fetch in fetches:
             ET.SubElement(
                 manifest,
                 "remote",
                 {
-                    "name": remote_name_by_url[url],
-                    "fetch": url,
+                    "name": remote_name_by_fetch[fetch],
+                    "fetch": fetch,
                 },
             )
         for row in sorted(rows, key=lambda x: x["name"]):
+            split_info = split[row["url"]]
+            project_name = split_info["name"] or row["name"]
             ET.SubElement(
                 manifest,
                 "project",
                 {
-                    "name": row["name"],
+                    "name": project_name,
                     "path": row["path"],
-                    "remote": remote_name_by_url[row["url"]],
+                    "remote": remote_name_by_fetch[split_info["fetch"]],
                     "revision": row["revision"],
                 },
             )

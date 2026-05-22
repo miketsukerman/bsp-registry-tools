@@ -3,8 +3,9 @@ Tests for KasManager KAS/Yocto build orchestration.
 """
 
 import os
-import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
+import pytest
 
 from bsp import KasManager
 
@@ -597,12 +598,11 @@ class TestKasManager:
 
 class TestRepoManifestExport:
     def test_export_repo_manifest_xml_uses_locked_dump_and_returns_xml(self, kas_config_file):
-        from types import SimpleNamespace
-
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build")
         )
+        # Synthetic 40-char hex SHAs used as deterministic test fixtures.
         locked_yaml = """
 repos:
   meta-foo:
@@ -625,13 +625,11 @@ repos:
         assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
 
     def test_export_repo_manifest_xml_rejects_non_sha_revision(self, kas_config_file):
-        from types import SimpleNamespace
-        import pytest
-
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build")
         )
+        # Synthetic 40-char hex SHA used as deterministic test fixture.
         locked_yaml = """
 repos:
   meta-foo:
@@ -645,8 +643,6 @@ repos:
                 manager.export_repo_manifest_xml()
 
     def test_export_repo_manifest_xml_writes_output_file(self, kas_config_file, tmp_dir):
-        from types import SimpleNamespace
-
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build")
