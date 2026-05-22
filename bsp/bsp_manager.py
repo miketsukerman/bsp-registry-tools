@@ -1546,9 +1546,7 @@ class BspManager:
         try:
             config_output = kas_mgr.dump_config(show_output=False)
             self._log_config_dump(config_output)
-            runtime_args_value = kas_mgr._build_runtime_args_str(
-                kas_mgr._get_environment_with_container_vars()
-            )
+            runtime_args_value = kas_mgr.get_runtime_args()
             manifest_runtime_args = (
                 runtime_args_value if isinstance(runtime_args_value, str) else None
             )
@@ -1642,7 +1640,7 @@ class BspManager:
         ):
             if not source:
                 continue
-            match = re.search(r"(?:i\.?mx|imx)[\s\-]?([0-9][a-z0-9]*)", source, re.IGNORECASE)
+            match = re.search(r"(?:i\.?mx|imx)[\s-]?([0-9][a-z0-9]*)", source, re.IGNORECASE)
             if match:
                 return f"imx{match.group(1).lower()}"
         return None
