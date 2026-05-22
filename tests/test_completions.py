@@ -318,7 +318,7 @@ class TestOverrideCompleter:
         assert "imx-6.6.36-2.1.0" in completions
         assert "imx-xwayland-6.6.52" in completions
 
-    def test_filters_override_slugs_by_device_vendor(self, registry_with_vendor_override_slug_file):
+    def test_excludes_override_slugs_for_mismatched_device_vendor(self, registry_with_vendor_override_slug_file):
         args = _parsed_args(
             registry=str(registry_with_vendor_override_slug_file),
             device="adv-imx8",
