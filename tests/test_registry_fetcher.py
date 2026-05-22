@@ -166,7 +166,44 @@ class TestFetchRegistryPull:
         mock_run.assert_not_called()
         assert result == fetcher.cache_dir / REGISTRY_FILENAME
 
+    def test_pull_failure_retries_with_rebase(self, tmp_dir):
+        fetcher = _make_fetcher(tmp_dir)
+        self._setup_cloned(fetcher)
+
+        pull_error = subprocess.CalledProcessError(1, "git pull", stderr="error: local changes")
+        # fetch and checkout succeed; first pull fails; rebase pull succeeds
+        side_effects = [
+            MagicMock(returncode=0),  # fetch
+            MagicMock(returncode=0),  # checkout
+            pull_error,               # pull (fails)
+            MagicMock(returncode=0),  # pull --rebase (succeeds)
+        ]
+        with patch("subprocess.run", side_effect=side_effects) as mock_run:
+            result = fetcher.fetch_registry(update=True)
+
+        assert result == fetcher.cache_dir / REGISTRY_FILENAME
+        assert mock_run.call_count == 4
+        rebase_call = mock_run.call_args_list[3][0][0]
+        assert "--rebase" in rebase_call
+
+    def test_pull_failure_exits_when_rebase_also_fails(self, tmp_dir):
+        fetcher = _make_fetcher(tmp_dir)
+        self._setup_cloned(fetcher)
+
+        pull_error = subprocess.CalledProcessError(1, "git pull", stderr="error: network")
+        rebase_error = subprocess.CalledProcessError(1, "git pull --rebase", stderr="error: conflicts")
+        side_effects = [
+            MagicMock(returncode=0),  # fetch
+            MagicMock(returncode=0),  # checkout
+            pull_error,               # pull (fails)
+            rebase_error,             # pull --rebase (also fails)
+        ]
+        with patch("subprocess.run", side_effect=side_effects):
+            with pytest.raises(SystemExit):
+                fetcher.fetch_registry(update=True)
+
     def test_pull_failure_exits(self, tmp_dir):
+        """Legacy: when both pull and rebase fail the process exits."""
         fetcher = _make_fetcher(tmp_dir)
         self._setup_cloned(fetcher)
 
