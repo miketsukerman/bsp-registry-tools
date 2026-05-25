@@ -619,7 +619,71 @@ bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 
 # Export Android repo manifest XML with pinned SHAs
 bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
+
+# Export Android repo manifest XML using component mode
+bsp export --device qemuarm64 --release scarthgap --repo-manifest --output qemuarm64-scarthgap.xml
 ```
+
+When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
+manifest generated from `kas dump --lock --sort`. The manifest contains pinned
+40-character commit SHAs for each exported repository, making it suitable for
+release capture and later replay in CI or production source checkout flows.
+
+**Typical production workflow:**
+
+1. Resolve and export the manifest at release cut time.
+2. Store the XML next to the build outputs, `build-manifest.json`, and release
+   metadata.
+3. Commit the exported XML into a dedicated manifest repository (or release
+   branch) so it can be selected later with `repo init -m ...`.
+4. Reuse the same manifest in CI, factory, or field-reproduction workflows to
+   sync the exact pinned source revisions.
+
+**Recommended release capture example:**
+
+```bash
+# 1) Export the locked manifest
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+
+# 2) Archive it together with other release metadata
+cp release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml build/poky-qemuarm64-scarthgap/
+cp build/poky-qemuarm64-scarthgap/build-manifest.json release-manifests/
+```
+
+**Later use in production with a manifest repository:**
+
+Commit the exported XML into your manifest Git repository, then initialize a
+workspace from that repository and select the locked manifest file:
+
+```bash
+repo init -u ssh://git.example.com/manifests.git -m release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+This is the preferred production pattern because the exported XML becomes an
+immutable release input that can be reviewed, tagged, mirrored, and reused by
+automation.
+
+**Later use in an existing `repo` workspace via local manifests:**
+
+If you already have an initialized `repo` workspace, add the exported XML under
+`.repo/local_manifests/` and resync:
+
+```bash
+mkdir -p .repo/local_manifests
+cp /path/to/poky-qemuarm64-scarthgap-2026-05-25.xml .repo/local_manifests/bsp-locked.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+**Notes and limitations:**
+
+- The exported Android repo manifest is currently available from the **CLI
+  only**.
+- Reproducibility depends on the repositories being accessible at the recorded
+  URLs and SHAs.
+- The manifest captures pinned Git revisions, but it does **not** capture local
+  environment state, credentials, downloaded artifacts, or non-Git external
+  inputs.
 
 #### `server` — Start an HTTP server (REST + GraphQL)
 
