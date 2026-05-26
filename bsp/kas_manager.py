@@ -10,7 +10,7 @@ import time
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 import yaml
 
@@ -830,26 +830,74 @@ class KasManager:
     def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
         """Parse kas lock YAML and return normalized repository rows."""
         try:
-            payload = yaml.safe_load(lock_yaml) or {}
+            docs = [doc for doc in yaml.safe_load_all(lock_yaml) if isinstance(doc, dict)]
         except Exception as e:
             logging.error(f"Failed to parse locked KAS configuration: {e}")
             sys.exit(1)
 
-        repos = payload.get("repos")
-        if not isinstance(repos, dict) or not repos:
+        if not docs:
+            logging.error("Locked KAS output did not contain a YAML mapping document")
+            sys.exit(1)
+
+        def _repo_candidates(doc: Dict[str, Any]) -> List[Any]:
+            candidates = [
+                doc.get("repos"),
+                doc.get("repositories"),
+                doc.get("sources"),
+            ]
+            nested = doc.get("config")
+            if isinstance(nested, dict):
+                candidates.extend(
+                    [
+                        nested.get("repos"),
+                        nested.get("repositories"),
+                        nested.get("sources"),
+                    ]
+                )
+            return candidates
+
+        repos: Any = None
+        for doc in docs:
+            for candidate in _repo_candidates(doc):
+                if isinstance(candidate, (dict, list)) and candidate:
+                    repos = candidate
+                    break
+            if repos is not None:
+                break
+
+        if not isinstance(repos, (dict, list)) or not repos:
             logging.error("No repositories found in locked KAS configuration")
             sys.exit(1)
 
         rows: List[Dict[str, str]] = []
-        for repo_name in sorted(repos.keys()):
-            repo_cfg = repos.get(repo_name)
+        repo_items: List[Tuple[str, Dict[str, Any]]] = []
+        if isinstance(repos, dict):
+            for repo_name, repo_cfg in repos.items():
+                if isinstance(repo_cfg, dict):
+                    repo_items.append((str(repo_name), repo_cfg))
+        else:
+            for idx, repo_cfg in enumerate(repos):
+                if not isinstance(repo_cfg, dict):
+                    continue
+                fallback_name = f"repo-{idx + 1}"
+                repo_name = (
+                    repo_cfg.get("name")
+                    or repo_cfg.get("repo")
+                    or repo_cfg.get("id")
+                    or repo_cfg.get("path")
+                    or repo_cfg.get("url")
+                    or fallback_name
+                )
+                repo_items.append((str(repo_name), repo_cfg))
+
+        for repo_name, repo_cfg in sorted(repo_items, key=lambda item: item[0]):
             if not isinstance(repo_cfg, dict):
                 continue
             url = repo_cfg.get("url")
             if not url:
                 # Skip local/non-fetch repositories
                 continue
-            revision = repo_cfg.get("commit")
+            revision = repo_cfg.get("commit") or repo_cfg.get("revision")
             if not self._is_pinned_sha(revision):
                 logging.error(
                     "Repository '%s' is not pinned to a commit SHA in lock output",
