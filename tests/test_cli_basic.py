@@ -116,6 +116,7 @@ registry:
             bsp_name="test-bsp",
             output_file=None,
             repo_manifest=True,
+            lock=False,
         )
 
     def test_main_export_repo_manifest_components(self, registry_file):
@@ -133,6 +134,7 @@ registry:
             [],
             output_file=None,
             repo_manifest=True,
+            lock=False,
         )
 
     def test_main_export_repo_manifest_with_output(self, registry_file, tmp_dir):
@@ -147,6 +149,38 @@ registry:
         _, kwargs = mock_export.call_args
         assert kwargs.get("output_file") == str(out)
         assert kwargs.get("repo_manifest") is True
+        assert kwargs.get("lock") is False
+
+    def test_main_export_with_lock_preset(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp", "--lock"
+        ]):
+            with patch("bsp.BspManager.export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            bsp_name="test-bsp",
+            output_file=None,
+            repo_manifest=False,
+            lock=True,
+        )
+
+    def test_main_export_with_lock_components(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export",
+            "--device", "test-device", "--release", "test-release", "--lock",
+        ]):
+            with patch("bsp.BspManager.export_by_components") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            "test-device",
+            "test-release",
+            [],
+            output_file=None,
+            repo_manifest=False,
+            lock=True,
+        )
 
     def test_main_export_repo_manifest_rejects_preset_and_components_mix(self, registry_file):
         with patch("sys.argv", [

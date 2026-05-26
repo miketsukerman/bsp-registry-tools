@@ -752,3 +752,17 @@ repos:
         assert "<manifest>" in xml
         assert 'project name="meta-foo"' in xml
         assert 'revision=' not in xml
+
+
+class TestKasConfigExport:
+    def test_export_kas_config_passes_lock_flag_to_dump(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "dump_config", return_value="header:\n  version: 14\n") as mock_dump:
+            manager.export_kas_config(lock=True)
+
+        mock_dump.assert_called_once_with(show_output=False, lock=True)
