@@ -858,15 +858,6 @@ class KasManager:
             logging.error(f"Config dump failed: {e}")
             sys.exit(1)
 
-    @staticmethod
-    def _is_pinned_sha(value: Optional[str]) -> bool:
-        """Return True when *value* is a full 40-character git commit SHA."""
-        if not value or not isinstance(value, str):
-            return False
-        if len(value) != 40:
-            return False
-        return all(ch in "0123456789abcdefABCDEF" for ch in value)
-
     def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
         """Parse kas lock YAML and return normalized repository rows."""
         try:
@@ -962,23 +953,28 @@ class KasManager:
             if not url:
                 # Skip local/non-fetch repositories
                 continue
-            revision = repo_cfg.get("commit") or repo_cfg.get("revision")
-            if not self._is_pinned_sha(revision):
-                logging.error(
-                    "Repository '%s' is not pinned to a commit SHA in lock output",
+            revision = (
+                repo_cfg.get("commit")
+                or repo_cfg.get("revision")
+                or repo_cfg.get("branch")
+                or repo_cfg.get("tag")
+                or repo_cfg.get("refspec")
+            )
+            if not revision:
+                logging.warning(
+                    "Repository '%s' has no revision/commit in lock output; exporting manifest project without revision",
                     repo_name,
                 )
-                sys.exit(1)
-            rows.append(
-                {
-                    "name": str(repo_name),
-                    "url": str(url),
-                    "path": str(repo_cfg.get("path") or repo_name),
-                    "revision": revision,
-                }
-            )
+            row: Dict[str, str] = {
+                "name": str(repo_name),
+                "url": str(url),
+                "path": str(repo_cfg.get("path") or repo_name),
+            }
+            if revision:
+                row["revision"] = str(revision)
+            rows.append(row)
         if not rows:
-            logging.error("No remote repositories with pinned commits found in lock output")
+            logging.error("No remote repositories found in lock output")
             sys.exit(1)
         return rows
 
@@ -1024,16 +1020,15 @@ class KasManager:
         for row in sorted(rows, key=lambda x: x["name"]):
             split_info = split[row["url"]]
             project_name = split_info["name"] or row["name"]
-            ET.SubElement(
-                manifest,
-                "project",
-                {
-                    "name": project_name,
-                    "path": row["path"],
-                    "remote": remote_name_by_fetch[split_info["fetch"]],
-                    "revision": row["revision"],
-                },
-            )
+            attrs = {
+                "name": project_name,
+                "path": row["path"],
+                "remote": remote_name_by_fetch[split_info["fetch"]],
+            }
+            revision = row.get("revision")
+            if revision:
+                attrs["revision"] = revision
+            ET.SubElement(manifest, "project", attrs)
 
         ET.indent(manifest, space="  ")
         xml_bytes = ET.tostring(manifest, encoding="utf-8", xml_declaration=True)
@@ -1041,7 +1036,7 @@ class KasManager:
 
     def export_repo_manifest_xml(self, output_file: Optional[str] = None) -> str:
         """
-        Export Android repo manifest XML with pinned commit SHAs.
+        Export Android repo manifest XML from KAS lock data.
 
         Args:
             output_file: Optional file path to save the manifest XML
