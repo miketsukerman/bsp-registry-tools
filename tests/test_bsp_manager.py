@@ -4439,7 +4439,14 @@ class TestExportRepoManifest:
         manager.initialize()
         with patch("bsp.bsp_manager.KasManager.export_kas_config", return_value="header:\n  version: 14\n") as mock_export:
             manager.export_bsp_config("test-bsp")
-        mock_export.assert_called_once_with(None)
+        mock_export.assert_called_once_with(None, lock=False)
+
+    def test_export_bsp_config_with_lock_uses_kas_lock_dump(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", return_value="header:\n  version: 14\n") as mock_export:
+            manager.export_bsp_config("test-bsp", lock=True)
+        mock_export.assert_called_once_with(None, lock=True)
 
     def test_export_by_components_repo_manifest_with_output(self, registry_file, tmp_dir):
         manager = BspManager(config_path=str(registry_file))

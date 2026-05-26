@@ -710,7 +710,13 @@ def main() -> int:
             "--repo-manifest",
             action="store_true",
             dest="repo_manifest",
-            help="Export Android repo manifest XML with pinned commit SHAs"
+            help="Export Android repo manifest XML"
+        )
+        export_parser.add_argument(
+            "--lock",
+            action="store_true",
+            dest="lock",
+            help="Use `kas dump --lock` when exporting KAS configuration"
         )
 
         # ----------------------------------------------------------------
@@ -1618,6 +1624,7 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             output = getattr(args, "output", None)
             repo_manifest = getattr(args, "repo_manifest", False)
+            lock = getattr(args, "lock", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
@@ -1626,6 +1633,7 @@ def main() -> int:
                     bsp_name=bsp_name,
                     output_file=output,
                     repo_manifest=repo_manifest,
+                    lock=lock,
                 )
             elif device and release:
                 bsp_mgr.export_by_components(
@@ -1634,6 +1642,7 @@ def main() -> int:
                     features,
                     output_file=output,
                     repo_manifest=repo_manifest,
+                    lock=lock,
                 )
             else:
                 logging.error(
