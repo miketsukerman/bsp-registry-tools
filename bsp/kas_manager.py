@@ -870,12 +870,12 @@ class KasManager:
     def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
         """Parse kas lock YAML and return normalized repository rows."""
         try:
-            docs = [doc for doc in yaml.safe_load_all(lock_yaml) if isinstance(doc, dict)]
+            docs = list(yaml.safe_load_all(lock_yaml))
         except Exception as e:
             logging.error(f"Failed to parse locked KAS configuration: {e}")
             sys.exit(1)
 
-        if not docs:
+        if not any(isinstance(doc, (dict, list)) for doc in docs):
             logging.error("Locked KAS output did not contain a YAML mapping document")
             sys.exit(1)
 
@@ -896,14 +896,39 @@ class KasManager:
                 )
             return candidates
 
+        def _find_repo_candidates_recursive(node: Any) -> List[Any]:
+            found: List[Any] = []
+            if isinstance(node, dict):
+                for key in ("repos", "repositories", "sources"):
+                    candidate = node.get(key)
+                    if isinstance(candidate, (dict, list)) and candidate:
+                        found.append(candidate)
+                for value in node.values():
+                    found.extend(_find_repo_candidates_recursive(value))
+            elif isinstance(node, list):
+                for item in node:
+                    found.extend(_find_repo_candidates_recursive(item))
+            return found
+
         repos: Any = None
         for doc in docs:
+            if not isinstance(doc, dict):
+                continue
             for candidate in _repo_candidates(doc):
                 if isinstance(candidate, (dict, list)) and candidate:
                     repos = candidate
                     break
             if repos is not None:
                 break
+
+        if repos is None:
+            for doc in docs:
+                for candidate in _find_repo_candidates_recursive(doc):
+                    if isinstance(candidate, (dict, list)) and candidate:
+                        repos = candidate
+                        break
+                if repos is not None:
+                    break
 
         if not isinstance(repos, (dict, list)) or not repos:
             logging.error("No repositories found in locked KAS configuration")

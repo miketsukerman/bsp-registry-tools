@@ -706,3 +706,28 @@ repos:
         assert "<manifest>" in xml
         assert 'project name="meta-foo"' in xml
         assert 'revision="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' in xml
+
+    def test_export_repo_manifest_xml_supports_deeply_nested_repos(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+header:
+  version: 14
+lock:
+  payload:
+    config:
+      repos:
+        meta-foo:
+          url: https://example.com/meta-foo.git
+          commit: ffffffffffffffffffffffffffffffffffffffff
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="ffffffffffffffffffffffffffffffffffffffff"' in xml
