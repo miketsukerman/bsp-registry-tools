@@ -1980,6 +1980,7 @@ class BspManager:
         output_file: Optional[str] = None,
         label: str = "",
         repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -2036,7 +2037,7 @@ class BspManager:
                 if repo_manifest:
                     exported_content = kas_mgr.export_repo_manifest_xml(output_file)
                 else:
-                    exported_content = kas_mgr.export_kas_config(output_file)
+                    exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
@@ -2061,6 +2062,7 @@ class BspManager:
         bsp_name: str,
         output_file: Optional[str] = None,
         repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2080,6 +2082,7 @@ class BspManager:
                 output_file=output_file,
                 label=f"{preset.name} - {preset.description}",
                 repo_manifest=repo_manifest,
+                lock=lock,
             )
 
     def export_by_components(
@@ -2089,6 +2092,7 @@ class BspManager:
         feature_slugs: Optional[List[str]] = None,
         output_file: Optional[str] = None,
         repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2112,6 +2116,7 @@ class BspManager:
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
             repo_manifest=repo_manifest,
+            lock=lock,
         )
 
     # ------------------------------------------------------------------

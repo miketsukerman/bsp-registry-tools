@@ -819,7 +819,7 @@ class KasManager:
             logging.error(f"BitBake command failed: {e}")
             sys.exit(1)
 
-    def dump_config(self, show_output: bool = True) -> Optional[str]:
+    def dump_config(self, show_output: bool = True, lock: bool = False) -> Optional[str]:
         """
         Dump expanded KAS configuration for verification.
 
@@ -828,6 +828,7 @@ class KasManager:
 
         Args:
             show_output: Whether to show output or return it
+            lock: Whether to include ``--lock`` in ``kas dump``
 
         Returns:
             Configuration string if show_output=False, None otherwise
@@ -843,7 +844,10 @@ class KasManager:
             sys.exit(1)
 
         kas_files_str = self._get_kas_files_string()
-        args = ["dump", kas_files_str]
+        args = ["dump"]
+        if lock:
+            args.append("--lock")
+        args.append(kas_files_str)
 
         try:
             if show_output:
@@ -1082,7 +1086,7 @@ class KasManager:
             logging.error(f"Failed to export Android repo manifest XML: {e}")
             sys.exit(1)
 
-    def export_kas_config(self, output_file: Optional[str] = None) -> str:
+    def export_kas_config(self, output_file: Optional[str] = None, lock: bool = False) -> str:
         """
         Export the complete KAS configuration as YAML.
 
@@ -1091,6 +1095,7 @@ class KasManager:
 
         Args:
             output_file: Optional path to save the configuration
+            lock: Whether to include ``--lock`` in ``kas dump``
 
         Returns:
             The KAS configuration as YAML string
@@ -1110,7 +1115,7 @@ class KasManager:
 
         try:
             # Get the complete configuration dump
-            config_yaml = self.dump_config(show_output=False)
+            config_yaml = self.dump_config(show_output=False, lock=lock)
 
             if not config_yaml:
                 logging.error("Failed to get KAS configuration")
