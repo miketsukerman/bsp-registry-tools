@@ -88,6 +88,22 @@ registry:
         - kas/yocto/yocto-ext.yaml
         - kas/yocto/releases/whinlatter.yaml
 
+    - slug: wrynose
+      distro: poky
+      description: "Yocto 6.0 (Wrynose)"
+      yocto_version: "6.0"
+      includes:
+        - kas/yocto/yocto-ext.yaml
+        - kas/yocto/releases/wrynose.yaml
+
+    - slug: master
+      distro: poky
+      description: "Yocto Master (Bleeding Edge)"
+      yocto_version: "master"
+      includes:
+        - kas/yocto/yocto-ext.yaml
+        - kas/yocto/releases/master.yaml
+
   # =====================================
   # Features (optional add-ons)
   # =====================================
