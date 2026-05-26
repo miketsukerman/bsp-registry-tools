@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .bsp_manager import BspManager
 from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher, RemoteRegistrySpec
@@ -99,6 +99,31 @@ def _build_manager_for_completion(parsed_args) -> Optional[BspManager]:
         # session when tab-completion is triggered on a broken registry.
         logger.debug("_build_manager_for_completion failed", exc_info=True)
         return None
+
+
+def _derive_completion_selection(
+    parsed_args, mgr: BspManager
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Derive effective registry/device/release selection for completions."""
+    device_slug: Optional[str] = getattr(parsed_args, "device", None)
+    release_slug: Optional[str] = getattr(parsed_args, "release", None)
+    bsp_name: Optional[str] = getattr(parsed_args, "bsp_name", None)
+    if not bsp_name:
+        return None, device_slug, release_slug
+
+    registry_hint, preset_name = BspManager._parse_qualified_name(bsp_name)
+    for reg_name, _reg_model, reg_resolver, _reg_path in mgr._iter_registries():
+        if registry_hint is not None and reg_name != registry_hint:
+            continue
+        for preset in reg_resolver.list_presets():
+            if preset.name == preset_name:
+                return (
+                    reg_name,
+                    device_slug if device_slug is not None else preset.device,
+                    release_slug if release_slug is not None else preset.release,
+                )
+
+    return registry_hint, device_slug, release_slug
 
 
 # ---------------------------------------------------------------------------
@@ -241,27 +266,47 @@ class VendorReleaseCompleter:
             mgr = _build_manager_for_completion(parsed_args)
             if mgr is None:
                 return []
-            device_slug: Optional[str] = getattr(parsed_args, "device", None)
-            release_slug: Optional[str] = getattr(parsed_args, "release", None)
+            registry_filter, device_slug, release_slug = _derive_completion_selection(
+                parsed_args, mgr
+            )
             results: List[str] = []
-            for _reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+            for reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+                if registry_filter is not None and reg_name != registry_filter:
+                    continue
                 releases = reg_model.registry.releases if reg_model else []
                 if not releases:
                     continue
                 if release_slug:
                     releases = [r for r in releases if r.slug == release_slug]
                 device_vendor: Optional[str] = None
+                device_soc_vendor: Optional[str] = None
                 if device_slug:
                     try:
-                        device_vendor = reg_resolver.get_device(device_slug).vendor
+                        device = reg_resolver.get_device(device_slug)
+                        device_vendor = device.vendor
+                        device_soc_vendor = device.soc_vendor
                     except SystemExit:
                         continue
                 for release in releases:
                     for vo in (release.vendor_overrides or []):
                         if device_vendor and vo.vendor != device_vendor:
                             continue
-                        for vr in (vo.releases or []):
-                            results.append(vr.slug)
+                        results.extend(vr.slug for vr in (vo.releases or []))
+                        if not vo.soc_vendors:
+                            continue
+                        if device_vendor and device_soc_vendor:
+                            matching_svo = next(
+                                (
+                                    svo for svo in vo.soc_vendors
+                                    if svo.vendor == device_soc_vendor
+                                ),
+                                None,
+                            )
+                            if matching_svo:
+                                results.extend(vr.slug for vr in matching_svo.releases)
+                        elif not device_vendor:
+                            for svo in vo.soc_vendors:
+                                results.extend(vr.slug for vr in svo.releases)
             return results
         except (Exception, SystemExit):  # pylint: disable=broad-except
             return []
@@ -275,10 +320,13 @@ class OverrideCompleter:
             mgr = _build_manager_for_completion(parsed_args)
             if mgr is None:
                 return []
-            device_slug: Optional[str] = getattr(parsed_args, "device", None)
-            release_slug: Optional[str] = getattr(parsed_args, "release", None)
+            registry_filter, device_slug, release_slug = _derive_completion_selection(
+                parsed_args, mgr
+            )
             results: List[str] = []
-            for _reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+            for reg_name, reg_model, reg_resolver, _ in mgr._iter_registries():
+                if registry_filter is not None and reg_name != registry_filter:
+                    continue
                 releases = reg_model.registry.releases if reg_model else []
                 if not releases:
                     continue
