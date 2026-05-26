@@ -146,14 +146,13 @@ registry:
     - name: poky-qemuarm64
       description: "Poky QEMU ARM64"
       device: qemuarm64
-      releases: [scarthgap, styhead, walnascar, whinlatter]
+      releases: [scarthgap, styhead, walnascar, whinlatter, wrynose, master]
       features: [systemd, debug, yocto-ssh]
       testing:
         lava:
-          device_type: "qemu"                                   # LAVA device type label
-          artifact_url: "http://192.168.3.179:8000/core-image-minimal-qemux86-64.rootfs.wic"  # where the image is served
-          tags: ["hil", "qemu"]                                 # optional LAVA scheduler tags
-          job_template: "vendors/qemu/lava/qemu.yaml.j2"        # optional; builtin used if omitted
+          device_type: "qemu"                               # LAVA device type label
+          artifact_name: "core-image-minimal-qemuarm64.rootfs.wic"  # where the image is served
+          job_template: "lava/job-template.yaml.j2"                 # optional; builtin used if omitted
 
     # --- QEMU x86-64 ---
     - name: poky-harden-qemux86-64-scarthgap
@@ -165,15 +164,24 @@ registry:
         container: "debian-bookworm"
         path: build/poky-harden-qemux86-64-scarthgap
 
-    # Multi-release preset for x86-64: expands into poky-qemux86-64-scarthgap
-    # and poky-qemux86-64-styhead.
+    # Multi-release preset for x86-64. Expands into:
+    # - poky-qemux86-64-scarthgap
+    # - poky-qemux86-64-styhead.
+    # - poky-qemux86-64-walnascar
+    # - poky-qemux86-64-whinlatter
+    # - poky-qemux86-64-wrynose
     - name: poky-qemux86-64
       description: "Poky QEMU x86-64"
       device: qemux86-64
-      releases: [scarthgap, styhead, walnascar, whinlatter]
+      releases: [scarthgap, styhead, walnascar, whinlatter, wrynose, master]
       features: [systemd, debug, yocto-ssh]
       build:
         container: "debian-bookworm"
+      testing:
+        lava:
+          device_type: "qemu"                                        # LAVA device type label
+          artifact_name: "core-image-minimal-qemux86-64.rootfs.wic"  # where the image is served
+          job_template: "lava/job-template.yaml.j2"                  # optional; builtin used if omitted
 
     # --- QEMU ARM (32-bit) ---
     - name: poky-qemuarm-scarthgap

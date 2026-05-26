@@ -25,15 +25,50 @@ environments:
       - name: "SSTATE_DIR"
         value: "$ENV{HOME}/data/cache/sstate"
 
+# -------------------------------------------------------------------
+# Global scan defaults (applied to every preset unless overridden)
+# -------------------------------------------------------------------
+scan:
+  tool: syft+grype                # "trivy" (default) | "syft+grype" | "emba"
+  severity: HIGH                  # minimum CVE severity to report
+                                  # LOW | MEDIUM | HIGH (default) | CRITICAL
+  fail_on: CRITICAL               # exit non-zero at this severity level
+                                  # NONE | LOW | MEDIUM | HIGH | CRITICAL (default)
+  sbom_format: cyclonedx          # cyclonedx (default) | spdx-json | spdx-tag-value
+  output_dir: reports/            # output directory for reports and SBOMs
+                                  # (default: <build_path>/reports/)
+  artifact_patterns:              # glob patterns to select image files
+    - "**/*.rootfs.tar.gz"
+    - "**/*.rootfs.tar.bz2"
+    - "**/*.ext4"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  upload: false                   # upload reports to cloud storage (optional)
+
 # Optional top-level LAVA server settings.
 # Values support $ENV{} expansion so credentials can be kept outside the registry.
 # All fields here serve as defaults and can be overridden per-preset or on the CLI.
 lava:
-  server: "$ENV{LAVA_SERVER}"           # e.g. https://lava.example.com
-  token: "$ENV{LAVA_TOKEN}"             # LAVA API authentication token
-  username: "$ENV{LAVA_USER}"           # LAVA username (informational)
-  wait_timeout: 3600                    # max seconds to wait for a job (default 1h)
-  poll_interval: 30                     # polling interval in seconds
+  server: "$ENV{LAVA_SERVER}"                            # e.g. https://lava.example.com
+  token: "$ENV{LAVA_TOKEN}"                              # LAVA API authentication token
+  username: "$ENV{LAVA_USER}"                            # LAVA username (informational)
+  artifact_server_url: "$ENV{LAVA_ARTIFACT_SERVER_URL}"  # Base URL where LAVA serves build artifacts (optional)
+  wait_timeout: 3600                                     # max seconds to wait for a job (default 1h)
+  poll_interval: 30                                      # polling interval in seconds
+
+# Optional top-level flash settings for deploying images to devices.
+flash:
+  tool: bmaptool                    # "bmaptool" (default) | "dd" | "uuu"
+  image_patterns:                   # glob patterns, tried in order (first match wins)
+    - "**/{build_target}-*.wic.zst" # expanded at runtime when --target is given (first priority)
+    - "**/*.wic.bz2"                # most-compressed variant tried first
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic.zst"
+    - "**/*.wic"
+  artifact_dirs:                    # subdirs under build_path to search
+    - "build/tmp/deploy/images"
+  extra_args: null                  # extra CLI args forwarded verbatim to the tool
 
 # Optional top-level deployment settings for uploading build artifacts to cloud storage.
 deploy:

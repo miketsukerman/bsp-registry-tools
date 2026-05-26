@@ -52,6 +52,7 @@ registry:
 
     # Isar project uses qemuamd64 as the name for the x86-64 QEMU machine
     - slug: qemuamd64
+      architecture: x86_64
       description: "QEMU AMD64 (X86-64) (emulated)"
       vendor: qemu
       soc_vendor: amd
@@ -137,6 +138,11 @@ registry:
       device: qemuamd64
       releases: [ubuntu-noble, debian-trixie]
       features: [users, wic, isar-ssh]
+      testing:
+        lava:
+          device_type: "qemu"                                       # LAVA device type label
+          artifact_name: "qemuamd64.wic"                            # where the image is served
+          job_template: "lava/job-template.yaml.j2"                 # optional; builtin used if omitted
 
     # Multi-release preset for QEMU AMD64 (x86-64): expands into
     # isar-qemuamd64-ubuntu-noble and isar-qemuamd64-debian-trixie,
@@ -146,3 +152,8 @@ registry:
       device: qemuarm64
       releases: [ubuntu-noble, debian-trixie]
       features: [users, wic, isar-ssh]
+      testing:
+        lava:
+          device_type: "qemu"                                       # LAVA device type label
+          artifact_name: "qemuarm64.wic"                            # where the image is served
+          job_template: "lava/job-template.yaml.j2"                 # optional; builtin used if omitted

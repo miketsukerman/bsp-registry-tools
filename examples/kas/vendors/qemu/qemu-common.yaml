@@ -22,4 +22,4 @@ local_conf_header:
        lsb-release \
     "
   image-fs-types: |
-    IMAGE_FSTYPES += "wic wic.gz"
+    IMAGE_FSTYPES += "wic wic.gz ext4"
