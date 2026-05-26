@@ -624,12 +624,11 @@ repos:
         assert 'project name="meta-bar"' in xml
         assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
 
-    def test_export_repo_manifest_xml_rejects_non_sha_revision(self, kas_config_file):
+    def test_export_repo_manifest_xml_accepts_non_sha_revision(self, kas_config_file):
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build")
         )
-        # Synthetic 40-char hex SHA used as deterministic test fixture.
         locked_yaml = """
 repos:
   meta-foo:
@@ -639,8 +638,11 @@ repos:
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
              patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
-            with pytest.raises(SystemExit):
-                manager.export_repo_manifest_xml()
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="refs/heads/main"' in xml
 
     def test_export_repo_manifest_xml_writes_output_file(self, kas_config_file, tmp_dir):
         manager = KasManager(
@@ -731,3 +733,22 @@ lock:
         assert "<manifest>" in xml
         assert 'project name="meta-foo"' in xml
         assert 'revision="ffffffffffffffffffffffffffffffffffffffff"' in xml
+
+    def test_export_repo_manifest_xml_allows_missing_revision(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision=' not in xml
