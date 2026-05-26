@@ -296,6 +296,18 @@ class TestVendorReleaseCompleter:
         completions = VendorReleaseCompleter()("", args)
         assert completions == []
 
+    def test_uses_bsp_name_to_filter_by_preset_soc_vendor(
+        self, registry_with_soc_vendor_overrides_file
+    ):
+        args = _parsed_args(
+            registry=str(registry_with_soc_vendor_overrides_file),
+            bsp_name="adv-imx8-scarthgap-imx6.6.53",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert "imx-6.6.53" in completions
+        assert "imx-6.12.0" in completions
+        assert "mt8186-2.0" not in completions
+
     def test_does_not_raise_on_exception(self):
         args = _parsed_args(registry=None)
         with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
@@ -323,6 +335,16 @@ class TestOverrideCompleter:
             registry=str(registry_with_vendor_override_slug_file),
             device="adv-imx8",
             release="scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert completions == []
+
+    def test_uses_bsp_name_to_filter_by_preset_vendor(
+        self, registry_with_vendor_override_slug_file
+    ):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            bsp_name="adv-imx8-scarthgap",
         )
         completions = OverrideCompleter()("", args)
         assert completions == []
