@@ -663,3 +663,46 @@ repos:
         text = out.read_text()
         assert "<manifest>" in text
         assert 'revision="cccccccccccccccccccccccccccccccccccccccc"' in text
+
+    def test_export_repo_manifest_xml_supports_repositories_key(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repositories:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: dddddddddddddddddddddddddddddddddddddddd
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="dddddddddddddddddddddddddddddddddddddddd"' in xml
+
+    def test_export_repo_manifest_xml_reads_second_yaml_document(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """---
+header:
+  version: 14
+---
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' in xml
