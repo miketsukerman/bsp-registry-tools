@@ -52,6 +52,12 @@ def _expand_env(value: str) -> str:
         return os.environ.get(var, m.group(0))
     return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
 
+
+_RPI_SOC_FAMILY_MAP = {
+    "rpi4": "bcm2711",
+    "rpi5": "bcm2712",
+}
+
 # =============================================================================
 # Main BSP Management Class with v2.0 Support
 # =============================================================================
@@ -1663,8 +1669,8 @@ class BspManager:
                 if not match:
                     continue
                 family = formatter(match)
-                if soc_vendor in {"broadcom", "raspberrypi"} and family in {"rpi4", "rpi5"}:
-                    return {"rpi4": "bcm2711", "rpi5": "bcm2712"}[family]
+                if soc_vendor in {"broadcom", "raspberrypi"} and family in _RPI_SOC_FAMILY_MAP:
+                    return _RPI_SOC_FAMILY_MAP[family]
                 return family
         return None
 
