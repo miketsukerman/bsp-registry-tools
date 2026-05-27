@@ -1,5 +1,6 @@
 """Direct Lava-Test definition runner for local, SSH, and serial execution backends."""
 
+import datetime
 import hashlib
 import json
 import logging
@@ -15,9 +16,115 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import yaml
+from jinja2 import Environment
 
 from .models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 from .resolver import ResolvedConfig
+
+
+_HTML_REPORT_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BSP Test Report{% if label %} — {{ label }}{% endif %}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, Arial, sans-serif; background: #f4f6f9; color: #222; padding: 2rem; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  .meta { color: #555; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px;
+           font-weight: bold; font-size: 0.85rem; }
+  .pass  { background: #d4edda; color: #155724; }
+  .fail  { background: #f8d7da; color: #721c24; }
+  .skip  { background: #fff3cd; color: #856404; }
+  .card  { background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
+           margin-bottom: 1.25rem; overflow: hidden; }
+  .card-header { display: flex; align-items: center; gap: 0.75rem;
+                 padding: 0.75rem 1rem; background: #f8f9fa;
+                 border-bottom: 1px solid #dee2e6; }
+  .card-header h2 { font-size: 1rem; flex: 1; }
+  .card-header .duration { font-size: 0.8rem; color: #777; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { text-align: left; padding: 0.5rem 1rem; background: #f1f3f5;
+       border-bottom: 1px solid #dee2e6; font-weight: 600; }
+  td { padding: 0.45rem 1rem; border-bottom: 1px solid #f0f0f0; }
+  tr:last-child td { border-bottom: none; }
+  .summary-bar { display: flex; gap: 1.5rem; padding: 0.75rem 1rem;
+                 background: #e9ecef; font-size: 0.9rem; font-weight: 600; }
+  .timeout-tag { font-size: 0.75rem; color: #e67e22; margin-left: 0.4rem; }
+  code { font-size: 0.8rem; background: #f1f3f5; padding: 0.1rem 0.3rem;
+         border-radius: 3px; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>BSP Test Report{% if label %}: {{ label }}{% endif %}</h1>
+<p class="meta">
+  Generated: {{ generated_at }} &nbsp;|&nbsp;
+  Backend: <strong>{{ backend }}</strong> &nbsp;|&nbsp;
+  Overall: <span class="badge {{ 'pass' if passed else 'fail' }}">
+    {{ 'PASS' if passed else 'FAIL' }}
+  </span>
+</p>
+
+{% for suite in suites %}
+  {% set suite_pass = (suite.status | upper) == 'PASS' %}
+  {% set total = suite.cases | length %}
+  {% set n_pass = suite.cases | selectattr('status', 'equalto', 'PASS') | list | length %}
+  {% set n_fail = total - n_pass %}
+<div class="card">
+  <div class="card-header">
+    <span class="badge {{ 'pass' if suite_pass else 'fail' }}">
+      {{ suite.status | upper }}
+    </span>
+    <h2>{{ suite.name }}</h2>
+    <span class="duration">{{ "%.2f"|format(suite.duration) }}s</span>
+  </div>
+  <div class="summary-bar">
+    <span>Total: {{ total }}</span>
+    <span style="color:#155724">Pass: {{ n_pass }}</span>
+    {% if n_fail %}<span style="color:#721c24">Fail: {{ n_fail }}</span>{% endif %}
+  </div>
+  {% if suite.cases %}
+  <table>
+    <thead>
+      <tr>
+        <th>Test Case</th>
+        <th>Status</th>
+        <th>Duration</th>
+        <th>Command</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for case in suite.cases %}
+      {% set case_pass = (case.status | upper) == 'PASS' %}
+      <tr>
+        <td>
+          {{ case.name }}
+          {% if case.timed_out %}
+            <span class="timeout-tag">⏱ timed-out</span>
+          {% endif %}
+        </td>
+        <td><span class="badge {{ 'pass' if case_pass else 'fail' }}">{{ case.status | upper }}</span></td>
+        <td>{{ "%.2f"|format(case.duration) }}s</td>
+        <td><code>{{ case.command | e }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if not suites %}
+<p style="color:#777">No test suites were executed.</p>
+{% endif %}
+
+</body>
+</html>
+"""
 
 
 _VAR_BRACE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
@@ -645,3 +752,47 @@ class DirectTestRunner:
             json.dumps(summary, indent=2),
             encoding="utf-8",
         )
+
+        html_content = self._render_html_report(
+            label=label,
+            backend=backend,
+            suites=suites,
+            passed=passed,
+        )
+        html_path = output_dir / "direct-test-report.html"
+        html_path.write_text(html_content, encoding="utf-8")
+        self.logger.debug("HTML test report written to %s", html_path)
+
+        self._write_pdf_report(output_dir / "direct-test-report.pdf", html_content)
+
+    def _render_html_report(
+        self,
+        label: str,
+        backend: str,
+        suites: List[DirectTestSuiteResult],
+        passed: bool,
+    ) -> str:
+        env = Environment(autoescape=True)
+        tmpl = env.from_string(_HTML_REPORT_TEMPLATE)
+        return tmpl.render(
+            label=label,
+            backend=backend,
+            suites=suites,
+            passed=passed,
+            generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        )
+
+    def _write_pdf_report(self, pdf_path: Path, html_content: str) -> None:
+        try:
+            import weasyprint  # type: ignore[import]
+        except ImportError:
+            self.logger.debug(
+                "weasyprint is not installed; skipping PDF report generation. "
+                "Install it with: pip install weasyprint"
+            )
+            return
+        try:
+            weasyprint.HTML(string=html_content).write_pdf(str(pdf_path))
+            self.logger.debug("PDF test report written to %s", pdf_path)
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning("PDF report generation failed: %s", exc)

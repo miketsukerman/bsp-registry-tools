@@ -3,9 +3,9 @@
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from bsp.direct_runner import DirectRunOverrides, DirectTestRunner, _SshTransport
+from bsp.direct_runner import DirectRunOverrides, DirectTestRunner, DirectTestSuiteResult, DirectTestCaseResult, _SshTransport
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 
 
@@ -213,3 +213,163 @@ class TestDirectRunnerBackendSelection:
             assert False, "Expected ValueError for missing serial device"
         except ValueError as exc:
             assert "direct-serial backend requires a serial device" in str(exc)
+
+
+class TestReportGeneration:
+    """Tests for HTML and PDF test report generation."""
+
+    def _make_suites(self):
+        return [
+            DirectTestSuiteResult(
+                name="smoke-suite",
+                status="PASS",
+                duration=1.23,
+                log_dir="/tmp/logs/smoke-suite",
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="PASS",
+                        duration=0.5,
+                        command="echo hello",
+                    ),
+                    DirectTestCaseResult(
+                        name="step-2",
+                        status="FAIL",
+                        duration=0.73,
+                        command="false",
+                        timed_out=False,
+                    ),
+                ],
+            ),
+            DirectTestSuiteResult(
+                name="net-suite",
+                status="FAIL",
+                duration=0.1,
+                log_dir="/tmp/logs/net-suite",
+                cases=[],
+            ),
+        ]
+
+    def test_html_report_written(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="ci-run",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        html_path = tmp_path / "direct-test-report.html"
+        assert html_path.exists(), "HTML report file should be created"
+
+    def test_html_report_contains_expected_content(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="ci-run",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        content = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "smoke-suite" in content
+        assert "net-suite" in content
+        assert "direct-local" in content
+        assert "ci-run" in content
+        assert "FAIL" in content
+        assert "echo hello" in content
+
+    def test_html_report_is_valid_html(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="test",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=True,
+        )
+        content = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
+        assert content.strip().startswith("<!DOCTYPE html>")
+        assert "</html>" in content
+
+    def test_render_html_report_pass(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        html = runner._render_html_report(
+            label="my-label",
+            backend="direct-ssh",
+            suites=self._make_suites(),
+            passed=True,
+        )
+        assert "my-label" in html
+        assert "direct-ssh" in html
+        assert "PASS" in html
+
+    def test_render_html_report_timed_out_case(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="timeout-suite",
+                status="FAIL",
+                duration=30.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="long-step",
+                        status="FAIL",
+                        duration=30.0,
+                        command="sleep 999",
+                        timed_out=True,
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="timeout-test",
+            backend="direct-local",
+            suites=suites,
+            passed=False,
+        )
+        assert "timed-out" in html
+        assert "sleep 999" in html
+
+    def test_pdf_skipped_when_weasyprint_missing(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        with patch.dict("sys.modules", {"weasyprint": None}):
+            runner._write_pdf_report(tmp_path / "out.pdf", "<html></html>")
+        assert not (tmp_path / "out.pdf").exists()
+
+    def test_pdf_written_when_weasyprint_available(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        mock_wp = MagicMock()
+        mock_html_instance = MagicMock()
+        mock_wp.HTML.return_value = mock_html_instance
+        with patch.dict("sys.modules", {"weasyprint": mock_wp}):
+            runner._write_pdf_report(tmp_path / "out.pdf", "<html></html>")
+        mock_wp.HTML.assert_called_once_with(string="<html></html>")
+        mock_html_instance.write_pdf.assert_called_once_with(str(tmp_path / "out.pdf"))
+
+    def test_integration_html_report_from_full_run(self, tmp_path):
+        """Integration: full run generates HTML report alongside JSON summary."""
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            "run:\n  steps:\n    - echo hi\n",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[TestDefinitionSource(repo_url=repo.as_uri(), paths=["defs"])],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+        runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="integration",
+        )
+
+        assert (tmp_path / "out" / "direct-test-report.html").exists()
+        assert (tmp_path / "out" / "direct-test-summary.json").exists()

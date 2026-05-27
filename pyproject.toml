@@ -58,6 +58,9 @@ deploy = [
 completions = [
     "argcomplete>=3.0",
 ]
+report = [
+    "weasyprint>=60.0",
+]
 # flash: intentionally empty — bmaptool is a system package, not a Python package.
 # Install it separately:  sudo apt install bmap-tools
 # or from PyPI:           pip install bmaptool
