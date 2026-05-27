@@ -56,6 +56,12 @@ _HTML_REPORT_TEMPLATE = """\
   .timeout-tag { font-size: 0.75rem; color: #e67e22; margin-left: 0.4rem; }
   code { font-size: 0.8rem; background: #f1f3f5; padding: 0.1rem 0.3rem;
          border-radius: 3px; word-break: break-all; }
+  .lava-signals { margin: 0.25rem 0 0.25rem 1.5rem; }
+  .lava-signals table { background: #fafbfc; font-size: 0.82rem; border: 1px solid #e0e0e0; border-radius: 4px; }
+  .lava-signals th { background: #eff1f3; padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+  .lava-signals td { padding: 0.3rem 0.75rem; border-bottom: 1px solid #efefef; }
+  .lava-signals tr:last-child td { border-bottom: none; }
+  .lava-label { font-size: 0.72rem; color: #555; font-style: italic; margin-bottom: 0.15rem; }
 </style>
 </head>
 <body>
@@ -74,6 +80,15 @@ _HTML_REPORT_TEMPLATE = """\
   {% set total = suite.cases | length %}
   {% set n_pass = suite.cases | selectattr('status', 'equalto', 'PASS') | list | length %}
   {% set n_fail = total - n_pass %}
+  {# Count LAVA signal cases across the suite #}
+  {% set lava_total = namespace(v=0) %}
+  {% set lava_pass  = namespace(v=0) %}
+  {% for case in suite.cases %}
+    {% for sig in case.lava_signals %}
+      {% set lava_total.v = lava_total.v + 1 %}
+      {% if sig.result == 'pass' %}{% set lava_pass.v = lava_pass.v + 1 %}{% endif %}
+    {% endfor %}
+  {% endfor %}
 <div class="card">
   <div class="card-header">
     <span class="badge {{ 'pass' if suite_pass else 'fail' }}">
@@ -83,15 +98,21 @@ _HTML_REPORT_TEMPLATE = """\
     <span class="duration">{{ "%.2f"|format(suite.duration) }}s</span>
   </div>
   <div class="summary-bar">
-    <span>Total: {{ total }}</span>
+    <span>Steps: {{ total }}</span>
     <span style="color:#155724">Pass: {{ n_pass }}</span>
     {% if n_fail %}<span style="color:#721c24">Fail: {{ n_fail }}</span>{% endif %}
+    {% if lava_total.v %}
+      &nbsp;|&nbsp;
+      <span>LAVA cases: {{ lava_total.v }}</span>
+      <span style="color:#155724">Pass: {{ lava_pass.v }}</span>
+      {% if lava_total.v - lava_pass.v %}<span style="color:#721c24">Fail: {{ lava_total.v - lava_pass.v }}</span>{% endif %}
+    {% endif %}
   </div>
   {% if suite.cases %}
   <table>
     <thead>
       <tr>
-        <th>Test Case</th>
+        <th>Step</th>
         <th>Status</th>
         <th>Duration</th>
         <th>Command</th>
@@ -111,6 +132,29 @@ _HTML_REPORT_TEMPLATE = """\
         <td>{{ "%.2f"|format(case.duration) }}s</td>
         <td><code>{{ case.command | e }}</code></td>
       </tr>
+      {% if case.lava_signals %}
+      <tr>
+        <td colspan="4" style="padding: 0 0 0.5rem 0; border-bottom: 1px solid #f0f0f0;">
+          <div class="lava-signals">
+            <div class="lava-label">LAVA test cases reported by this step:</div>
+            <table>
+              <thead>
+                <tr><th>TEST_CASE_ID</th><th>RESULT</th></tr>
+              </thead>
+              <tbody>
+              {% for sig in case.lava_signals %}
+                {% set sig_pass = sig.result == 'pass' %}
+                <tr>
+                  <td>{{ sig.test_case_id | e }}</td>
+                  <td><span class="badge {{ 'pass' if sig_pass else 'fail' }}">{{ sig.result | upper }}</span></td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </td>
+      </tr>
+      {% endif %}
     {% endfor %}
     </tbody>
   </table>
@@ -129,6 +173,21 @@ _HTML_REPORT_TEMPLATE = """\
 
 _VAR_BRACE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 _VAR_DOLLAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_LAVA_SIGNAL_RE = re.compile(
+    r"<LAVA_SIGNAL_TESTCASE\s+TEST_CASE_ID=(\S+)\s+RESULT=(pass|fail)>",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class LavaSignalCase:
+    """A single LAVA test case parsed from a ``<LAVA_SIGNAL_TESTCASE ...>`` signal line."""
+    test_case_id: str
+    result: str  # "pass" or "fail"
+
+    @property
+    def passed(self) -> bool:
+        return self.result.lower() == "pass"
 
 
 @dataclass
@@ -139,6 +198,7 @@ class DirectTestCaseResult:
     command: str
     log_path: Optional[str] = None
     timed_out: bool = False
+    lava_signals: List["LavaSignalCase"] = field(default_factory=list)
 
 
 @dataclass
@@ -611,6 +671,17 @@ class DirectTestRunner:
             return os.path.normpath(target)
         return os.path.normpath(str(Path(current_cwd) / target))
 
+    @staticmethod
+    def _parse_lava_signals(output: str) -> List[LavaSignalCase]:
+        """Parse ``<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=... RESULT=pass|fail>`` lines from output."""
+        results: List[LavaSignalCase] = []
+        for match in _LAVA_SIGNAL_RE.finditer(output):
+            results.append(LavaSignalCase(
+                test_case_id=match.group(1),
+                result=match.group(2).lower(),
+            ))
+        return results
+
     def _run_single_definition(
         self,
         transport: _BaseTransport,
@@ -678,6 +749,8 @@ class DirectTestRunner:
             if status != "PASS":
                 suite_pass = False
 
+            lava_signals = self._parse_lava_signals(stdout)
+
             log_file.write_text(
                 f"# command\n{expanded}\n\n"
                 f"# return_code\n{rc}\n\n"
@@ -694,6 +767,7 @@ class DirectTestRunner:
                     command=expanded,
                     log_path=str(log_file),
                     timed_out=timed_out,
+                    lava_signals=lava_signals,
                 )
             )
 
@@ -741,6 +815,10 @@ class DirectTestRunner:
                             "command": c.command,
                             "log_path": c.log_path,
                             "timed_out": c.timed_out,
+                            "lava_signals": [
+                                {"test_case_id": sig.test_case_id, "result": sig.result}
+                                for sig in c.lava_signals
+                            ],
                         }
                         for c in s.cases
                     ],

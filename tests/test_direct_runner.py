@@ -5,7 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from bsp.direct_runner import DirectRunOverrides, DirectTestRunner, DirectTestSuiteResult, DirectTestCaseResult, _SshTransport
+from bsp.direct_runner import (
+    DirectRunOverrides,
+    DirectTestRunner,
+    DirectTestSuiteResult,
+    DirectTestCaseResult,
+    LavaSignalCase,
+    _SshTransport,
+)
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 
 
@@ -373,3 +380,153 @@ class TestReportGeneration:
 
         assert (tmp_path / "out" / "direct-test-report.html").exists()
         assert (tmp_path / "out" / "direct-test-summary.json").exists()
+
+
+class TestLavaSignalParsing:
+    """Tests for LAVA_SIGNAL_TESTCASE parsing from step output."""
+
+    def test_parse_single_pass_signal(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        output = "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>"
+        signals = runner._parse_lava_signals(output)
+        assert len(signals) == 1
+        assert signals[0].test_case_id == "ping-gateway"
+        assert signals[0].result == "pass"
+        assert signals[0].passed is True
+
+    def test_parse_single_fail_signal(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        output = "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=print-routing-tables RESULT=fail>"
+        signals = runner._parse_lava_signals(output)
+        assert len(signals) == 1
+        assert signals[0].test_case_id == "print-routing-tables"
+        assert signals[0].result == "fail"
+        assert signals[0].passed is False
+
+    def test_parse_multiple_signals(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        output = (
+            "some preamble output\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=print-network-statistics RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=list-all-network-interfaces RESULT=pass>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ip-link-loopback-up RESULT=pass>\n"
+            "some trailing output\n"
+        )
+        signals = runner._parse_lava_signals(output)
+        assert len(signals) == 3
+        assert signals[0].test_case_id == "print-network-statistics"
+        assert signals[0].result == "fail"
+        assert signals[1].test_case_id == "list-all-network-interfaces"
+        assert signals[1].result == "pass"
+        assert signals[2].test_case_id == "ip-link-loopback-up"
+        assert signals[2].result == "pass"
+
+    def test_parse_full_sample_output(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        output = (
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=print-network-statistics RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=list-all-network-interfaces RESULT=pass>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=print-routing-tables RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ip-link-loopback-up RESULT=pass>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=route-dump-after-ip-link-loopback-up RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ip-link-interface-up RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ip-link-interface-down RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=Dynamic-Host-Configuration-Protocol-Client-dhclient-v RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=print-routing-tables-after-dhclient-request RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=fail>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=download-a-file RESULT=pass>\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=download-a-file-md5 RESULT=fail>\n"
+        )
+        signals = runner._parse_lava_signals(output)
+        assert len(signals) == 12
+        passing = [s for s in signals if s.result == "pass"]
+        failing = [s for s in signals if s.result == "fail"]
+        assert len(passing) == 3
+        assert len(failing) == 9
+        assert signals[7].test_case_id == "Dynamic-Host-Configuration-Protocol-Client-dhclient-v"
+
+    def test_parse_empty_output(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        assert runner._parse_lava_signals("") == []
+        assert runner._parse_lava_signals("no signals here") == []
+
+    def test_lava_signals_in_case_result_and_json(self, tmp_path):
+        """Integration: LAVA signals emitted by a step appear in case results and JSON."""
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        # Step echoes two LAVA signals to stdout
+        (defs_dir / "net.yaml").write_text(
+            "metadata:\n  name: network-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=download-a-file RESULT=fail>\\n'\"\n",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[TestDefinitionSource(repo_url=repo.as_uri(), paths=["defs/net.yaml"])],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="lava-integration",
+        )
+
+        assert result.passed is True
+        assert len(result.suites) == 1
+        suite = result.suites[0]
+        assert suite.name == "network-suite"
+        assert len(suite.cases) == 1
+        step = suite.cases[0]
+        assert len(step.lava_signals) == 2
+        assert step.lava_signals[0].test_case_id == "ping-gateway"
+        assert step.lava_signals[0].result == "pass"
+        assert step.lava_signals[1].test_case_id == "download-a-file"
+        assert step.lava_signals[1].result == "fail"
+
+        # Verify JSON output contains lava_signals
+        import json
+        summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text())
+        sig_json = summary["suites"][0]["cases"][0]["lava_signals"]
+        assert len(sig_json) == 2
+        assert sig_json[0] == {"test_case_id": "ping-gateway", "result": "pass"}
+        assert sig_json[1] == {"test_case_id": "download-a-file", "result": "fail"}
+
+    def test_html_report_contains_lava_signals(self, tmp_path):
+        """HTML report shows LAVA signal cases as a sub-table."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="net-suite",
+                status="PASS",
+                duration=1.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="PASS",
+                        duration=0.5,
+                        command="./run-net-tests.sh",
+                        lava_signals=[
+                            LavaSignalCase(test_case_id="ping-gateway", result="pass"),
+                            LavaSignalCase(test_case_id="download-a-file", result="fail"),
+                        ],
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="test",
+            backend="direct-local",
+            suites=suites,
+            passed=True,
+        )
+        assert "ping-gateway" in html
+        assert "download-a-file" in html
+        assert "TEST_CASE_ID" in html
+        assert "LAVA test cases" in html
