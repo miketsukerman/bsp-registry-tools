@@ -613,13 +613,33 @@ repos:
     url: https://example.com/meta-bar.git
     commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    revision: refs/heads/master
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)) as mock_run:
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ) as mock_run:
             xml = manager.export_repo_manifest_xml()
 
-        args = mock_run.call_args[0][0]
-        assert args[:3] == ["dump", "--lock", "--sort"]
+        lock_args = mock_run.call_args_list[0][0][0]
+        unlocked_args = mock_run.call_args_list[1][0][0]
+        assert lock_args[:3] == ["dump", "--lock", "--sort"]
+        assert unlocked_args[:2] == ["dump", "--sort"]
+        assert "--lock" not in unlocked_args
         assert "<manifest>" in xml
         assert 'project name="meta-bar"' in xml
         assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
@@ -635,9 +655,22 @@ repos:
     url: https://example.com/meta-foo.git
     commit: refs/heads/main
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             xml = manager.export_repo_manifest_xml()
 
         assert "<manifest>" in xml
@@ -655,10 +688,23 @@ repos:
     url: https://example.com/meta-foo.git
     commit: cccccccccccccccccccccccccccccccccccccccc
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
         out = tmp_dir / "manifest.xml"
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             manager.export_repo_manifest_xml(str(out))
 
         assert out.exists()
@@ -677,9 +723,22 @@ repositories:
     url: https://example.com/meta-foo.git
     revision: dddddddddddddddddddddddddddddddddddddddd
 """
+        unlocked_yaml = """
+repositories:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: dddddddddddddddddddddddddddddddddddddddd
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             xml = manager.export_repo_manifest_xml()
 
         assert "<manifest>" in xml
@@ -700,9 +759,22 @@ repos:
     url: https://example.com/meta-foo.git
     commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             xml = manager.export_repo_manifest_xml()
 
         assert "<manifest>" in xml
@@ -725,9 +797,22 @@ lock:
           url: https://example.com/meta-foo.git
           commit: ffffffffffffffffffffffffffffffffffffffff
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             xml = manager.export_repo_manifest_xml()
 
         assert "<manifest>" in xml
@@ -744,9 +829,21 @@ repos:
   meta-foo:
     url: https://example.com/meta-foo.git
 """
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+"""
         with patch.object(manager, "validate_kas_files", return_value=True), \
              patch.object(manager, "check_kas_available", return_value=True), \
-             patch.object(manager, "_run_kas_command", return_value=SimpleNamespace(stdout=locked_yaml)):
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
             xml = manager.export_repo_manifest_xml()
 
         assert "<manifest>" in xml

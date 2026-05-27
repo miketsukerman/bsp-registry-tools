@@ -4,6 +4,7 @@ KAS build system manager for Yocto-based BSP builds.
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -863,7 +864,7 @@ class KasManager:
             sys.exit(1)
 
     def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
-        """Parse kas lock YAML and return normalized repository rows."""
+        """Parse kas dump YAML and return normalized repository rows."""
         try:
             docs = list(yaml.safe_load_all(lock_yaml))
         except Exception as e:
@@ -982,6 +983,51 @@ class KasManager:
             sys.exit(1)
         return rows
 
+    @staticmethod
+    def _looks_like_git_sha(revision: Optional[str]) -> bool:
+        """Return True when revision looks like a full Git commit SHA."""
+        if not revision:
+            return False
+        return bool(re.fullmatch(r"[0-9a-fA-F]{40}", revision))
+
+    def _merge_manifest_rows(
+        self,
+        locked_rows: List[Dict[str, str]],
+        unlocked_rows: List[Dict[str, str]],
+    ) -> List[Dict[str, str]]:
+        """
+        Merge lock/unlocked repo rows for manifest generation.
+
+        URL/path/name come from unlocked dump when available.
+        Revision prefers locked values, especially full commit SHAs.
+        """
+        merged: Dict[str, Dict[str, str]] = {}
+
+        for row in unlocked_rows:
+            merged[row["name"]] = dict(row)
+
+        for row in locked_rows:
+            key = row["name"]
+            current = merged.get(key, {"name": key})
+
+            if not current.get("url") and row.get("url"):
+                current["url"] = row["url"]
+            if not current.get("path") and row.get("path"):
+                current["path"] = row["path"]
+
+            locked_revision = row.get("revision")
+            current_revision = current.get("revision")
+            if locked_revision and (
+                self._looks_like_git_sha(locked_revision)
+                or not current_revision
+                or not self._looks_like_git_sha(current_revision)
+            ):
+                current["revision"] = locked_revision
+
+            merged[key] = current
+
+        return sorted(merged.values(), key=lambda row: row["name"])
+
     def _build_android_repo_manifest_xml(self, rows: List[Dict[str, str]]) -> str:
         """Render Android repo manifest XML from normalized repository rows."""
         def _split_repo_url(url: str) -> Dict[str, str]:
@@ -1062,12 +1108,15 @@ class KasManager:
             sys.exit(1)
 
         kas_files_str = self._get_kas_files_string()
-        args = ["dump", "--lock", "--sort", kas_files_str]
+        lock_args = ["dump", "--lock", "--sort", kas_files_str]
+        unlocked_args = ["dump", "--sort", kas_files_str]
 
         try:
-            result = self._run_kas_command(args, show_output=False)
-            lock_yaml = result.stdout
-            rows = self._extract_locked_repos(lock_yaml)
+            lock_result = self._run_kas_command(lock_args, show_output=False)
+            unlocked_result = self._run_kas_command(unlocked_args, show_output=False)
+            locked_rows = self._extract_locked_repos(lock_result.stdout)
+            unlocked_rows = self._extract_locked_repos(unlocked_result.stdout)
+            rows = self._merge_manifest_rows(locked_rows, unlocked_rows)
             manifest_xml = self._build_android_repo_manifest_xml(rows)
 
             if output_file:
