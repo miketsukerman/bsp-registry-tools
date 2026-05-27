@@ -141,6 +141,20 @@ def _collect_flash_overrides(args) -> dict:
     return overrides
 
 
+def _parse_key_value_params(raw_params) -> dict:
+    """Parse repeated KEY=VALUE parameters into a dictionary."""
+    parsed = {}
+    for entry in raw_params or []:
+        if "=" not in entry:
+            raise ValueError(f"Invalid --test-param value '{entry}'. Expected KEY=VALUE.")
+        key, value = entry.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid --test-param value '{entry}'. KEY must not be empty.")
+        parsed[key] = value
+    return parsed
+
+
 # =============================================================================
 # Remotes sub-command dispatcher (no registry loading required)
 # =============================================================================
@@ -1226,7 +1240,7 @@ def main() -> int:
         # ----------------------------------------------------------------
         test_parser = subparsers.add_parser(
             "test",
-            help="Submit a LAVA HIL test job for a BSP preset or component combination"
+            help="Run BSP tests via LAVA, direct-local, or direct-ssh backends"
         )
         test_parser.add_argument(
             "bsp_name",
@@ -1278,6 +1292,126 @@ def main() -> int:
             dest="artifact_url",
             metavar="URL",
             help="Base URL where build artifacts are served to the LAVA lab"
+        )
+        test_parser.add_argument(
+            "--backend",
+            type=str,
+            dest="test_backend",
+            choices=["lava", "direct-local", "direct-ssh"],
+            default=None,
+            help="Test backend override (default: registry testing.backend or lava)"
+        )
+        test_parser.add_argument(
+            "--test-repo-url",
+            type=str,
+            dest="test_repo_url",
+            metavar="URL",
+            help="Git URL for direct test-definition repository"
+        )
+        test_parser.add_argument(
+            "--test-repo-ref",
+            type=str,
+            dest="test_repo_ref",
+            metavar="REF",
+            help="Git ref (branch/tag/commit) for --test-repo-url"
+        )
+        test_parser.add_argument(
+            "--test-definition-path",
+            action="append",
+            dest="test_definition_paths",
+            metavar="PATH",
+            help="Definition file/dir/glob path inside test-definition repo (repeatable)"
+        )
+        test_parser.add_argument(
+            "--test-param",
+            action="append",
+            dest="test_params",
+            metavar="KEY=VALUE",
+            help="Direct-run parameter override for Lava-Test definitions (repeatable)"
+        )
+        test_parser.add_argument(
+            "--direct-timeout",
+            type=int,
+            dest="direct_timeout",
+            metavar="SECONDS",
+            help="Per-step timeout for direct test execution"
+        )
+        test_parser.add_argument(
+            "--direct-output-dir",
+            type=str,
+            dest="direct_output_dir",
+            metavar="PATH",
+            help="Output directory for direct test logs/results"
+        )
+        test_parser.add_argument(
+            "--ssh-host",
+            type=str,
+            dest="ssh_host",
+            metavar="HOST",
+            help="SSH host for direct-ssh backend"
+        )
+        test_parser.add_argument(
+            "--ssh-user",
+            type=str,
+            dest="ssh_user",
+            metavar="USER",
+            help="SSH user for direct-ssh backend"
+        )
+        test_parser.add_argument(
+            "--ssh-port",
+            type=int,
+            dest="ssh_port",
+            metavar="PORT",
+            help="SSH port for direct-ssh backend (default: 22)"
+        )
+        test_parser.add_argument(
+            "--ssh-key",
+            type=str,
+            dest="ssh_key",
+            metavar="PATH",
+            help="SSH private key path for direct-ssh backend"
+        )
+        test_parser.add_argument(
+            "--ssh-password",
+            type=str,
+            dest="ssh_password",
+            metavar="PASSWORD",
+            help="SSH password for direct-ssh backend (requires sshpass)"
+        )
+        test_parser.add_argument(
+            "--ssh-known-hosts-file",
+            type=str,
+            dest="ssh_known_hosts_file",
+            metavar="PATH",
+            help="Known hosts file for direct-ssh backend"
+        )
+        test_parser.add_argument(
+            "--ssh-no-strict-host-key-checking",
+            action="store_false",
+            dest="ssh_strict_host_key_checking",
+            default=None,
+            help="Disable strict host key checking for direct-ssh backend"
+        )
+        test_parser.add_argument(
+            "--ssh-remote-workdir",
+            type=str,
+            dest="ssh_remote_workdir",
+            metavar="PATH",
+            help="Remote working directory for staged test definitions"
+        )
+        test_parser.add_argument(
+            "--ssh-serial-device",
+            type=str,
+            dest="ssh_serial_device",
+            metavar="DEVICE",
+            help="Serial device (e.g. /dev/ttyUSB0) used as SSH ProxyCommand transport"
+        )
+        test_parser.add_argument(
+            "--ssh-serial-baudrate",
+            type=int,
+            dest="ssh_serial_baudrate",
+            metavar="BAUD",
+            help="Serial baudrate for --ssh-serial-device (default: 115200)"
         )
 
         # ----------------------------------------------------------------
@@ -1536,6 +1670,7 @@ def main() -> int:
                         lava_token=lava_token,
                         artifact_url=artifact_url,
                         wait=wait,
+                        backend="lava",
                     )
                     if not passed:
                         return 1
@@ -1566,6 +1701,7 @@ def main() -> int:
                         lava_token=lava_token,
                         artifact_url=artifact_url,
                         wait=wait,
+                        backend="lava",
                     )
                     if not passed:
                         return 1
@@ -1871,6 +2007,27 @@ def main() -> int:
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
             artifact_url = getattr(args, "artifact_url", None)
+            test_backend = getattr(args, "test_backend", None)
+            test_repo_url = getattr(args, "test_repo_url", None)
+            test_repo_ref = getattr(args, "test_repo_ref", None)
+            test_definition_paths = getattr(args, "test_definition_paths", None)
+            direct_timeout = getattr(args, "direct_timeout", None)
+            direct_output_dir = getattr(args, "direct_output_dir", None)
+            ssh_host = getattr(args, "ssh_host", None)
+            ssh_user = getattr(args, "ssh_user", None)
+            ssh_port = getattr(args, "ssh_port", None)
+            ssh_key = getattr(args, "ssh_key", None)
+            ssh_password = getattr(args, "ssh_password", None)
+            ssh_known_hosts_file = getattr(args, "ssh_known_hosts_file", None)
+            ssh_strict_host_key_checking = getattr(args, "ssh_strict_host_key_checking", None)
+            ssh_remote_workdir = getattr(args, "ssh_remote_workdir", None)
+            ssh_serial_device = getattr(args, "ssh_serial_device", None)
+            ssh_serial_baudrate = getattr(args, "ssh_serial_baudrate", None)
+            try:
+                test_params = _parse_key_value_params(getattr(args, "test_params", None))
+            except ValueError as exc:
+                logging.error(str(exc))
+                return 1
 
             if _check_exclusive(bsp_name, device, release, test_parser):
                 return 1
@@ -1881,6 +2038,23 @@ def main() -> int:
                     lava_token=lava_token,
                     artifact_url=artifact_url,
                     wait=wait,
+                    backend=test_backend,
+                    test_repo_url=test_repo_url,
+                    test_repo_ref=test_repo_ref,
+                    test_definition_paths=test_definition_paths,
+                    test_params=test_params,
+                    direct_timeout=direct_timeout,
+                    direct_output_dir=direct_output_dir,
+                    ssh_host=ssh_host,
+                    ssh_user=ssh_user,
+                    ssh_port=ssh_port,
+                    ssh_key=ssh_key,
+                    ssh_password=ssh_password,
+                    ssh_known_hosts_file=ssh_known_hosts_file,
+                    ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+                    ssh_remote_workdir=ssh_remote_workdir,
+                    ssh_serial_device=ssh_serial_device,
+                    ssh_serial_baudrate=ssh_serial_baudrate,
                 )
             elif device and release:
                 passed = bsp_mgr.test_by_components(
@@ -1891,6 +2065,23 @@ def main() -> int:
                     lava_token=lava_token,
                     artifact_url=artifact_url,
                     wait=wait,
+                    backend=test_backend,
+                    test_repo_url=test_repo_url,
+                    test_repo_ref=test_repo_ref,
+                    test_definition_paths=test_definition_paths,
+                    test_params=test_params,
+                    direct_timeout=direct_timeout,
+                    direct_output_dir=direct_output_dir,
+                    ssh_host=ssh_host,
+                    ssh_user=ssh_user,
+                    ssh_port=ssh_port,
+                    ssh_key=ssh_key,
+                    ssh_password=ssh_password,
+                    ssh_known_hosts_file=ssh_known_hosts_file,
+                    ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+                    ssh_remote_workdir=ssh_remote_workdir,
+                    ssh_serial_device=ssh_serial_device,
+                    ssh_serial_baudrate=ssh_serial_baudrate,
                 )
             else:
                 logging.error(

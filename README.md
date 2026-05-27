@@ -933,39 +933,55 @@ bsp build imx8mp-adv-scarthgap --flash /dev/sdb
 
 ---
 
-#### `test` — Submit a LAVA HIL test job
+#### `test` — Run test suites via LAVA or direct execution
 
-Submits a LAVA job for hardware-in-the-loop testing.  By default the job is submitted and the URL is printed; use `--wait` to block until it completes.
+Runs BSP tests with one of three backends:
+
+- `lava` (existing/default behavior)
+- `direct-local` (run Lava-Test definitions on the local host)
+- `direct-ssh` (run Lava-Test definitions on a remote target via SSH)
 
 ```bash
-bsp test <bsp_name> [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]
-bsp test --device <device> --release <release> [--feature FEATURE...] [--wait] ...
+bsp test <bsp_name> [--backend BACKEND] [OPTIONS]
+bsp test --device <device> --release <release> [--feature FEATURE...] [--backend BACKEND] [OPTIONS]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--wait` | Block until the LAVA job completes and print per-suite results |
-| `--lava-server URL` | LAVA server base URL (overrides registry `lava.server`) |
-| `--lava-token TOKEN` | LAVA API authentication token (overrides registry `lava.token`) |
-| `--artifact-url URL` | Base URL where built image artifacts are accessible to the LAVA lab |
+| `--backend {lava,direct-local,direct-ssh}` | Backend override (`testing.backend` / `lava` by default) |
+| `--wait` | LAVA only: block until the submitted job completes |
+| `--lava-server URL` / `--lava-token TOKEN` / `--artifact-url URL` | LAVA backend overrides |
+| `--test-repo-url URL` / `--test-repo-ref REF` | Direct backend test-definition Git source override |
+| `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable) |
+| `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
+| `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
+| `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` |
+| `--ssh-known-hosts-file` / `--ssh-no-strict-host-key-checking` | SSH host key verification controls |
+| `--ssh-remote-workdir PATH` | Remote staging directory for direct-ssh runs |
+| `--ssh-serial-device /dev/ttyUSBX` / `--ssh-serial-baudrate BAUD` | Optional serial-backed SSH ProxyCommand transport |
 
 **Examples:**
 
 ```bash
-# Submit a LAVA job for a pre-built image and exit immediately
-bsp test poky-qemuarm64-scarthgap
-
-# Submit and wait for the job to complete
+# LAVA backend (default)
 bsp test poky-qemuarm64-scarthgap --wait
 
-# Override LAVA settings from the CLI
-bsp test poky-qemuarm64-scarthgap --wait \
-  --lava-server https://lava.ci.example.com \
-  --lava-token $LAVA_TOKEN \
-  --artifact-url http://minio.example.com/builds
+# Direct local run from GitHub test definitions
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-local \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-repo-ref main \
+  --test-definition-path automated/linux \
+  --test-param BOARD_IP=192.168.1.10
 
-# Component-based (no preset needed)
-bsp test --device qemuarm64 --release scarthgap --wait
+# Direct SSH run on DUT
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-ssh \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-definition-path smoke.yaml \
+  --ssh-host 10.0.0.42 \
+  --ssh-user root \
+  --ssh-key ~/.ssh/id_ed25519
 ```
 
 #### `remotes` — Manage named remote registries

@@ -910,9 +910,84 @@ class TestingConfig:
     Testing configuration block attached to a ``BspPreset``.
 
     Attributes:
+        backend: Test execution backend. Supported values:
+                 ``"lava"`` (default), ``"direct-local"``, ``"direct-ssh"``.
         lava: LAVA-specific test settings (device type, job template, tags).
+        direct: Direct test-definition execution settings for local/SSH runs.
     """
+    backend: str = "lava"
     lava: Optional[LavaTestConfig] = None
+    direct: Optional["DirectTestConfig"] = None
+
+
+@dataclass
+class TestDefinitionSource:
+    """
+    Source definition for one test-definition set.
+
+    Attributes:
+        repo_url: Git repository URL containing Lava-Test definition YAML files.
+        ref: Optional git ref (branch/tag/commit) to check out.
+        paths: One or more relative definition paths (files/directories/globs)
+               resolved inside the checked-out repository.
+        params: Parameter overrides for this source. Keys are variable names and
+                values are substituted into ``run.steps`` commands.
+    """
+    repo_url: str = ""
+    ref: str = ""
+    paths: List[str] = field(default_factory=empty_list)
+    params: Dict[str, str] = field(default_factory=empty_dict)
+
+
+@dataclass
+class DirectTransportConfig:
+    """
+    Transport settings for direct test execution.
+
+    Attributes:
+        mode: Transport mode. ``"local"`` runs on the current host.
+              ``"ssh"`` runs on a remote target over SSH.
+        host: SSH host name or IP (for ``mode: ssh``).
+        user: SSH user name.
+        port: SSH port number.
+        key_path: Optional SSH private key path.
+        password: Optional SSH password (uses sshpass when available).
+        strict_host_key_checking: Enforce strict host key checking by default.
+        known_hosts_file: Optional known_hosts file path override.
+        remote_workdir: Remote working directory for staged test repositories.
+        serial_device: Optional serial adapter device path (e.g. ``/dev/ttyUSB0``)
+                       used as SSH ProxyCommand transport.
+        serial_baudrate: Serial baudrate used with ``serial_device``.
+    """
+    mode: str = "local"
+    host: str = ""
+    user: str = ""
+    port: int = 22
+    key_path: str = ""
+    password: str = ""
+    strict_host_key_checking: bool = True
+    known_hosts_file: Optional[str] = None
+    remote_workdir: str = "/tmp/bsp-direct-tests"
+    serial_device: str = ""
+    serial_baudrate: int = 115200
+
+
+@dataclass
+class DirectTestConfig:
+    """
+    Direct test-definition execution configuration.
+
+    Attributes:
+        definitions: One or more test-definition sources to execute. All matched
+                     definition files are executed in order.
+        transport: Local or SSH transport settings.
+        timeout: Per-step timeout in seconds (default: 1800).
+        output_dir: Optional output directory for logs/reports.
+    """
+    definitions: List[TestDefinitionSource] = field(default_factory=empty_list)
+    transport: Optional[DirectTransportConfig] = None
+    timeout: int = 1800
+    output_dir: str = ""
 
 
 @dataclass

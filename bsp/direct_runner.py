@@ -1,0 +1,601 @@
+"""Direct Lava-Test definition runner for local and SSH execution backends."""
+
+import hashlib
+import json
+import logging
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import yaml
+
+from .models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
+from .resolver import ResolvedConfig
+
+
+_VAR_BRACE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_VAR_DOLLAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+@dataclass
+class DirectTestCaseResult:
+    name: str
+    status: str
+    duration: float
+    command: str
+    log_path: Optional[str] = None
+
+
+@dataclass
+class DirectTestSuiteResult:
+    name: str
+    status: str
+    duration: float
+    log_dir: Optional[str] = None
+    cases: List[DirectTestCaseResult] = field(default_factory=list)
+
+
+@dataclass
+class DirectRunResult:
+    backend: str
+    passed: bool
+    suites: List[DirectTestSuiteResult] = field(default_factory=list)
+
+
+@dataclass
+class DirectRunOverrides:
+    backend: Optional[str] = None
+    repo_url: Optional[str] = None
+    repo_ref: Optional[str] = None
+    definition_paths: Optional[List[str]] = None
+    params: Optional[Dict[str, str]] = None
+    timeout: Optional[int] = None
+    output_dir: Optional[str] = None
+    ssh_host: Optional[str] = None
+    ssh_user: Optional[str] = None
+    ssh_port: Optional[int] = None
+    ssh_key: Optional[str] = None
+    ssh_password: Optional[str] = None
+    ssh_known_hosts_file: Optional[str] = None
+    ssh_strict_host_key_checking: Optional[bool] = None
+    ssh_remote_workdir: Optional[str] = None
+    ssh_serial_device: Optional[str] = None
+    ssh_serial_baudrate: Optional[int] = None
+
+
+class _BaseTransport:
+    def run(
+        self,
+        command: str,
+        cwd: str,
+        env: Optional[Dict[str, str]] = None,
+        timeout: Optional[int] = None,
+    ) -> Tuple[int, str, str]:
+        raise NotImplementedError
+
+    def stage_directory(self, local_dir: Path, remote_dir: str) -> None:
+        return None
+
+    def collect_directory(self, remote_dir: str, local_dir: Path) -> None:
+        return None
+
+
+class _LocalTransport(_BaseTransport):
+    def run(
+        self,
+        command: str,
+        cwd: str,
+        env: Optional[Dict[str, str]] = None,
+        timeout: Optional[int] = None,
+    ) -> Tuple[int, str, str]:
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        proc = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=cwd,
+            env=merged_env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+
+
+class _SshTransport(_BaseTransport):
+    def __init__(self, config: DirectTransportConfig):
+        self.config = config
+
+    def _target(self) -> str:
+        host = self.config.host or ("localhost" if self.config.serial_device else "")
+        if not host:
+            raise ValueError("SSH transport requires a host (set testing.direct.transport.host or --ssh-host).")
+        if self.config.user:
+            return f"{self.config.user}@{host}"
+        return host
+
+    def _ssh_common_options(self) -> List[str]:
+        opts: List[str] = ["-p", str(self.config.port)]
+        strict = "yes" if self.config.strict_host_key_checking else "no"
+        opts += ["-o", f"StrictHostKeyChecking={strict}"]
+        if self.config.known_hosts_file:
+            opts += ["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"]
+        if self.config.key_path:
+            opts += ["-i", self.config.key_path]
+        if self.config.password:
+            opts += ["-o", "PreferredAuthentications=password,keyboard-interactive"]
+        else:
+            opts += ["-o", "BatchMode=yes"]
+
+        if self.config.serial_device:
+            serial = self.config.serial_device
+            baud = int(self.config.serial_baudrate)
+            proxy = f"socat - FILE:{serial},raw,echo=0,b{baud}"
+            opts += ["-o", f"ProxyCommand={proxy}"]
+
+        return opts
+
+    def _with_password_prefix(self, base_cmd: List[str]) -> List[str]:
+        if not self.config.password:
+            return base_cmd
+        if shutil.which("sshpass") is None:
+            raise RuntimeError("Password authentication requires 'sshpass' to be installed.")
+        return ["sshpass", "-p", self.config.password, *base_cmd]
+
+    def _run_subprocess(
+        self,
+        cmd: Sequence[str],
+        timeout: Optional[int] = None,
+    ) -> Tuple[int, str, str]:
+        proc = subprocess.run(
+            list(cmd),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def run(
+        self,
+        command: str,
+        cwd: str,
+        env: Optional[Dict[str, str]] = None,
+        timeout: Optional[int] = None,
+    ) -> Tuple[int, str, str]:
+        exports = ""
+        if env:
+            exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
+        remote_cmd = f"cd {shlex.quote(cwd)} && "
+        if exports:
+            remote_cmd += f"export {exports} && "
+        remote_cmd += command
+
+        cmd = [
+            "ssh",
+            *self._ssh_common_options(),
+            self._target(),
+            f"bash -lc {shlex.quote(remote_cmd)}",
+        ]
+        return self._run_subprocess(self._with_password_prefix(cmd), timeout=timeout)
+
+    def stage_directory(self, local_dir: Path, remote_dir: str) -> None:
+        mkdir_cmd = [
+            "ssh",
+            *self._ssh_common_options(),
+            self._target(),
+            f"mkdir -p {shlex.quote(remote_dir)}",
+        ]
+        rc, _out, err = self._run_subprocess(self._with_password_prefix(mkdir_cmd))
+        if rc != 0:
+            raise RuntimeError(f"Failed to create remote directory '{remote_dir}': {err.strip()}")
+
+        scp_cmd = [
+            "scp",
+            "-r",
+            "-P",
+            str(self.config.port),
+            *(["-i", self.config.key_path] if self.config.key_path else []),
+            *( ["-o", f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}"] ),
+            *( ["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else [] ),
+            str(local_dir),
+            f"{self._target()}:{remote_dir.rstrip('/')}/",
+        ]
+        rc, _out, err = self._run_subprocess(self._with_password_prefix(scp_cmd))
+        if rc != 0:
+            raise RuntimeError(f"Failed to stage test files to SSH target: {err.strip()}")
+
+    def collect_directory(self, remote_dir: str, local_dir: Path) -> None:
+        local_dir.mkdir(parents=True, exist_ok=True)
+        scp_cmd = [
+            "scp",
+            "-r",
+            "-P",
+            str(self.config.port),
+            *(["-i", self.config.key_path] if self.config.key_path else []),
+            *( ["-o", f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}"] ),
+            *( ["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else [] ),
+            f"{self._target()}:{remote_dir.rstrip('/')}/",
+            str(local_dir),
+        ]
+        self._run_subprocess(self._with_password_prefix(scp_cmd))
+
+
+class DirectTestRunner:
+    def __init__(self, config_path: Path, logger: Optional[logging.Logger] = None):
+        self.config_path = config_path
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self._cache_root = Path(tempfile.gettempdir()) / "bsp-test-definitions-cache"
+
+    def run(
+        self,
+        resolved: ResolvedConfig,
+        direct_config: Optional[DirectTestConfig],
+        overrides: Optional[DirectRunOverrides] = None,
+        label: str = "",
+    ) -> DirectRunResult:
+        cfg = self._merged_config(direct_config, overrides)
+        backend = (overrides.backend if overrides and overrides.backend else "direct-local").strip() or "direct-local"
+        transport = self._build_transport(cfg.transport, backend)
+
+        output_root = Path(cfg.output_dir).expanduser() if cfg.output_dir else (Path(resolved.build_path) / "test-results")
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        overall_pass = True
+        suites: List[DirectTestSuiteResult] = []
+
+        for source_index, source in enumerate(cfg.definitions):
+            repo_dir = self._prepare_source_repo(source)
+            def_files = self._resolve_definition_files(repo_dir, source.paths)
+            if not def_files:
+                raise RuntimeError(f"No test-definition YAML files found for source '{source.repo_url}'.")
+
+            run_root = output_root / f"source-{source_index + 1}"
+            run_root.mkdir(parents=True, exist_ok=True)
+
+            repo_exec_root = repo_dir
+            if isinstance(transport, _SshTransport):
+                remote_root = cfg.transport.remote_workdir.rstrip("/")
+                remote_source = f"{remote_root}/{repo_dir.name}"
+                transport.stage_directory(repo_dir, remote_root)
+                repo_exec_root = Path(remote_source)
+
+            for def_file in def_files:
+                rel = def_file.relative_to(repo_dir)
+                suite_result = self._run_single_definition(
+                    transport=transport,
+                    suite_path=def_file,
+                    suite_rel_path=rel,
+                    repo_local_root=repo_dir,
+                    repo_exec_root=str(repo_exec_root),
+                    params=source.params,
+                    timeout=cfg.timeout,
+                    output_root=run_root,
+                )
+                suites.append(suite_result)
+                if suite_result.status != "PASS":
+                    overall_pass = False
+
+        if isinstance(transport, _SshTransport):
+            remote_root = cfg.transport.remote_workdir.rstrip("/")
+            transport.collect_directory(remote_root, output_root / "remote-logs")
+
+        self._write_summary(output_root, label=label, backend=backend, suites=suites, passed=overall_pass)
+        return DirectRunResult(backend=backend, passed=overall_pass, suites=suites)
+
+    def _merged_config(
+        self,
+        direct_config: Optional[DirectTestConfig],
+        overrides: Optional[DirectRunOverrides],
+    ) -> DirectTestConfig:
+        base = direct_config or DirectTestConfig()
+        transport = base.transport or DirectTransportConfig()
+
+        definitions: List[TestDefinitionSource] = [
+            TestDefinitionSource(
+                repo_url=s.repo_url,
+                ref=s.ref,
+                paths=list(s.paths),
+                params=dict(s.params),
+            )
+            for s in base.definitions
+        ]
+
+        if overrides and overrides.repo_url:
+            if definitions:
+                definitions[0].repo_url = overrides.repo_url
+            else:
+                definitions = [TestDefinitionSource(repo_url=overrides.repo_url)]
+        if overrides and overrides.repo_ref:
+            if definitions:
+                definitions[0].ref = overrides.repo_ref
+        if overrides and overrides.definition_paths:
+            if definitions:
+                definitions[0].paths = list(overrides.definition_paths)
+        if overrides and overrides.params:
+            if definitions:
+                merged = dict(definitions[0].params)
+                merged.update({k: str(v) for k, v in overrides.params.items()})
+                definitions[0].params = merged
+
+        if not definitions:
+            raise RuntimeError(
+                "Direct test backend requires at least one test-definition source (testing.direct.definitions)."
+            )
+
+        if overrides and overrides.ssh_host is not None:
+            transport.host = overrides.ssh_host
+        if overrides and overrides.ssh_user is not None:
+            transport.user = overrides.ssh_user
+        if overrides and overrides.ssh_port is not None:
+            transport.port = int(overrides.ssh_port)
+        if overrides and overrides.ssh_key is not None:
+            transport.key_path = overrides.ssh_key
+        if overrides and overrides.ssh_password is not None:
+            transport.password = overrides.ssh_password
+        if overrides and overrides.ssh_known_hosts_file is not None:
+            transport.known_hosts_file = overrides.ssh_known_hosts_file
+        if overrides and overrides.ssh_strict_host_key_checking is not None:
+            transport.strict_host_key_checking = bool(overrides.ssh_strict_host_key_checking)
+        if overrides and overrides.ssh_remote_workdir is not None:
+            transport.remote_workdir = overrides.ssh_remote_workdir
+        if overrides and overrides.ssh_serial_device is not None:
+            transport.serial_device = overrides.ssh_serial_device
+        if overrides and overrides.ssh_serial_baudrate is not None:
+            transport.serial_baudrate = int(overrides.ssh_serial_baudrate)
+
+        timeout = base.timeout
+        if overrides and overrides.timeout is not None:
+            timeout = int(overrides.timeout)
+
+        output_dir = base.output_dir
+        if overrides and overrides.output_dir is not None:
+            output_dir = overrides.output_dir
+
+        return DirectTestConfig(
+            definitions=definitions,
+            transport=transport,
+            timeout=timeout,
+            output_dir=output_dir,
+        )
+
+    def _build_transport(self, transport: DirectTransportConfig, backend: str) -> _BaseTransport:
+        mode = transport.mode or "local"
+        if backend == "direct-ssh":
+            mode = "ssh"
+        elif backend == "direct-local":
+            mode = "local"
+
+        if mode == "ssh":
+            return _SshTransport(transport)
+        return _LocalTransport()
+
+    def _prepare_source_repo(self, source: TestDefinitionSource) -> Path:
+        if not source.repo_url:
+            raise RuntimeError("Direct test-definition source is missing repo_url.")
+
+        self._cache_root.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.sha1(source.repo_url.encode("utf-8")).hexdigest()[:12]
+        repo_dir = self._cache_root / f"repo-{cache_key}"
+
+        if (repo_dir / ".git").exists():
+            self._git(["fetch", "--all", "--tags"], cwd=repo_dir)
+        else:
+            self._git(["clone", source.repo_url, str(repo_dir)], cwd=self._cache_root)
+
+        target_ref = source.ref or "HEAD"
+        self._git(["checkout", target_ref], cwd=repo_dir)
+
+        return repo_dir
+
+    def _git(self, args: List[str], cwd: Path) -> None:
+        cmd = ["git", *args]
+        proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Git command failed: {' '.join(cmd)}\n"
+                f"stdout: {proc.stdout.strip()}\n"
+                f"stderr: {proc.stderr.strip()}"
+            )
+
+    def _resolve_definition_files(self, repo_dir: Path, paths: List[str]) -> List[Path]:
+        search_paths = paths or ["."]
+        found: List[Path] = []
+        seen = set()
+
+        for p in search_paths:
+            candidate = (repo_dir / p).resolve()
+            if candidate.is_file() and candidate.suffix in (".yaml", ".yml"):
+                if candidate not in seen:
+                    found.append(candidate)
+                    seen.add(candidate)
+                continue
+
+            if candidate.is_dir():
+                matches = sorted(candidate.rglob("*.yaml")) + sorted(candidate.rglob("*.yml"))
+                for match in matches:
+                    if match.is_file() and match not in seen:
+                        found.append(match)
+                        seen.add(match)
+                continue
+
+            # Glob inside repo root
+            for match in sorted(repo_dir.glob(p)):
+                if match.is_file() and match.suffix in (".yaml", ".yml") and match not in seen:
+                    found.append(match)
+                    seen.add(match)
+
+        return found
+
+    def _load_definition(self, path: Path) -> Dict:
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise RuntimeError(f"Failed to read test-definition '{path}': {exc}") from exc
+
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"Invalid test-definition format in '{path}'.")
+        return raw
+
+    def _extract_steps(self, definition: Dict) -> List[str]:
+        run = definition.get("run") or {}
+        steps = run.get("steps") if isinstance(run, dict) else None
+        if not isinstance(steps, list):
+            return []
+
+        commands: List[str] = []
+        for step in steps:
+            if isinstance(step, str):
+                commands.append(step)
+            elif isinstance(step, dict):
+                cmd = step.get("command") or step.get("run") or ""
+                if cmd:
+                    commands.append(str(cmd))
+        return commands
+
+    def _expand_vars(self, text: str, params: Dict[str, str]) -> str:
+        def repl_brace(match: re.Match) -> str:
+            key = match.group(1)
+            return str(params.get(key, match.group(0)))
+
+        def repl_dollar(match: re.Match) -> str:
+            key = match.group(1)
+            return str(params.get(key, match.group(0)))
+
+        out = _VAR_BRACE_RE.sub(repl_brace, text)
+        out = _VAR_DOLLAR_RE.sub(repl_dollar, out)
+        return out
+
+    def _run_single_definition(
+        self,
+        transport: _BaseTransport,
+        suite_path: Path,
+        suite_rel_path: Path,
+        repo_local_root: Path,
+        repo_exec_root: str,
+        params: Dict[str, str],
+        timeout: int,
+        output_root: Path,
+    ) -> DirectTestSuiteResult:
+        definition = self._load_definition(suite_path)
+        metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
+        suite_name = metadata.get("name") or suite_path.stem
+
+        def_params = definition.get("params") if isinstance(definition.get("params"), dict) else {}
+        merged_params = {k: str(v) for k, v in def_params.items()}
+        merged_params.update({k: str(v) for k, v in params.items()})
+
+        steps = self._extract_steps(definition)
+        suite_log_dir = output_root / suite_rel_path.parent / suite_rel_path.stem
+        suite_log_dir.mkdir(parents=True, exist_ok=True)
+
+        case_results: List[DirectTestCaseResult] = []
+        suite_start = time.monotonic()
+        suite_pass = True
+
+        run_cwd = str(Path(repo_exec_root) / suite_rel_path.parent)
+
+        for idx, raw_cmd in enumerate(steps, start=1):
+            expanded = self._expand_vars(str(raw_cmd), merged_params)
+            step_name = f"step-{idx}"
+            log_file = suite_log_dir / f"{step_name}.log"
+
+            start = time.monotonic()
+            timed_out = False
+            try:
+                rc, stdout, stderr = transport.run(
+                    expanded,
+                    cwd=run_cwd,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                rc = 124
+                stdout = exc.stdout or ""
+                stderr = (exc.stderr or "") + "\nCommand timed out"
+                timed_out = True
+            except Exception as exc:
+                rc = 1
+                stdout = ""
+                stderr = str(exc)
+
+            duration = time.monotonic() - start
+            status = "PASS" if rc == 0 else "FAIL"
+            if status != "PASS":
+                suite_pass = False
+
+            log_file.write_text(
+                f"# command\n{expanded}\n\n"
+                f"# return_code\n{rc}\n\n"
+                f"# stdout\n{stdout}\n\n"
+                f"# stderr\n{stderr}\n",
+                encoding="utf-8",
+            )
+
+            case_name = step_name if not timed_out else f"{step_name}-timeout"
+            case_results.append(
+                DirectTestCaseResult(
+                    name=case_name,
+                    status=status,
+                    duration=duration,
+                    command=expanded,
+                    log_path=str(log_file),
+                )
+            )
+
+            if rc != 0:
+                break
+
+        suite_duration = time.monotonic() - suite_start
+        return DirectTestSuiteResult(
+            name=str(suite_name),
+            status="PASS" if suite_pass else "FAIL",
+            duration=suite_duration,
+            log_dir=str(suite_log_dir),
+            cases=case_results,
+        )
+
+    def _write_summary(
+        self,
+        output_dir: Path,
+        label: str,
+        backend: str,
+        suites: List[DirectTestSuiteResult],
+        passed: bool,
+    ) -> None:
+        summary = {
+            "label": label,
+            "backend": backend,
+            "passed": passed,
+            "suite_count": len(suites),
+            "suites": [
+                {
+                    "name": s.name,
+                    "status": s.status,
+                    "duration": s.duration,
+                    "log_dir": s.log_dir,
+                    "cases": [
+                        {
+                            "name": c.name,
+                            "status": c.status,
+                            "duration": c.duration,
+                            "command": c.command,
+                            "log_path": c.log_path,
+                        }
+                        for c in s.cases
+                    ],
+                }
+                for s in suites
+            ],
+        }
+        (output_dir / "direct-test-summary.json").write_text(
+            json.dumps(summary, indent=2),
+            encoding="utf-8",
+        )

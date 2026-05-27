@@ -529,7 +529,17 @@ class TestV2DataClasses:
 # LavaServerConfig and LavaTestConfig — new artifact fields
 # =============================================================================
 
-from bsp.models import LavaServerConfig, LavaTestConfig, TestingConfig, RegistryRoot, Specification, Registry
+from bsp.models import (
+    LavaServerConfig,
+    LavaTestConfig,
+    TestingConfig,
+    RegistryRoot,
+    Specification,
+    Registry,
+    DirectTestConfig,
+    DirectTransportConfig,
+    TestDefinitionSource,
+)
 
 
 class TestLavaServerConfig:
@@ -598,6 +608,38 @@ class TestLavaServerConfigInRegistryRoot:
             registry=Registry(),
         )
         assert root.lava is None
+
+
+class TestDirectTestingConfig:
+    def test_testing_backend_defaults_to_lava(self):
+        cfg = TestingConfig()
+        assert cfg.backend == "lava"
+
+    def test_direct_config_defaults(self):
+        cfg = DirectTestConfig()
+        assert cfg.timeout == 1800
+        assert cfg.output_dir == ""
+        assert cfg.definitions == []
+        assert cfg.transport is None
+
+    def test_direct_transport_defaults(self):
+        transport = DirectTransportConfig()
+        assert transport.mode == "local"
+        assert transport.port == 22
+        assert transport.strict_host_key_checking is True
+        assert transport.serial_baudrate == 115200
+
+    def test_test_definition_source_fields(self):
+        src = TestDefinitionSource(
+            repo_url="https://github.com/Linaro/test-definitions.git",
+            ref="main",
+            paths=["smoke.yaml", "network/"],
+            params={"BOARD": "dut-1"},
+        )
+        assert src.repo_url.endswith("test-definitions.git")
+        assert src.ref == "main"
+        assert src.paths == ["smoke.yaml", "network/"]
+        assert src.params["BOARD"] == "dut-1"
 
 
 # =============================================================================

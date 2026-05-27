@@ -382,3 +382,62 @@ class TestFetchCommand:
         _, kwargs = mock_fetch.call_args
         assert kwargs.get("target") == "core-image-minimal"
         assert kwargs.get("build_path_override") == custom_path
+
+
+class TestTestCommand:
+    def test_test_command_forwards_direct_backend_flags(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-ssh",
+            "--test-repo-url", "https://example.com/tests.git",
+            "--test-repo-ref", "main",
+            "--test-definition-path", "smoke.yaml",
+            "--test-definition-path", "network/",
+            "--test-param", "BOARD=dut1",
+            "--direct-timeout", "120",
+            "--direct-output-dir", "/tmp/out",
+            "--ssh-host", "10.0.0.2",
+            "--ssh-user", "root",
+            "--ssh-port", "2222",
+            "--ssh-key", "/tmp/id_rsa",
+            "--ssh-password", "pw",
+            "--ssh-known-hosts-file", "/tmp/known_hosts",
+            "--ssh-no-strict-host-key-checking",
+            "--ssh-remote-workdir", "/tmp/remote",
+            "--ssh-serial-device", "/dev/ttyUSB0",
+            "--ssh-serial-baudrate", "9600",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("backend") == "direct-ssh"
+        assert kwargs.get("test_repo_url") == "https://example.com/tests.git"
+        assert kwargs.get("test_repo_ref") == "main"
+        assert kwargs.get("test_definition_paths") == ["smoke.yaml", "network/"]
+        assert kwargs.get("test_params") == {"BOARD": "dut1"}
+        assert kwargs.get("direct_timeout") == 120
+        assert kwargs.get("direct_output_dir") == "/tmp/out"
+        assert kwargs.get("ssh_host") == "10.0.0.2"
+        assert kwargs.get("ssh_user") == "root"
+        assert kwargs.get("ssh_port") == 2222
+        assert kwargs.get("ssh_key") == "/tmp/id_rsa"
+        assert kwargs.get("ssh_password") == "pw"
+        assert kwargs.get("ssh_known_hosts_file") == "/tmp/known_hosts"
+        assert kwargs.get("ssh_strict_host_key_checking") is False
+        assert kwargs.get("ssh_remote_workdir") == "/tmp/remote"
+        assert kwargs.get("ssh_serial_device") == "/dev/ttyUSB0"
+        assert kwargs.get("ssh_serial_baudrate") == 9600
+
+    def test_test_command_rejects_invalid_test_param(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-local",
+            "--test-param", "INVALID",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 1
+        mock_test.assert_not_called()

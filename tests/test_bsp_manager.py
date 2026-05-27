@@ -4141,6 +4141,44 @@ class TestLavaEnvVarExpansion:
                     assert "$ENV{TEST_LAVA_SERVER}" in server_arg
 
 
+class TestTestBackendDispatch:
+    def test_dispatches_to_lava_backend(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset("test-bsp")
+
+        with patch.object(manager, "_test_resolved_lava", return_value=True) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=False) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=preset.testing if preset else None,
+                    backend="lava",
+                )
+
+        assert passed is True
+        mock_lava.assert_called_once()
+        mock_direct.assert_not_called()
+
+    def test_dispatches_to_direct_backend_from_testing_config(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.backend = "direct-local"
+        testing_config.direct = MagicMock()
+
+        with patch.object(manager, "_test_resolved_lava", return_value=False) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=True) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=testing_config,
+                )
+
+        assert passed is True
+        mock_lava.assert_not_called()
+        mock_direct.assert_called_once()
+
+
 # =============================================================================
 # Multi-registry tests
 # =============================================================================

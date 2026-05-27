@@ -1181,7 +1181,7 @@ When the `releases` list is used the per-release build path is computed as:
 In both cases the `build.container` override (if present) is applied unchanged
 to every expanded preset.
 
-#### Multi-release preset with HIL testing
+#### Multi-release preset with testing backends
 
 All non-build fields are propagated to every expanded preset.  The `testing`
 block below is therefore active for **both** `poky-qemux86-64-scarthgap` and
@@ -1200,6 +1200,16 @@ registry:
         path: build/poky-qemux86-64
       # testing block is inherited by every expanded preset
       testing:
+        backend: direct-local
+        direct:
+          definitions:
+            - repo_url: "https://github.com/Linaro/test-definitions.git"
+              ref: "main"
+              paths:
+                - "automated/linux"
+              params:
+                BOARD_IP: "192.168.178.65"
+        # optional LAVA settings can still coexist for backend=lava
         lava:
           device_type: "qemu-qemux86-64"                  # LAVA device type label
           artifact_url: "http://files.ci/builds"          # where the image is served
@@ -1217,8 +1227,8 @@ registry:
 This expands into two concrete presets that can each be tested independently:
 
 ```bash
-bsp test poky-qemux86-64-scarthgap --wait
-bsp test poky-qemux86-64-walnascar --wait
+bsp test poky-qemux86-64-scarthgap --backend direct-local
+bsp test poky-qemux86-64-walnascar --backend lava --wait
 ```
 
 ### `bsp[*]` fields
@@ -1249,9 +1259,45 @@ bsp test poky-qemux86-64-walnascar --wait
 
 ### `bsp[*].testing` fields
 
-| Field  | Type          | Description |
-|--------|---------------|-------------|
-| `lava` | object (opt.) | LAVA HIL test configuration for this preset (see `bsp[*].testing.lava` below) |
+| Field     | Type          | Description |
+|-----------|---------------|-------------|
+| `backend` | string (opt.) | Backend selector: `lava` (default), `direct-local`, or `direct-ssh`. |
+| `lava`    | object (opt.) | LAVA HIL test configuration for this preset (see `bsp[*].testing.lava` below). |
+| `direct`  | object (opt.) | Direct test-definition execution config (see `bsp[*].testing.direct` below). |
+
+### `bsp[*].testing.direct` fields
+
+| Field         | Type            | Description |
+|---------------|-----------------|-------------|
+| `definitions` | list[object]    | One or more test-definition sources to execute (full test sets supported). |
+| `transport`   | object (opt.)   | Transport config for direct runs (`local` or `ssh`). |
+| `timeout`     | int (opt.)      | Per-step timeout in seconds (default: `1800`). |
+| `output_dir`  | string (opt.)   | Output directory for direct-run logs and summary JSON. |
+
+### `bsp[*].testing.direct.definitions[*]` fields
+
+| Field      | Type            | Description |
+|------------|-----------------|-------------|
+| `repo_url` | string          | Git URL for the test-definition repository. |
+| `ref`      | string (opt.)   | Optional git ref (branch/tag/commit). |
+| `paths`    | list[str] (opt.)| Definition file/dir/glob paths inside the repo. |
+| `params`   | dict[str, str] (opt.) | Parameter overrides applied to `run.steps` expansion. |
+
+### `bsp[*].testing.direct.transport` fields
+
+| Field                       | Type          | Description |
+|----------------------------|---------------|-------------|
+| `mode`                     | string        | `local` (default) or `ssh`. |
+| `host`                     | string (opt.) | SSH host for `mode: ssh`. |
+| `user`                     | string (opt.) | SSH user. |
+| `port`                     | int (opt.)    | SSH port (default: `22`). |
+| `key_path`                 | string (opt.) | SSH private key path. |
+| `password`                 | string (opt.) | SSH password (uses `sshpass` when available). |
+| `strict_host_key_checking` | bool (opt.)   | Strict host key checking toggle (default: `true`). |
+| `known_hosts_file`         | string (opt.) | Optional known_hosts file path. |
+| `remote_workdir`           | string (opt.) | Remote staging directory for direct-ssh execution. |
+| `serial_device`            | string (opt.) | Serial device path (e.g. `/dev/ttyUSB0`) used in SSH ProxyCommand mode. |
+| `serial_baudrate`          | int (opt.)    | Serial baudrate for `serial_device` (default: `115200`). |
 
 ### `bsp[*].testing.lava` fields
 
