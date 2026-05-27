@@ -3257,6 +3257,25 @@ class BspManager:
         suites = client.get_job_results(job_id)
         overall_pass = health == "Complete" and all(s.passed for s in suites)
 
+        if self.verbose:
+            logging.debug("Collected %d LAVA suite(s) for job %d.", len(suites), job_id)
+            for suite in suites:
+                logging.debug(
+                    "LAVA suite result: suite=%s status=%s (%d/%d passed)",
+                    suite.name,
+                    "PASS" if suite.passed else "FAIL",
+                    suite.total - suite.failures,
+                    suite.total,
+                )
+                for case in suite.cases:
+                    logging.debug(
+                        "LAVA case result: suite=%s case=%s status=%s metadata=%s",
+                        suite.name,
+                        case.name,
+                        "PASS" if case.passed else "FAIL",
+                        case.metadata,
+                    )
+
         summary_suites = [
             {
                 "name": s.name,
@@ -3348,6 +3367,33 @@ class BspManager:
             }
             for suite in result.suites
         ]
+        if self.verbose:
+            logging.debug(
+                "Collected %d direct suite(s) for backend %s.",
+                len(result.suites),
+                result.backend,
+            )
+            for suite in result.suites:
+                passed_cases = sum(1 for case in suite.cases if case.status == "PASS")
+                logging.debug(
+                    "Direct suite result: suite=%s status=%s (%d/%d passed) duration=%.2fs log_dir=%s",
+                    suite.name,
+                    suite.status,
+                    passed_cases,
+                    len(suite.cases),
+                    suite.duration,
+                    suite.log_dir,
+                )
+                for case in suite.cases:
+                    logging.debug(
+                        "Direct case result: suite=%s case=%s status=%s duration=%.2fs log=%s command=%s",
+                        suite.name,
+                        case.name,
+                        case.status,
+                        case.duration,
+                        case.log_path,
+                        case.command,
+                    )
         self._print_test_summary(f"Direct ({result.backend})", summary_suites)
         return result.passed
 

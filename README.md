@@ -960,6 +960,7 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--ssh-known-hosts-file` / `--ssh-no-strict-host-key-checking` | SSH host key verification controls |
 | `--ssh-remote-workdir PATH` | Remote staging directory for `direct-ssh` / `direct-serial` runs |
 | `--ssh-serial-device /dev/ttyUSBX` / `--ssh-serial-baudrate BAUD` | Serial transport settings (required for `direct-serial`, optional for `direct-ssh`) |
+| `-v` / `--verbose` | Emit detailed per-suite and per-case test execution logs |
 
 **Examples:**
 
@@ -992,6 +993,13 @@ bsp test poky-qemuarm64-scarthgap \
   --ssh-serial-device /dev/ttyUSB0 \
   --ssh-serial-baudrate 115200
 ```
+
+When `--verbose` is enabled, test execution logs include per-suite and per-case outcomes:
+
+- **LAVA backend**: logs each suite and case result after `--wait` completes.
+- **Direct backends**: logs each suite/case status, execution duration, command, and generated per-step log file path.
+
+Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including `direct-test-summary.json` and per-step log files.
 
 #### `remotes` — Manage named remote registries
 
