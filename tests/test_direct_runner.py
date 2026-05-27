@@ -97,8 +97,7 @@ run:
             """
 run:
   steps:
-    - "cd ./defs"
-    - "test -f smoke.yaml"
+    - "cd ./defs && test -f smoke.yaml"
 """,
             encoding="utf-8",
         )
