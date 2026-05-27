@@ -1039,12 +1039,13 @@ class KasManager:
             # Handle scp-like syntax: git@host:org/repo.git
             at_pos = url.find("@")
             colon_pos = url.find(":")
+            host_and_path = url[at_pos + 1:] if at_pos != -1 else ""
             # Match scp-like git URLs (git@host:path), but avoid absolute paths.
             if (
                 at_pos != -1
                 and colon_pos > at_pos
                 and not url.startswith("/")
-                and url[at_pos + 1:].count(":") == 1
+                and host_and_path.count(":") == 1
             ):
                 user_host, repo_path = url.split(":", 1)
                 fetch = f"ssh://{user_host}"
