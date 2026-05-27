@@ -37,6 +37,49 @@ def _init_git_repo(repo_dir: Path) -> None:
 
 
 class TestDirectRunnerLocal:
+    def test_emits_step_progress_to_stdout(self, tmp_path, capsys):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo first"
+    - "echo second"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/smoke.yaml"],
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        captured = capsys.readouterr()
+        assert result.passed is True
+        assert "[direct-test] smoke-suite step-1 (1/2) running" in captured.out
+        assert "[direct-test] smoke-suite step-1 (1/2) PASS in" in captured.out
+        assert "[direct-test] smoke-suite step-2 (2/2) running" in captured.out
+        assert "[direct-test] smoke-suite step-2 (2/2) PASS in" in captured.out
+
     def test_runs_definition_set_locally(self, tmp_path):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"

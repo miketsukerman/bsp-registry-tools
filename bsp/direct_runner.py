@@ -699,6 +699,7 @@ class DirectTestRunner:
         definition = self._load_definition(suite_path)
         metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
         suite_name = metadata.get("name") or suite_path.stem
+        suite_display_name = str(suite_name)
 
         def_params = definition.get("params") if isinstance(definition.get("params"), dict) else {}
         merged_params = {k: str(v) for k, v in def_params.items()}
@@ -718,6 +719,12 @@ class DirectTestRunner:
             expanded = self._expand_vars(str(raw_cmd), merged_params)
             step_name = f"step-{idx}"
             log_file = suite_log_dir / f"{step_name}.log"
+            total_steps = len(steps)
+
+            print(
+                f"[direct-test] {suite_display_name} {step_name} ({idx}/{total_steps}) running",
+                flush=True,
+            )
 
             start = time.monotonic()
             timed_out = False
@@ -751,6 +758,12 @@ class DirectTestRunner:
             if status != "PASS":
                 suite_pass = False
 
+            print(
+                f"[direct-test] {suite_display_name} {step_name} ({idx}/{total_steps}) "
+                f"{status} in {duration:.2f}s",
+                flush=True,
+            )
+
             lava_signals = self._parse_lava_signals(stdout)
 
             log_file.write_text(
@@ -783,7 +796,7 @@ class DirectTestRunner:
 
         suite_duration = time.monotonic() - suite_start
         return DirectTestSuiteResult(
-            name=str(suite_name),
+            name=suite_display_name,
             status="PASS" if suite_pass else "FAIL",
             duration=suite_duration,
             log_dir=str(suite_log_dir),
