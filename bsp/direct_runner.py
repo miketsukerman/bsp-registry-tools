@@ -489,6 +489,21 @@ class DirectTestRunner:
         out = _VAR_DOLLAR_RE.sub(repl_dollar, out)
         return out
 
+    def _updated_cwd_after_step(self, current_cwd: str, command: str) -> str:
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return current_cwd
+        if len(tokens) != 2 or tokens[0] != "cd":
+            return current_cwd
+
+        target = tokens[1]
+        if target == "-":
+            return current_cwd
+        if os.path.isabs(target):
+            return os.path.normpath(target)
+        return os.path.normpath(str(Path(current_cwd) / target))
+
     def _run_single_definition(
         self,
         transport: _BaseTransport,
@@ -574,6 +589,9 @@ class DirectTestRunner:
                     timed_out=timed_out,
                 )
             )
+
+            if rc == 0:
+                run_cwd = self._updated_cwd_after_step(run_cwd, expanded)
 
             if rc != 0 and not continue_on_failure:
                 # Default behavior is fail-fast within a suite; set
