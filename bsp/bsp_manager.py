@@ -5,8 +5,11 @@ Main BSP management class coordinating registry, builds, and exports.
 import logging
 import os
 import json
+import platform
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -26,7 +29,12 @@ from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .scanner import ImageScanner, ScanResult
 from .storage import create_backend
-from .utils import get_registry_from_yaml_file, build_docker, expand_build_options_env
+from .utils import (
+    get_registry_from_yaml_file,
+    build_docker,
+    expand_build_options_env,
+    get_installed_package_version,
+)
 
 if COLORAMA_AVAILABLE:
     from colorama import Fore, Style
@@ -1631,7 +1639,17 @@ class BspManager:
         if resolved.device.soc_family:
             return resolved.device.soc_family
 
-        import re
+        family_patterns = (
+            (r"(?:i\.?mx|imx)[\s-]?([0-9][a-z0-9]*)", lambda m: f"imx{m.group(1).lower()}"),
+            (r"\b(rk[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b((?:qcs|sa|sm|sc)[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(bcm[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(rpi[0-9]+)\b", lambda m: m.group(1).lower()),
+            (r"\bras(?:pberry)?\s*pi\s*([0-9]+)\b", lambda m: f"rpi{m.group(1).lower()}"),
+            (r"\b(am[0-9]{2}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(j[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+        )
+        soc_vendor = (resolved.device.soc_vendor or "").lower().replace("-", "").replace(" ", "")
 
         for source in (
             resolved.device.description,
@@ -1640,9 +1658,14 @@ class BspManager:
         ):
             if not source:
                 continue
-            match = re.search(r"(?:i\.?mx|imx)[\s-]?([0-9][a-z0-9]*)", source, re.IGNORECASE)
-            if match:
-                return f"imx{match.group(1).lower()}"
+            for pattern, formatter in family_patterns:
+                match = re.search(pattern, source, re.IGNORECASE)
+                if not match:
+                    continue
+                family = formatter(match)
+                if soc_vendor in {"broadcom", "raspberrypi"} and family in {"rpi4", "rpi5"}:
+                    return {"rpi4": "bcm2711", "rpi5": "bcm2712"}[family]
+                return family
         return None
 
     @staticmethod
@@ -1659,6 +1682,33 @@ class BspManager:
             else resolved.container.build_options
         )
         return BspManager._compose_docker_build_options(base_options, use_cache=None)
+
+    @staticmethod
+    def _resolve_manifest_registry_git_provenance(config_path: Path) -> Dict[str, Optional[Any]]:
+        """Resolve git commit and dirty status for the registry repository."""
+        registry_dir = config_path.parent if config_path.is_file() else config_path
+        try:
+            rev_parse = subprocess.run(
+                ["git", "-C", str(registry_dir), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            status = subprocess.run(
+                ["git", "-C", str(registry_dir), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return {
+                "commit_sha": None,
+                "is_dirty": None,
+            }
+        return {
+            "commit_sha": rev_parse.stdout.strip() or None,
+            "is_dirty": bool(status.stdout.strip()),
+        }
 
     def _generate_build_manifest(
         self,
@@ -1686,6 +1736,7 @@ class BspManager:
         manifest_container_build_options = self._resolve_manifest_container_build_options(
             resolved, docker_build_options
         )
+        registry_git_provenance = self._resolve_manifest_registry_git_provenance(self.config_path)
 
         container_name = None
         if resolved.container:
@@ -1699,6 +1750,20 @@ class BspManager:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "registry": {
                 "path": str(self.config_path),
+            },
+            "provenance": {
+                "tool": {
+                    "name": "bsp-registry-tools",
+                    "version": get_installed_package_version("bsp-registry-tools"),
+                },
+                "cli": {
+                    "argv": list(sys.argv),
+                    "command": shlex.join(sys.argv),
+                },
+                "python": {
+                    "version": platform.python_version(),
+                },
+                "registry_git": registry_git_provenance,
             },
             "preset": (
                 {

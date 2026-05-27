@@ -5,7 +5,6 @@ CLI entry point for the BSP registry manager.
 import argparse
 import logging
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from .bsp_manager import BspManager
@@ -23,7 +22,7 @@ from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig, YoctoCacheConfig
 from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher
 from .remotes_manager import RemotesManager
-from .utils import SUPPORTED_REGISTRY_VERSION
+from .utils import SUPPORTED_REGISTRY_VERSION, get_installed_package_version
 
 # =============================================================================
 # Helpers
@@ -265,10 +264,7 @@ def main() -> int:
     """
     try:
         # Parse command line arguments
-        try:
-            _version = _pkg_version("bsp-registry-tools")
-        except PackageNotFoundError:
-            _version = "unknown"
+        _version = get_installed_package_version("bsp-registry-tools")
         _version_str = (
             f"bsp-registry-tools {_version}\n"
             f"Supported model description version: {SUPPORTED_REGISTRY_VERSION}"
