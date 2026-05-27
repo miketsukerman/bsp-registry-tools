@@ -31,6 +31,7 @@ class DirectTestCaseResult:
     duration: float
     command: str
     log_path: Optional[str] = None
+    timed_out: bool = False
 
 
 @dataclass
@@ -148,6 +149,11 @@ class _SshTransport(_BaseTransport):
             return base_cmd
         if shutil.which("sshpass") is None:
             raise RuntimeError("Password authentication requires 'sshpass' to be installed.")
+        # sshpass exposes the password in process arguments; prefer key-based
+        # authentication whenever possible and use this only when required.
+        logging.warning(
+            "Using SSH password authentication via sshpass; this can expose credentials in process listings."
+        )
         return ["sshpass", "-p", self.config.password, *base_cmd]
 
     def _run_subprocess(
@@ -204,8 +210,9 @@ class _SshTransport(_BaseTransport):
             "-P",
             str(self.config.port),
             *(["-i", self.config.key_path] if self.config.key_path else []),
-            *( ["-o", f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}"] ),
-            *( ["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else [] ),
+            "-o",
+            f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}",
+            *(["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else []),
             str(local_dir),
             f"{self._target()}:{remote_dir.rstrip('/')}/",
         ]
@@ -221,8 +228,9 @@ class _SshTransport(_BaseTransport):
             "-P",
             str(self.config.port),
             *(["-i", self.config.key_path] if self.config.key_path else []),
-            *( ["-o", f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}"] ),
-            *( ["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else [] ),
+            "-o",
+            f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}",
+            *(["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else []),
             f"{self._target()}:{remote_dir.rstrip('/')}/",
             str(local_dir),
         ]
@@ -278,6 +286,7 @@ class DirectTestRunner:
                     repo_exec_root=str(repo_exec_root),
                     params=source.params,
                     timeout=cfg.timeout,
+                    continue_on_failure=cfg.continue_on_failure,
                     output_root=run_root,
                 )
                 suites.append(suite_result)
@@ -365,6 +374,7 @@ class DirectTestRunner:
             transport=transport,
             timeout=timeout,
             output_dir=output_dir,
+            continue_on_failure=base.continue_on_failure,
         )
 
     def _build_transport(self, transport: DirectTransportConfig, backend: str) -> _BaseTransport:
@@ -483,6 +493,7 @@ class DirectTestRunner:
         repo_exec_root: str,
         params: Dict[str, str],
         timeout: int,
+        continue_on_failure: bool,
         output_root: Path,
     ) -> DirectTestSuiteResult:
         definition = self._load_definition(suite_path)
@@ -518,8 +529,17 @@ class DirectTestRunner:
                 )
             except subprocess.TimeoutExpired as exc:
                 rc = 124
-                stdout = exc.stdout or ""
-                stderr = (exc.stderr or "") + "\nCommand timed out"
+                raw_stdout = exc.stdout if hasattr(exc, "stdout") else ""
+                raw_stderr = exc.stderr if hasattr(exc, "stderr") else ""
+                if isinstance(raw_stdout, bytes):
+                    stdout = raw_stdout.decode("utf-8", errors="replace")
+                else:
+                    stdout = raw_stdout or ""
+                if isinstance(raw_stderr, bytes):
+                    stderr = raw_stderr.decode("utf-8", errors="replace")
+                else:
+                    stderr = raw_stderr or ""
+                stderr = f"{stderr}\nCommand timed out".strip()
                 timed_out = True
             except Exception as exc:
                 rc = 1
@@ -539,18 +559,20 @@ class DirectTestRunner:
                 encoding="utf-8",
             )
 
-            case_name = step_name if not timed_out else f"{step_name}-timeout"
             case_results.append(
                 DirectTestCaseResult(
-                    name=case_name,
+                    name=step_name,
                     status=status,
                     duration=duration,
                     command=expanded,
                     log_path=str(log_file),
+                    timed_out=timed_out,
                 )
             )
 
-            if rc != 0:
+            if rc != 0 and not continue_on_failure:
+                # Default behavior is fail-fast within a suite; set
+                # continue_on_failure to execute all remaining steps.
                 break
 
         suite_duration = time.monotonic() - suite_start
@@ -588,6 +610,7 @@ class DirectTestRunner:
                             "duration": c.duration,
                             "command": c.command,
                             "log_path": c.log_path,
+                            "timed_out": c.timed_out,
                         }
                         for c in s.cases
                     ],

@@ -983,11 +983,14 @@ class DirectTestConfig:
         transport: Local or SSH transport settings.
         timeout: Per-step timeout in seconds (default: 1800).
         output_dir: Optional output directory for logs/reports.
+        continue_on_failure: When ``True``, continue executing remaining steps
+                             in a suite after a failing step.
     """
     definitions: List[TestDefinitionSource] = field(default_factory=empty_list)
     transport: Optional[DirectTransportConfig] = None
     timeout: int = 1800
     output_dir: str = ""
+    continue_on_failure: bool = False
 
 
 @dataclass

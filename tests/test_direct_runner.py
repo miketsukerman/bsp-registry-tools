@@ -106,10 +106,10 @@ class TestSshTransport:
         cfg.password = "pw"
         transport = _SshTransport(cfg)
 
-        with patch("bsp.direct_runner.shutil.which", return_value="/usr/bin/sshpass"):
-            with patch("bsp.direct_runner.subprocess.run") as mock_run:
-                mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
-                rc, _out, _err = transport.run("echo ok", cwd="/tmp/work")
+        with patch("bsp.direct_runner.shutil.which", return_value="/usr/bin/sshpass"), \
+                patch("bsp.direct_runner.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            rc, _out, _err = transport.run("echo ok", cwd="/tmp/work")
 
         assert rc == 0
         cmd = mock_run.call_args[0][0]

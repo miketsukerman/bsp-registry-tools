@@ -1273,6 +1273,7 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 | `transport`   | object (opt.)   | Transport config for direct runs (`local` or `ssh`). |
 | `timeout`     | int (opt.)      | Per-step timeout in seconds (default: `1800`). |
 | `output_dir`  | string (opt.)   | Output directory for direct-run logs and summary JSON. |
+| `continue_on_failure` | bool (opt.) | Continue running remaining steps after failures (default: `false`, fail-fast). |
 
 ### `bsp[*].testing.direct.definitions[*]` fields
 

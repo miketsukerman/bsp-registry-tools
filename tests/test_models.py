@@ -619,6 +619,7 @@ class TestDirectTestingConfig:
         cfg = DirectTestConfig()
         assert cfg.timeout == 1800
         assert cfg.output_dir == ""
+        assert cfg.continue_on_failure is False
         assert cfg.definitions == []
         assert cfg.transport is None
 

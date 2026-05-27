@@ -146,11 +146,15 @@ def _parse_key_value_params(raw_params) -> dict:
     parsed = {}
     for entry in raw_params or []:
         if "=" not in entry:
-            raise ValueError(f"Invalid --test-param value '{entry}'. Expected KEY=VALUE.")
+            raise ValueError(
+                f"Invalid --test-param value '{entry}'. Expected format: KEY=VALUE (e.g., BOARD=dut-1)."
+            )
         key, value = entry.split("=", 1)
         key = key.strip()
         if not key:
             raise ValueError(f"Invalid --test-param value '{entry}'. KEY must not be empty.")
+        if value == "":
+            raise ValueError(f"Invalid --test-param value '{entry}'. VALUE must not be empty.")
         parsed[key] = value
     return parsed
 

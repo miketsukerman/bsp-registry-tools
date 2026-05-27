@@ -3381,7 +3381,12 @@ class BspManager:
         """
         Run test flow for the selected backend (LAVA, direct-local, direct-ssh).
         """
-        selected_backend = (backend or (testing_config.backend if testing_config else "lava") or "lava").strip()
+        selected_backend = backend
+        if selected_backend is None and testing_config is not None:
+            selected_backend = testing_config.backend
+        if not selected_backend:
+            selected_backend = "lava"
+        selected_backend = selected_backend.strip()
         if selected_backend not in ("lava", "direct-local", "direct-ssh"):
             logging.error(
                 "Unsupported test backend '%s'. Supported values: lava, direct-local, direct-ssh.",
