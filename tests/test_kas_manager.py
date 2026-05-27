@@ -5,6 +5,7 @@ Tests for KasManager KAS/Yocto build orchestration.
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
+
 import pytest
 
 from bsp import KasManager

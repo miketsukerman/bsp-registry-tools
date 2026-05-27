@@ -761,7 +761,7 @@ release capture and later replay in CI or production source checkout flows.
 bsp export poky-qemuarm64-scarthgap --repo-manifest --output release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
 
 # 2) Archive it together with other release metadata
-cp release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml build/poky-qemuarm64-scarthgap/
+# (assumes build artifacts/build-manifest.json were generated previously via bsp build)
 cp build/poky-qemuarm64-scarthgap/build-manifest.json release-manifests/
 ```
 
