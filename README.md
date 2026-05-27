@@ -953,7 +953,7 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--wait` | LAVA only: block until the submitted job completes |
 | `--lava-server URL` / `--lava-token TOKEN` / `--artifact-url URL` | LAVA backend overrides |
 | `--test-repo-url URL` / `--test-repo-ref REF` | Direct backend test-definition Git source override |
-| `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable) |
+| `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable). LAVA job YAML files are also accepted; suites are read from `actions[].test.definitions[].path`. |
 | `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
 | `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
 | `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
@@ -975,6 +975,12 @@ bsp test poky-qemuarm64-scarthgap \
   --test-repo-ref main \
   --test-definition-path automated/linux \
   --test-param BOARD_IP=192.168.1.10
+
+# Direct local run from a LAVA job YAML (uses actions[].test.definitions paths)
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-local \
+  --test-repo-url https://github.com/miketsukerman/test-definitions.git \
+  --test-definition-path automated/linux/modular-bsp/jobs/rsb3720-modbsp.yaml
 
 # Direct SSH run on DUT
 bsp test poky-qemuarm64-scarthgap \

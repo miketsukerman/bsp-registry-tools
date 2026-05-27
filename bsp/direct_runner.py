@@ -446,6 +446,36 @@ class DirectTestRunner:
                 repo_exec_root = Path(remote_source)
 
             for def_file in def_files:
+                entry_definitions = self._extract_lava_job_test_definitions(self._load_definition(def_file))
+                if entry_definitions:
+                    for entry_path, entry_params in entry_definitions:
+                        entry_files = self._resolve_definition_files(repo_dir, [entry_path])
+                        if not entry_files:
+                            raise RuntimeError(
+                                f"No test-definition YAML files found for LAVA job entry path "
+                                f"'{entry_path}' in '{def_file}'."
+                            )
+
+                        merged_params = {k: str(v) for k, v in source.params.items()}
+                        merged_params.update({k: str(v) for k, v in entry_params.items()})
+                        for entry_file in entry_files:
+                            rel = entry_file.relative_to(repo_dir)
+                            suite_result = self._run_single_definition(
+                                transport=transport,
+                                suite_path=entry_file,
+                                suite_rel_path=rel,
+                                repo_local_root=repo_dir,
+                                repo_exec_root=str(repo_exec_root),
+                                params=merged_params,
+                                timeout=cfg.timeout,
+                                continue_on_failure=cfg.continue_on_failure,
+                                output_root=run_root,
+                            )
+                            suites.append(suite_result)
+                            if suite_result.status != "PASS":
+                                overall_pass = False
+                    continue
+
                 rel = def_file.relative_to(repo_dir)
                 suite_result = self._run_single_definition(
                     transport=transport,
@@ -644,6 +674,33 @@ class DirectTestRunner:
                 if cmd:
                     commands.append(str(cmd))
         return commands
+
+    def _extract_lava_job_test_definitions(self, definition: Dict) -> List[Tuple[str, Dict[str, str]]]:
+        actions = definition.get("actions")
+        if not isinstance(actions, list):
+            return []
+
+        entries: List[Tuple[str, Dict[str, str]]] = []
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            test_block = action.get("test")
+            if not isinstance(test_block, dict):
+                continue
+            definitions = test_block.get("definitions")
+            if not isinstance(definitions, list):
+                continue
+
+            for test_def in definitions:
+                if not isinstance(test_def, dict):
+                    continue
+                path = test_def.get("path")
+                if not path:
+                    continue
+                params = test_def.get("parameters")
+                params_dict = {str(k): str(v) for k, v in params.items()} if isinstance(params, dict) else {}
+                entries.append((str(path), params_dict))
+        return entries
 
     def _expand_vars(self, text: str, params: Dict[str, str]) -> str:
         def repl_brace(match: re.Match) -> str:

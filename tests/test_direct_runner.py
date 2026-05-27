@@ -37,6 +37,128 @@ def _init_git_repo(repo_dir: Path) -> None:
 
 
 class TestDirectRunnerLocal:
+    def test_runs_lava_job_test_definitions_section(self, tmp_path):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        jobs_dir = repo / "jobs"
+        defs_dir.mkdir(parents=True)
+        jobs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo smoke"
+""",
+            encoding="utf-8",
+        )
+        (defs_dir / "net.yaml").write_text(
+            """
+metadata:
+  name: net-suite
+run:
+  steps:
+    - "echo net"
+""",
+            encoding="utf-8",
+        )
+        (jobs_dir / "job.yaml").write_text(
+            """
+actions:
+  - deploy:
+      to: tftp
+  - test:
+      definitions:
+        - repository: https://example.com/test-definitions.git
+          from: git
+          path: defs/smoke.yaml
+        - repository: https://example.com/test-definitions.git
+          from: git
+          path: defs/net.yaml
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["jobs/job.yaml"],
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        assert result.passed is True
+        assert [suite.name for suite in result.suites] == ["smoke-suite", "net-suite"]
+
+    def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        jobs_dir = repo / "jobs"
+        defs_dir.mkdir(parents=True)
+        jobs_dir.mkdir(parents=True)
+        (defs_dir / "param.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+run:
+  steps:
+    - "test ${SOURCE_ONLY} = base"
+    - "test ${SHARED} = entry"
+    - "test ${ENTRY_ONLY} = extra"
+""",
+            encoding="utf-8",
+        )
+        (jobs_dir / "job.yaml").write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/param.yaml
+          parameters:
+            SHARED: entry
+            ENTRY_ONLY: extra
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["jobs/job.yaml"],
+                    params={"SOURCE_ONLY": "base", "SHARED": "source"},
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        assert result.passed is True
+        assert len(result.suites) == 1
+        assert result.suites[0].name == "param-suite"
+
     def test_emits_step_progress_to_stdout(self, tmp_path, capsys):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"
