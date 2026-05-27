@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 
 import dacite
 import yaml
@@ -15,6 +16,14 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
 
 from .models import Docker, DockerArg, DockerVolume, RegistryRoot
+
+
+def get_installed_package_version(package_name: str) -> str:
+    """Return installed package version or ``unknown`` when unavailable."""
+    try:
+        return pkg_version(package_name)
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def expand_build_options_env(value: str) -> str:

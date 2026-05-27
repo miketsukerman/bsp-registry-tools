@@ -5,6 +5,7 @@ Tests for BspManager registry operations (v2.0 schema).
 import pytest
 import json
 import shlex
+import subprocess
 import yaml
 from unittest.mock import patch, MagicMock
 
@@ -758,11 +759,18 @@ class TestBspManagerBuildByComponents:
              patch("bsp.kas_manager.KasManager.build_project"), \
              patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- core-image-base\n"), \
              patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
-             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch("bsp.bsp_manager.get_installed_package_version", return_value="9.9.9"), \
+             patch("bsp.bsp_manager.sys.argv", ["bsp", "build", "imx8-scarthgap-ota"]), \
+             patch.object(
+                 BspManager,
+                 "_resolve_manifest_registry_git_provenance",
+                 return_value={"commit_sha": None, "is_dirty": None},
+             ):
             manager.build_bsp(
-                "imx8-scarthgap-ota",
-                build_path_override=str(output_dir),
-                task="compile",
+               "imx8-scarthgap-ota",
+               build_path_override=str(output_dir),
+               task="compile",
             )
 
         manifest_path = output_dir / "build-manifest.json"
@@ -774,6 +782,10 @@ class TestBspManagerBuildByComponents:
         assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
         assert data["build"]["task"] == "compile"
         assert data["build"]["resolved_targets"] == ["core-image-base"]
+        assert data["provenance"]["tool"]["name"] == "bsp-registry-tools"
+        assert data["provenance"]["tool"]["version"] == "9.9.9"
+        assert data["provenance"]["cli"]["argv"] == ["bsp", "build", "imx8-scarthgap-ota"]
+        assert data["provenance"]["cli"]["command"] == "bsp build imx8-scarthgap-ota"
 
     def test_build_by_components_writes_build_manifest(self, registry_with_features_file, tmp_path):
         manager = BspManager(config_path=str(registry_with_features_file))
@@ -937,6 +949,89 @@ registry:
         assert data["components"]["container"]["runtime_args"] == \
             "--ipc host -v /tmp/cache-root/sstate:/sstate:ro"
         assert data["components"]["container"]["build_options"] == "--network host"
+
+    def test_build_manifest_records_registry_git_provenance_when_available(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-git-provenance"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch(
+                 "bsp.bsp_manager.subprocess.run",
+                 side_effect=[
+                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="abc123\n"),
+                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout=" M file\n"),
+                 ],
+             ):
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=str(output_dir))
+
+        data = json.loads((output_dir / "build-manifest.json").read_text())
+        assert data["provenance"]["registry_git"]["commit_sha"] == "abc123"
+        assert data["provenance"]["registry_git"]["is_dirty"] is True
+
+    def test_build_manifest_records_null_registry_git_provenance_when_unavailable(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-git-provenance-unavailable"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch(
+                 "bsp.bsp_manager.subprocess.run",
+                 side_effect=subprocess.CalledProcessError(128, ["git"]),
+             ):
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=str(output_dir))
+
+        data = json.loads((output_dir / "build-manifest.json").read_text())
+        assert data["provenance"]["registry_git"]["commit_sha"] is None
+        assert data["provenance"]["registry_git"]["is_dirty"] is None
+
+    @pytest.mark.parametrize(
+        ("soc_vendor", "device_description", "preset_description", "device_slug", "expected_soc_family"),
+        [
+            ("rockchip", "Rockchip RK3588 reference board", None, "device-slug", "rk3588"),
+            ("qualcomm", None, "Automotive SA8155 build", "device-slug", "sa8155"),
+            ("broadcom", "Raspberry Pi 5 development board", None, "rpi5-devkit", "bcm2712"),
+            ("ti", None, None, "am62-evm", "am62"),
+        ],
+    )
+    def test_resolve_manifest_soc_family_non_imx_families(
+        self,
+        soc_vendor,
+        device_description,
+        preset_description,
+        device_slug,
+        expected_soc_family,
+    ):
+        resolved = MagicMock()
+        resolved.device = MagicMock(
+            soc_family=None,
+            soc_vendor=soc_vendor,
+            description=device_description,
+            slug=device_slug,
+        )
+        preset = MagicMock(description=preset_description) if preset_description else None
+        assert BspManager._resolve_manifest_soc_family(resolved, preset) == expected_soc_family
+
+    def test_resolve_manifest_soc_family_uses_deterministic_source_priority(self):
+        resolved = MagicMock()
+        resolved.device = MagicMock(
+            soc_family=None,
+            soc_vendor="qualcomm",
+            description="RK3568 board",
+            slug="am62-board",
+        )
+        preset = MagicMock(description="QCS6490 fallback")
+        assert BspManager._resolve_manifest_soc_family(resolved, preset) == "rk3568"
 
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
