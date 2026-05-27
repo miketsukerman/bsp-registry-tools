@@ -89,6 +89,42 @@ run:
         assert files[0].name == "one.yaml"
         assert files[1].name == "two.yml"
 
+    def test_runs_steps_from_repository_root(self, tmp_path):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            """
+run:
+  steps:
+    - "cd ./defs"
+    - "test -f smoke.yaml"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/smoke.yaml"],
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        assert result.passed is True
+
 
 class TestSshTransport:
     def test_builds_ssh_command_with_password_and_serial(self):

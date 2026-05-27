@@ -517,7 +517,7 @@ class DirectTestRunner:
         suite_start = time.monotonic()
         suite_pass = True
 
-        run_cwd = str(Path(repo_exec_root) / suite_rel_path.parent)
+        run_cwd = str(Path(repo_exec_root))
 
         for idx, raw_cmd in enumerate(steps, start=1):
             expanded = self._expand_vars(str(raw_cmd), merged_params)
