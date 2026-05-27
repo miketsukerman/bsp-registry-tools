@@ -1244,7 +1244,7 @@ def main() -> int:
         # ----------------------------------------------------------------
         test_parser = subparsers.add_parser(
             "test",
-            help="Run BSP tests via LAVA, direct-local, or direct-ssh backends"
+            help="Run BSP tests via LAVA, direct-local, direct-ssh, or direct-serial backends"
         )
         test_parser.add_argument(
             "bsp_name",
@@ -1301,7 +1301,7 @@ def main() -> int:
             "--backend",
             type=str,
             dest="test_backend",
-            choices=["lava", "direct-local", "direct-ssh"],
+            choices=["lava", "direct-local", "direct-ssh", "direct-serial"],
             default=None,
             help="Test backend override (default: registry testing.backend or lava)"
         )
@@ -1352,49 +1352,49 @@ def main() -> int:
             type=str,
             dest="ssh_host",
             metavar="HOST",
-            help="SSH host for direct-ssh backend"
+            help="SSH host for direct-ssh/direct-serial backends"
         )
         test_parser.add_argument(
             "--ssh-user",
             type=str,
             dest="ssh_user",
             metavar="USER",
-            help="SSH user for direct-ssh backend"
+            help="SSH user for direct-ssh/direct-serial backends"
         )
         test_parser.add_argument(
             "--ssh-port",
             type=int,
             dest="ssh_port",
             metavar="PORT",
-            help="SSH port for direct-ssh backend (default: 22)"
+            help="SSH port for direct-ssh/direct-serial backends (default: 22)"
         )
         test_parser.add_argument(
             "--ssh-key",
             type=str,
             dest="ssh_key",
             metavar="PATH",
-            help="SSH private key path for direct-ssh backend"
+            help="SSH private key path for direct-ssh/direct-serial backends"
         )
         test_parser.add_argument(
             "--ssh-password",
             type=str,
             dest="ssh_password",
             metavar="PASSWORD",
-            help="SSH password for direct-ssh backend (requires sshpass)"
+            help="SSH password for direct-ssh/direct-serial backends (requires sshpass)"
         )
         test_parser.add_argument(
             "--ssh-known-hosts-file",
             type=str,
             dest="ssh_known_hosts_file",
             metavar="PATH",
-            help="Known hosts file for direct-ssh backend"
+            help="Known hosts file for direct-ssh/direct-serial backends"
         )
         test_parser.add_argument(
             "--ssh-no-strict-host-key-checking",
             action="store_false",
             dest="ssh_strict_host_key_checking",
             default=None,
-            help="Disable strict host key checking for direct-ssh backend"
+            help="Disable strict host key checking for direct-ssh/direct-serial backends"
         )
         test_parser.add_argument(
             "--ssh-remote-workdir",

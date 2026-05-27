@@ -4178,6 +4178,46 @@ class TestTestBackendDispatch:
         mock_lava.assert_not_called()
         mock_direct.assert_called_once()
 
+    def test_dispatches_to_direct_serial_backend_from_testing_config(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.backend = "direct-serial"
+        testing_config.direct = MagicMock()
+
+        with patch.object(manager, "_test_resolved_lava", return_value=False) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=True) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=testing_config,
+                )
+
+        assert passed is True
+        mock_lava.assert_not_called()
+        mock_direct.assert_called_once_with(
+            resolved=resolved,
+            testing_config=testing_config,
+            backend="direct-serial",
+            test_repo_url=None,
+            test_repo_ref=None,
+            test_definition_paths=None,
+            test_params=None,
+            direct_timeout=None,
+            direct_output_dir=None,
+            ssh_host=None,
+            ssh_user=None,
+            ssh_port=None,
+            ssh_key=None,
+            ssh_password=None,
+            ssh_known_hosts_file=None,
+            ssh_strict_host_key_checking=None,
+            ssh_remote_workdir=None,
+            ssh_serial_device=None,
+            ssh_serial_baudrate=None,
+            label="",
+        )
+
 
 # =============================================================================
 # Multi-registry tests

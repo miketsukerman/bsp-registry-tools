@@ -911,7 +911,8 @@ class TestingConfig:
 
     Attributes:
         backend: Test execution backend. Supported values:
-                 ``"lava"`` (default), ``"direct-local"``, ``"direct-ssh"``.
+                 ``"lava"`` (default), ``"direct-local"``, ``"direct-ssh"``,
+                 ``"direct-serial"``.
         lava: LAVA-specific test settings (device type, job template, tags).
         direct: Direct test-definition execution settings for local/SSH runs.
     """

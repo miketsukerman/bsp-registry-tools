@@ -441,3 +441,17 @@ class TestTestCommand:
 
         assert exit_code == 1
         mock_test.assert_not_called()
+
+    def test_test_command_accepts_direct_serial_backend(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-serial",
+            "--ssh-serial-device", "/dev/ttyUSB0",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("backend") == "direct-serial"
+        assert kwargs.get("ssh_serial_device") == "/dev/ttyUSB0"

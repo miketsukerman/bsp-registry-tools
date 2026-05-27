@@ -3089,7 +3089,7 @@ class BspManager:
         )
 
     # ------------------------------------------------------------------
-    # Test backends (LAVA + direct local/SSH)
+    # Test backends (LAVA + direct local/SSH/serial)
     # ------------------------------------------------------------------
 
     def _print_test_summary(self, backend_name: str, suites: List[dict], extra: str = "") -> None:
@@ -3302,7 +3302,7 @@ class BspManager:
         ssh_serial_baudrate: Optional[int] = None,
         label: str = "",
     ) -> bool:
-        """Run the direct-local/direct-ssh backend test flow."""
+        """Run the direct-local/direct-ssh/direct-serial backend test flow."""
         from .direct_runner import DirectRunOverrides, DirectTestRunner
 
         direct_cfg = testing_config.direct if (testing_config and testing_config.direct) else None
@@ -3379,7 +3379,7 @@ class BspManager:
         label: str = "",
     ) -> bool:
         """
-        Run test flow for the selected backend (LAVA, direct-local, direct-ssh).
+        Run test flow for the selected backend (LAVA, direct-local, direct-ssh, direct-serial).
         """
         selected_backend = backend
         if selected_backend is None and testing_config is not None:
@@ -3387,9 +3387,9 @@ class BspManager:
         if not selected_backend:
             selected_backend = "lava"
         selected_backend = selected_backend.strip()
-        if selected_backend not in ("lava", "direct-local", "direct-ssh"):
+        if selected_backend not in ("lava", "direct-local", "direct-ssh", "direct-serial"):
             logging.error(
-                "Unsupported test backend '%s'. Supported values: lava, direct-local, direct-ssh.",
+                "Unsupported test backend '%s'. Supported values: lava, direct-local, direct-ssh, direct-serial.",
                 selected_backend,
             )
             return False

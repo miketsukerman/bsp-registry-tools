@@ -1261,7 +1261,7 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 
 | Field     | Type          | Description |
 |-----------|---------------|-------------|
-| `backend` | string (opt.) | Backend selector: `lava` (default), `direct-local`, or `direct-ssh`. |
+| `backend` | string (opt.) | Backend selector: `lava` (default), `direct-local`, `direct-ssh`, or `direct-serial`. |
 | `lava`    | object (opt.) | LAVA HIL test configuration for this preset (see `bsp[*].testing.lava` below). |
 | `direct`  | object (opt.) | Direct test-definition execution config (see `bsp[*].testing.direct` below). |
 
@@ -1297,7 +1297,7 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 | `strict_host_key_checking` | bool (opt.)   | Strict host key checking toggle (default: `true`). |
 | `known_hosts_file`         | string (opt.) | Optional known_hosts file path. |
 | `remote_workdir`           | string (opt.) | Remote staging directory for direct-ssh execution. |
-| `serial_device`            | string (opt.) | Serial device path (e.g. `/dev/ttyUSB0`) used in SSH ProxyCommand mode. |
+| `serial_device`            | string (opt.) | Serial device path (e.g. `/dev/ttyUSB0`) used in SSH ProxyCommand mode (required for `direct-serial`). |
 | `serial_baudrate`          | int (opt.)    | Serial baudrate for `serial_device` (default: `115200`). |
 
 ### `bsp[*].testing.lava` fields

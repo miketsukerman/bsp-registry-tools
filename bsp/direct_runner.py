@@ -1,4 +1,4 @@
-"""Direct Lava-Test definition runner for local and SSH execution backends."""
+"""Direct Lava-Test definition runner for local, SSH, and serial execution backends."""
 
 import hashlib
 import json
@@ -379,10 +379,15 @@ class DirectTestRunner:
 
     def _build_transport(self, transport: DirectTransportConfig, backend: str) -> _BaseTransport:
         mode = transport.mode or "local"
-        if backend == "direct-ssh":
+        if backend in ("direct-ssh", "direct-serial"):
             mode = "ssh"
         elif backend == "direct-local":
             mode = "local"
+        if backend == "direct-serial" and not transport.serial_device:
+            raise ValueError(
+                "direct-serial backend requires a serial device "
+                "(set testing.direct.transport.serial_device or --ssh-serial-device)."
+            )
 
         if mode == "ssh":
             return _SshTransport(transport)

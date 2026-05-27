@@ -120,3 +120,20 @@ class TestSshTransport:
         assert "UserKnownHostsFile=/tmp/known_hosts" in cmd_str
         assert "ProxyCommand=socat - FILE:/dev/ttyUSB0,raw,echo=0,b115200" in cmd_str
         assert "root@dut.local" in cmd_str
+
+
+class TestDirectRunnerBackendSelection:
+    def test_direct_serial_uses_ssh_transport(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        transport_cfg = DirectTransportConfig(mode="local", serial_device="/dev/ttyUSB0")
+        transport = runner._build_transport(transport_cfg, "direct-serial")
+        assert isinstance(transport, _SshTransport)
+
+    def test_direct_serial_requires_serial_device(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        transport_cfg = DirectTransportConfig(mode="ssh")
+        try:
+            runner._build_transport(transport_cfg, "direct-serial")
+            assert False, "Expected ValueError for missing serial device"
+        except ValueError as exc:
+            assert "direct-serial backend requires a serial device" in str(exc)
