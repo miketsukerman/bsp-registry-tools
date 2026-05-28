@@ -13,7 +13,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 from jinja2 import Environment
@@ -961,15 +961,25 @@ class DirectTestRunner:
         release = getattr(resolved, "release", None)
         features = getattr(resolved, "features", None) or []
         if device:
-            info["device"] = getattr(device, "slug", "")
-            info["device_description"] = getattr(device, "description", "")
+            slug = getattr(device, "slug", "")
+            if slug:
+                info["device"] = slug
+            desc = getattr(device, "description", "")
+            if desc:
+                info["device_description"] = desc
         if release:
-            info["release"] = getattr(release, "slug", "")
-            info["release_description"] = getattr(release, "description", "")
+            slug = getattr(release, "slug", "")
+            if slug:
+                info["release"] = slug
+            desc = getattr(release, "description", "")
+            if desc:
+                info["release_description"] = desc
         if features:
-            info["features"] = ", ".join(
+            feature_slugs = ", ".join(
                 getattr(f, "slug", str(f)) for f in features
             )
+            if feature_slugs:
+                info["features"] = feature_slugs
         return info
 
     def _write_summary(
@@ -981,7 +991,7 @@ class DirectTestRunner:
         passed: bool,
         preset_info: Optional[Dict[str, str]] = None,
     ) -> None:
-        summary: Dict = {
+        summary: Dict[str, Any] = {
             "label": label,
             "backend": backend,
             "passed": passed,
