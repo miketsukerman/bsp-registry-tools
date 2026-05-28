@@ -1327,6 +1327,15 @@ def main() -> int:
             help="Definition file/dir/glob path inside test-definition repo (repeatable)"
         )
         test_parser.add_argument(
+            "--test-job-path",
+            action="append",
+            dest="test_job_paths",
+            metavar="PATH",
+            help="Local LAVA job YAML file path (repeatable). Suites are read from "
+                 "actions[].test.definitions[].path relative to the job file's directory. "
+                 "No --test-repo-url is required when using this option."
+        )
+        test_parser.add_argument(
             "--test-param",
             action="append",
             dest="test_params",
@@ -2015,6 +2024,7 @@ def main() -> int:
             test_repo_url = getattr(args, "test_repo_url", None)
             test_repo_ref = getattr(args, "test_repo_ref", None)
             test_definition_paths = getattr(args, "test_definition_paths", None)
+            test_job_paths = getattr(args, "test_job_paths", None)
             direct_timeout = getattr(args, "direct_timeout", None)
             direct_output_dir = getattr(args, "direct_output_dir", None)
             ssh_host = getattr(args, "ssh_host", None)
@@ -2046,6 +2056,7 @@ def main() -> int:
                     test_repo_url=test_repo_url,
                     test_repo_ref=test_repo_ref,
                     test_definition_paths=test_definition_paths,
+                    test_job_paths=test_job_paths,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,
@@ -2073,6 +2084,7 @@ def main() -> int:
                     test_repo_url=test_repo_url,
                     test_repo_ref=test_repo_ref,
                     test_definition_paths=test_definition_paths,
+                    test_job_paths=test_job_paths,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,

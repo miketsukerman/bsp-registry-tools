@@ -933,11 +933,15 @@ class TestDefinitionSource:
                resolved inside the checked-out repository.
         params: Parameter overrides for this source. Keys are variable names and
                 values are substituted into ``run.steps`` commands.
+        local_dir: Absolute path to a local directory to use directly as the
+                   definition root (skips git cloning). When set, ``repo_url``
+                   and ``ref`` are ignored.
     """
     repo_url: str = ""
     ref: str = ""
     paths: List[str] = field(default_factory=empty_list)
     params: Dict[str, str] = field(default_factory=empty_dict)
+    local_dir: str = ""
 
 
 @dataclass

@@ -225,6 +225,7 @@ class DirectRunOverrides:
     repo_url: Optional[str] = None
     repo_ref: Optional[str] = None
     definition_paths: Optional[List[str]] = None
+    local_job_paths: Optional[List[str]] = None
     params: Optional[Dict[str, str]] = None
     timeout: Optional[int] = None
     output_dir: Optional[str] = None
@@ -513,6 +514,7 @@ class DirectTestRunner:
                 ref=s.ref,
                 paths=list(s.paths),
                 params=dict(s.params),
+                local_dir=s.local_dir,
             )
             for s in base.definitions
         ]
@@ -534,9 +536,28 @@ class DirectTestRunner:
                 merged.update({k: str(v) for k, v in overrides.params.items()})
                 definitions[0].params = merged
 
+        # Each --test-job-path is a local LAVA job YAML file; we create an
+        # independent TestDefinitionSource that uses the job file's parent
+        # directory as the local root so relative definition paths inside the
+        # job YAML resolve correctly.
+        if overrides and overrides.local_job_paths:
+            extra_params: Dict[str, str] = {}
+            if overrides.params:
+                extra_params = {k: str(v) for k, v in overrides.params.items()}
+            for job_path in overrides.local_job_paths:
+                abs_job = Path(job_path).expanduser().resolve()
+                definitions.append(
+                    TestDefinitionSource(
+                        local_dir=str(abs_job.parent),
+                        paths=[abs_job.name],
+                        params=extra_params,
+                    )
+                )
+
         if not definitions:
             raise RuntimeError(
-                "Direct test backend requires at least one test-definition source (testing.direct.definitions)."
+                "Direct test backend requires at least one test-definition source "
+                "(testing.direct.definitions or --test-job-path)."
             )
 
         if overrides and overrides.ssh_host is not None:
@@ -593,6 +614,14 @@ class DirectTestRunner:
         return _LocalTransport()
 
     def _prepare_source_repo(self, source: TestDefinitionSource) -> Path:
+        if source.local_dir:
+            local = Path(source.local_dir).expanduser().resolve()
+            if not local.is_dir():
+                raise RuntimeError(
+                    f"Local test-definition directory does not exist: '{local}'."
+                )
+            return local
+
         if not source.repo_url:
             raise RuntimeError("Direct test-definition source is missing repo_url.")
 

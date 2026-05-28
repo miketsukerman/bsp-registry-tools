@@ -695,3 +695,211 @@ class TestLavaSignalParsing:
         assert "download-a-file" in html
         assert "TEST_CASE_ID" in html
         assert "LAVA test cases" in html
+
+
+class TestLocalJobPath:
+    """Tests for --test-job-path (local LAVA job YAML without a git repo URL)."""
+
+    def test_runs_local_job_yaml_without_repo_url(self, tmp_path):
+        """LAVA job YAML in a local directory should execute without --test-repo-url."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo hello"
+""",
+            encoding="utf-8",
+        )
+        (base / "job.yaml").write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/smoke.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(base / "job.yaml")],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="local-job",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["smoke-suite"]
+
+    def test_local_job_yaml_resolves_definitions_relative_to_job_dir(self, tmp_path):
+        """Definitions in a local job YAML are resolved relative to the job file's parent."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "net.yaml").write_text(
+            """
+metadata:
+  name: net-suite
+run:
+  steps:
+    - "echo net-ok"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/net.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="local-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "net-suite"
+
+    def test_local_job_yaml_params_override_source_params(self, tmp_path):
+        """Entry-level parameters in the job YAML override source-level params."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "param.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+run:
+  steps:
+    - "test ${SHARED} = entry"
+    - "test ${EXTRA} = override"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/param.yaml
+          parameters:
+            SHARED: entry
+            EXTRA: override
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                params={"SHARED": "source", "EXTRA": "source-extra"},
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="local-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "param-suite"
+
+    def test_multiple_local_job_paths(self, tmp_path):
+        """Multiple --test-job-path values execute all referenced suites."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        for name in ("alpha", "beta"):
+            (defs_dir / f"{name}.yaml").write_text(
+                f"""
+metadata:
+  name: {name}-suite
+run:
+  steps:
+    - "echo {name}"
+""",
+                encoding="utf-8",
+            )
+
+        for name in ("job-a", "job-b"):
+            suite_name = "alpha" if name == "job-a" else "beta"
+            (base / f"{name}.yaml").write_text(
+                f"""
+actions:
+  - test:
+      definitions:
+        - path: defs/{suite_name}.yaml
+""",
+                encoding="utf-8",
+            )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[
+                    str(base / "job-a.yaml"),
+                    str(base / "job-b.yaml"),
+                ],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="local-job",
+        )
+
+        assert result.passed is True
+        assert {s.name for s in result.suites} == {"alpha-suite", "beta-suite"}
+
+    def test_nonexistent_local_job_dir_raises(self, tmp_path):
+        """Passing a path whose parent does not exist raises RuntimeError."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        import pytest
+        with pytest.raises(RuntimeError, match="does not exist"):
+            runner.run(
+                resolved=resolved,
+                direct_config=None,
+                overrides=DirectRunOverrides(
+                    backend="direct-local",
+                    local_job_paths=[str(tmp_path / "nonexistent" / "job.yaml")],
+                    output_dir=str(tmp_path / "out"),
+                ),
+                label="local-job",
+            )
