@@ -434,7 +434,8 @@ class DirectTestRunner:
             repo_dir = self._prepare_source_repo(source)
             def_files = self._resolve_definition_files(repo_dir, source.paths)
             if not def_files:
-                raise RuntimeError(f"No test-definition YAML files found for source '{source.repo_url}'.")
+                source_id = source.repo_url or source.local_dir or "<unknown>"
+                raise RuntimeError(f"No test-definition YAML files found for source '{source_id}'.")
 
             run_root = output_root / f"source-{source_index + 1}"
             run_root.mkdir(parents=True, exist_ok=True)
@@ -536,23 +537,70 @@ class DirectTestRunner:
                 merged.update({k: str(v) for k, v in overrides.params.items()})
                 definitions[0].params = merged
 
-        # Each --test-job-path is a local LAVA job YAML file; we create an
-        # independent TestDefinitionSource that uses the job file's parent
-        # directory as the local root so relative definition paths inside the
-        # job YAML resolve correctly.
+        # Each --test-job-path is a local LAVA job YAML file.  We parse the
+        # file and create one TestDefinitionSource per test-definition entry:
+        #   * entries with `from: git` and a `repository` URL are cloned from
+        #     that remote repository (ref = branch/revision in the entry);
+        #   * entries without a repository are resolved relative to the job
+        #     file's parent directory (local fallback).
         if overrides and overrides.local_job_paths:
             extra_params: Dict[str, str] = {}
             if overrides.params:
                 extra_params = {k: str(v) for k, v in overrides.params.items()}
             for job_path in overrides.local_job_paths:
                 abs_job = Path(job_path).expanduser().resolve()
-                definitions.append(
-                    TestDefinitionSource(
-                        local_dir=str(abs_job.parent),
-                        paths=[abs_job.name],
-                        params=extra_params,
+                if not abs_job.is_file():
+                    raise RuntimeError(
+                        f"Local test-definition directory does not exist: '{abs_job.parent}'."
                     )
-                )
+                try:
+                    raw = yaml.safe_load(abs_job.read_text(encoding="utf-8")) or {}
+                except (OSError, yaml.YAMLError) as exc:
+                    raise RuntimeError(
+                        f"Failed to read LAVA job '{abs_job}': {exc}"
+                    ) from exc
+                for action in raw.get("actions", []):
+                    if not isinstance(action, dict):
+                        continue
+                    test_block = action.get("test")
+                    if not isinstance(test_block, dict):
+                        continue
+                    for test_def in test_block.get("definitions", []):
+                        if not isinstance(test_def, dict):
+                            continue
+                        path = test_def.get("path")
+                        if not path:
+                            continue
+                        repository = test_def.get("repository")
+                        from_type = test_def.get("from", "git" if repository else "")
+                        params_raw = test_def.get("parameters", {})
+                        entry_params: Dict[str, str] = (
+                            {str(k): str(v) for k, v in params_raw.items()}
+                            if isinstance(params_raw, dict)
+                            else {}
+                        )
+                        merged_params = dict(extra_params)
+                        merged_params.update(entry_params)
+                        if from_type == "git" and repository:
+                            branch = test_def.get("branch", "")
+                            revision = test_def.get("revision", "")
+                            ref = revision or branch or ""
+                            definitions.append(
+                                TestDefinitionSource(
+                                    repo_url=str(repository),
+                                    ref=ref,
+                                    paths=[str(path)],
+                                    params=merged_params,
+                                )
+                            )
+                        else:
+                            definitions.append(
+                                TestDefinitionSource(
+                                    local_dir=str(abs_job.parent),
+                                    paths=[str(path)],
+                                    params=merged_params,
+                                )
+                            )
 
         if not definitions:
             raise RuntimeError(

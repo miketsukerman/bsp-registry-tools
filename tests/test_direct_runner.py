@@ -903,3 +903,172 @@ actions:
                 ),
                 label="local-job",
             )
+
+    def test_local_job_yaml_git_repo_definitions(self, tmp_path):
+        """Entries with `from: git` and `repository` are cloned and run from that repo."""
+        # Create a local git repo acting as the remote test-definitions repository
+        remote_repo = tmp_path / "remote-defs"
+        defs_dir = remote_repo / "automated" / "linux"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: remote-smoke-suite
+run:
+  steps:
+    - "echo remote-ok"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(remote_repo)
+
+        # Write a LAVA job YAML that references the local git repo as if it were remote
+        job_file = tmp_path / "job.yaml"
+        job_file.write_text(
+            f"""
+actions:
+  - test:
+      definitions:
+        - repository: {remote_repo}
+          from: git
+          branch: master
+          path: automated/linux/smoke.yaml
+          name: smoke
+          parameters:
+            TIMEOUT: "30"
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="git-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "remote-smoke-suite"
+
+    def test_local_job_yaml_mixed_git_and_local_definitions(self, tmp_path):
+        """A job YAML mixing `from: git` and local-path entries runs both."""
+        # Remote repo (git)
+        remote_repo = tmp_path / "remote-defs"
+        (remote_repo / "tests").mkdir(parents=True)
+        (remote_repo / "tests" / "remote.yaml").write_text(
+            """
+metadata:
+  name: remote-suite
+run:
+  steps:
+    - "echo remote"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(remote_repo)
+
+        # Local test definition (no repository)
+        local_dir = tmp_path / "local-defs"
+        local_dir.mkdir()
+        (local_dir / "local.yaml").write_text(
+            """
+metadata:
+  name: local-suite
+run:
+  steps:
+    - "echo local"
+""",
+            encoding="utf-8",
+        )
+
+        job_file = local_dir / "job.yaml"
+        job_file.write_text(
+            f"""
+actions:
+  - test:
+      definitions:
+        - repository: {remote_repo}
+          from: git
+          branch: master
+          path: tests/remote.yaml
+          name: remote
+        - path: local.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="mixed-job",
+        )
+
+        assert result.passed is True
+        assert {s.name for s in result.suites} == {"remote-suite", "local-suite"}
+
+    def test_local_job_yaml_git_entry_params_merged(self, tmp_path):
+        """Parameters from `from: git` entries are merged: entry params override CLI params."""
+        remote_repo = tmp_path / "remote-defs"
+        remote_repo.mkdir()
+        (remote_repo / "param.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+run:
+  steps:
+    - "test ${CLI_PARAM} = cli-value"
+    - "test ${ENTRY_PARAM} = entry-value"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(remote_repo)
+
+        job_file = tmp_path / "job.yaml"
+        job_file.write_text(
+            f"""
+actions:
+  - test:
+      definitions:
+        - repository: {remote_repo}
+          from: git
+          branch: master
+          path: param.yaml
+          name: param
+          parameters:
+            ENTRY_PARAM: entry-value
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                params={"CLI_PARAM": "cli-value", "ENTRY_PARAM": "cli-override"},
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="git-params",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "param-suite"
