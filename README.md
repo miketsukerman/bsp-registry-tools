@@ -979,7 +979,7 @@ bsp test poky-qemuarm64-scarthgap \
 # Direct local run from a LAVA job YAML (uses actions[].test.definitions paths)
 bsp test poky-qemuarm64-scarthgap \
   --backend direct-local \
-  --test-repo-url https://github.com/miketsukerman/test-definitions.git \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
   --test-definition-path automated/linux/modular-bsp/jobs/rsb3720-modbsp.yaml
 
 # Direct SSH run on DUT
