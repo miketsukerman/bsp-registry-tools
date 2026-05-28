@@ -1,6 +1,7 @@
 """Tests for direct test-definition execution backend."""
 
 import subprocess
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -891,7 +892,6 @@ actions:
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
 
-        import pytest
         with pytest.raises(RuntimeError, match="does not exist"):
             runner.run(
                 resolved=resolved,

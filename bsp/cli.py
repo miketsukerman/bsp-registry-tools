@@ -153,7 +153,7 @@ def _parse_key_value_params(raw_params) -> dict:
         key = key.strip()
         if not key:
             raise ValueError(f"Invalid --test-param value '{entry}'. KEY must not be empty.")
-        if value == "":
+        if not value:
             raise ValueError(f"Invalid --test-param value '{entry}'. VALUE must not be empty.")
         parsed[key] = value
     return parsed
