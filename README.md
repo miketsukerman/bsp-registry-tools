@@ -954,7 +954,7 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--lava-server URL` / `--lava-token TOKEN` / `--artifact-url URL` | LAVA backend overrides |
 | `--test-repo-url URL` / `--test-repo-ref REF` | Direct backend test-definition Git source override |
 | `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable). LAVA job YAML files are also accepted; suites are read from `actions[].test.definitions[].path`. |
-| `--test-job-path PATH` | Local LAVA job YAML file (repeatable). Suites are read from `actions[].test.definitions[].path` relative to the job file's directory. No `--test-repo-url` is required. |
+| `--test-job-path PATH` | Local LAVA job YAML file (repeatable). For entries with `from: git` and `repository`, the referenced Git repository is cloned and the test definition is run from there. Entries without a `repository` are resolved relative to the job file's directory. No `--test-repo-url` is required. |
 | `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
 | `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
 | `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
@@ -983,7 +983,7 @@ bsp test poky-qemuarm64-scarthgap \
   --test-repo-url https://github.com/Linaro/test-definitions.git \
   --test-definition-path automated/linux/modular-bsp/jobs/rsb3720-modbsp.yaml
 
-# Direct local run from a local LAVA job YAML (no --test-repo-url needed)
+# Direct local run from a local LAVA job YAML (repositories in the YAML are cloned automatically)
 bsp test poky-qemuarm64-scarthgap \
   --backend direct-local \
   --test-job-path /path/to/local/jobs/rsb3720-modbsp.yaml
@@ -1015,7 +1015,12 @@ Direct backends also persist collected artifacts under `<build-path>/test-result
 
 When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
 
-`--test-job-path` provides the same LAVA job YAML extraction without requiring a Git repository URL. The job file's parent directory is used as the definition root, so relative paths inside the job YAML (e.g. `defs/smoke.yaml`) are resolved against the same local directory.
+`--test-job-path` accepts a local LAVA job YAML and automatically resolves each `actions[].test.definitions[]` entry:
+
+- Entries with `from: git` and a `repository` URL are cloned (or updated from cache) and the definition at `path` is executed from that cloned repository. The optional `branch` / `revision` fields select the checkout ref.
+- Entries without a `repository` (local-path style) are resolved relative to the job file's parent directory.
+
+This means the job YAML fully drives which repositories are used and no separate `--test-repo-url` is required.
 
 #### `remotes` — Manage named remote registries
 

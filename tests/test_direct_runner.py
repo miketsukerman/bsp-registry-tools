@@ -931,7 +931,6 @@ actions:
       definitions:
         - repository: {remote_repo}
           from: git
-          branch: master
           path: automated/linux/smoke.yaml
           name: smoke
           parameters:
@@ -996,7 +995,6 @@ actions:
       definitions:
         - repository: {remote_repo}
           from: git
-          branch: master
           path: tests/remote.yaml
           name: remote
         - path: local.yaml
@@ -1046,7 +1044,6 @@ actions:
       definitions:
         - repository: {remote_repo}
           from: git
-          branch: master
           path: param.yaml
           name: param
           parameters:

@@ -551,7 +551,7 @@ class DirectTestRunner:
                 abs_job = Path(job_path).expanduser().resolve()
                 if not abs_job.is_file():
                     raise RuntimeError(
-                        f"Local test-definition directory does not exist: '{abs_job.parent}'."
+                        f"Local test-definition file does not exist: '{abs_job}'."
                     )
                 try:
                     raw = yaml.safe_load(abs_job.read_text(encoding="utf-8")) or {}
