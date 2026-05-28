@@ -1007,6 +1007,8 @@ When `--verbose` is enabled, test execution logs include per-suite and per-case 
 
 Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including `direct-test-summary.json` and per-step log files.
 
+When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
+
 #### `remotes` — Manage named remote registries
 
 `bsp remotes` manages a persistent list of named remote BSP registry sources,
