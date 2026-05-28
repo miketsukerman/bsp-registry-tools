@@ -33,7 +33,12 @@ _HTML_REPORT_TEMPLATE = """\
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, Arial, sans-serif; background: #f4f6f9; color: #222; padding: 2rem; }
   h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
-  .meta { color: #555; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .meta { color: #555; font-size: 0.9rem; margin-bottom: 0.5rem; }
+  .preset-info { background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
+                 padding: 0.6rem 1rem; margin-bottom: 1.25rem; font-size: 0.88rem; color: #333; }
+  .preset-info table { width: auto; border-collapse: collapse; }
+  .preset-info td { padding: 0.15rem 0.75rem 0.15rem 0; border: none; vertical-align: top; }
+  .preset-info td:first-child { font-weight: 600; white-space: nowrap; color: #555; }
   .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px;
            font-weight: bold; font-size: 0.85rem; }
   .pass  { background: #d4edda; color: #155724; }
@@ -74,6 +79,16 @@ _HTML_REPORT_TEMPLATE = """\
     {{ 'PASS' if passed else 'FAIL' }}
   </span>
 </p>
+
+{% if preset_info %}
+<div class="preset-info">
+  <table>
+    {% if preset_info.device %}<tr><td>Device:</td><td>{{ preset_info.device }}{% if preset_info.device_description %} — {{ preset_info.device_description }}{% endif %}</td></tr>{% endif %}
+    {% if preset_info.release %}<tr><td>Release:</td><td>{{ preset_info.release }}{% if preset_info.release_description %} — {{ preset_info.release_description }}{% endif %}</td></tr>{% endif %}
+    {% if preset_info.features %}<tr><td>Features:</td><td>{{ preset_info.features }}</td></tr>{% endif %}
+  </table>
+</div>
+{% endif %}
 
 {% for suite in suites %}
   {% set suite_pass = (suite.status | upper) == 'PASS' %}
@@ -217,6 +232,7 @@ class DirectRunResult:
     backend: str
     passed: bool
     suites: List[DirectTestSuiteResult] = field(default_factory=list)
+    preset_info: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -498,8 +514,9 @@ class DirectTestRunner:
             remote_root = cfg.transport.remote_workdir.rstrip("/")
             transport.collect_directory(remote_root, output_root / "remote-logs")
 
-        self._write_summary(output_root, label=label, backend=backend, suites=suites, passed=overall_pass)
-        return DirectRunResult(backend=backend, passed=overall_pass, suites=suites)
+        preset_info = self._extract_preset_info(resolved)
+        self._write_summary(output_root, label=label, backend=backend, suites=suites, passed=overall_pass, preset_info=preset_info)
+        return DirectRunResult(backend=backend, passed=overall_pass, suites=suites, preset_info=preset_info)
 
     def _merged_config(
         self,
@@ -937,6 +954,24 @@ class DirectTestRunner:
             cases=case_results,
         )
 
+    def _extract_preset_info(self, resolved: "ResolvedConfig") -> Dict[str, str]:
+        """Extract BSP preset information from a resolved config for report display."""
+        info: Dict[str, str] = {}
+        device = getattr(resolved, "device", None)
+        release = getattr(resolved, "release", None)
+        features = getattr(resolved, "features", None) or []
+        if device:
+            info["device"] = getattr(device, "slug", "")
+            info["device_description"] = getattr(device, "description", "")
+        if release:
+            info["release"] = getattr(release, "slug", "")
+            info["release_description"] = getattr(release, "description", "")
+        if features:
+            info["features"] = ", ".join(
+                getattr(f, "slug", str(f)) for f in features
+            )
+        return info
+
     def _write_summary(
         self,
         output_dir: Path,
@@ -944,8 +979,9 @@ class DirectTestRunner:
         backend: str,
         suites: List[DirectTestSuiteResult],
         passed: bool,
+        preset_info: Optional[Dict[str, str]] = None,
     ) -> None:
-        summary = {
+        summary: Dict = {
             "label": label,
             "backend": backend,
             "passed": passed,
@@ -975,6 +1011,8 @@ class DirectTestRunner:
                 for s in suites
             ],
         }
+        if preset_info:
+            summary["preset"] = preset_info
         (output_dir / "direct-test-summary.json").write_text(
             json.dumps(summary, indent=2),
             encoding="utf-8",
@@ -985,6 +1023,7 @@ class DirectTestRunner:
             backend=backend,
             suites=suites,
             passed=passed,
+            preset_info=preset_info,
         )
         html_path = output_dir / "direct-test-report.html"
         html_path.write_text(html_content, encoding="utf-8")
@@ -998,6 +1037,7 @@ class DirectTestRunner:
         backend: str,
         suites: List[DirectTestSuiteResult],
         passed: bool,
+        preset_info: Optional[Dict[str, str]] = None,
     ) -> str:
         env = Environment(autoescape=True)
         tmpl = env.from_string(_HTML_REPORT_TEMPLATE)
@@ -1006,6 +1046,7 @@ class DirectTestRunner:
             backend=backend,
             suites=suites,
             passed=passed,
+            preset_info=preset_info or {},
             generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
 

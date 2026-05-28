@@ -477,6 +477,133 @@ class TestReportGeneration:
         assert "direct-ssh" in html
         assert "PASS" in html
 
+    def test_render_html_report_with_preset_info(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        html = runner._render_html_report(
+            label="my-label",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=True,
+            preset_info={
+                "device": "epc-r9000",
+                "device_description": "EPCR9000 board",
+                "release": "scarthgap",
+                "release_description": "Yocto 5.0",
+                "features": "wifi, bt",
+            },
+        )
+        assert "epc-r9000" in html
+        assert "EPCR9000 board" in html
+        assert "scarthgap" in html
+        assert "Yocto 5.0" in html
+        assert "wifi, bt" in html
+
+    def test_render_html_report_without_preset_info(self, tmp_path):
+        """Preset info section is omitted when not provided."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        html = runner._render_html_report(
+            label="no-preset",
+            backend="direct-local",
+            suites=[],
+            passed=True,
+        )
+        assert '<div class="preset-info">' not in html
+
+    def test_json_summary_includes_preset_info(self, tmp_path):
+        import json as _json
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="ci-run",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+            preset_info={"device": "epc-r9000", "release": "scarthgap"},
+        )
+        summary = _json.loads((tmp_path / "direct-test-summary.json").read_text(encoding="utf-8"))
+        assert summary["preset"]["device"] == "epc-r9000"
+        assert summary["preset"]["release"] == "scarthgap"
+
+    def test_json_summary_omits_preset_key_when_no_info(self, tmp_path):
+        import json as _json
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="ci-run",
+            backend="direct-local",
+            suites=[],
+            passed=True,
+        )
+        summary = _json.loads((tmp_path / "direct-test-summary.json").read_text(encoding="utf-8"))
+        assert "preset" not in summary
+
+    def test_extract_preset_info_from_resolved(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        device = SimpleNamespace(slug="epc-r9000", description="EPCR9000 board")
+        release = SimpleNamespace(slug="scarthgap", description="Yocto 5.0")
+        feature1 = SimpleNamespace(slug="wifi")
+        feature2 = SimpleNamespace(slug="bt")
+        resolved = SimpleNamespace(
+            build_path=str(tmp_path),
+            device=device,
+            release=release,
+            features=[feature1, feature2],
+        )
+        info = runner._extract_preset_info(resolved)
+        assert info["device"] == "epc-r9000"
+        assert info["device_description"] == "EPCR9000 board"
+        assert info["release"] == "scarthgap"
+        assert info["release_description"] == "Yocto 5.0"
+        assert info["features"] == "wifi, bt"
+
+    def test_extract_preset_info_no_device_or_release(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path))
+        info = runner._extract_preset_info(resolved)
+        assert info == {}
+
+    def test_integration_html_report_includes_preset_info(self, tmp_path):
+        """Integration: full run embeds device/release info in the HTML report."""
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "smoke.yaml").write_text(
+            "run:\n  steps:\n    - echo hi\n",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[TestDefinitionSource(repo_url=repo.as_uri(), paths=["defs"])],
+            timeout=20,
+        )
+        device = SimpleNamespace(slug="epc-r9000", description="EPCR9000 board")
+        release = SimpleNamespace(slug="scarthgap", description="Yocto 5.0")
+        resolved = SimpleNamespace(
+            build_path=str(tmp_path / "build"),
+            device=device,
+            release=release,
+            features=[],
+        )
+        runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="integration",
+        )
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "epc-r9000" in html
+        assert "scarthgap" in html
+
+        import json as _json
+        summary = _json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
+        assert summary["preset"]["device"] == "epc-r9000"
+        assert summary["preset"]["release"] == "scarthgap"
+
     def test_render_html_report_timed_out_case(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         suites = [
