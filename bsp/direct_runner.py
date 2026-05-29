@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, TemplateError
 
 from .models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 from .resolver import ResolvedConfig
@@ -545,7 +545,6 @@ class DirectTestRunner:
             loader=FileSystemLoader(str(template_path.parent)),
             keep_trailing_newline=True,
         )
-        template = env.get_template(template_path.name)
 
         device_slug: str = ""
         release_slug: str = ""
@@ -572,8 +571,9 @@ class DirectTestRunner:
             "params": extra_params,
         }
         try:
+            template = env.get_template(template_path.name)
             return template.render(**context)
-        except Exception as exc:  # pragma: no cover
+        except TemplateError as exc:
             raise RuntimeError(
                 f"Failed to render Jinja2 job template '{template_path}': {exc}"
             ) from exc

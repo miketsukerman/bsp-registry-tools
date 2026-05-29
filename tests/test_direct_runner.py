@@ -1457,3 +1457,25 @@ actions:
 
         assert result.passed is True
         assert [s.name for s in result.suites] == ["smoke-suite", "extra-suite"]
+
+    def test_jinja2_template_syntax_error_raises_runtime_error(self, tmp_path):
+        """A Jinja2 syntax error in the job template raises RuntimeError."""
+        base = tmp_path / "project"
+        base.mkdir(parents=True)
+
+        job_file = base / "bad.jinja2"
+        job_file.write_text("{{ unclosed_block", encoding="utf-8")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        with pytest.raises(RuntimeError, match="Failed to render Jinja2 job template"):
+            runner.run(
+                resolved=resolved,
+                direct_config=None,
+                overrides=DirectRunOverrides(
+                    backend="direct-local",
+                    local_job_paths=[str(job_file)],
+                    output_dir=str(tmp_path / "out"),
+                ),
+            )
