@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
-from jinja2 import Environment
+from jinja2 import Environment, FileSystemLoader
 
 from .models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 from .resolver import ResolvedConfig
@@ -436,7 +436,7 @@ class DirectTestRunner:
         overrides: Optional[DirectRunOverrides] = None,
         label: str = "",
     ) -> DirectRunResult:
-        cfg = self._merged_config(direct_config, overrides)
+        cfg = self._merged_config(direct_config, overrides, resolved)
         backend = (overrides.backend if overrides and overrides.backend else "direct-local").strip() or "direct-local"
         transport = self._build_transport(cfg.transport, backend)
 
@@ -518,10 +518,71 @@ class DirectTestRunner:
         self._write_summary(output_root, label=label, backend=backend, suites=suites, passed=overall_pass, preset_info=preset_info)
         return DirectRunResult(backend=backend, passed=overall_pass, suites=suites, preset_info=preset_info)
 
+    def _render_job_template(
+        self,
+        template_text: str,
+        template_path: Path,
+        resolved: Optional["ResolvedConfig"],
+        extra_params: Dict[str, str],
+    ) -> str:
+        """Render a Jinja2 job template to a YAML string.
+
+        The template receives a context built from *resolved* (when available)
+        and the caller-supplied *extra_params*.  All variables that are safe to
+        include when *resolved* is ``None`` (e.g. no preset was provided) are
+        still present with empty/default values so that templates can guard
+        with ``{% if device_slug %}`` etc.
+
+        Context variables
+        -----------------
+        ``device_slug``   – ``resolved.device.slug`` or ``""``
+        ``release_slug``  – ``resolved.release.slug`` or ``""``
+        ``feature_slugs`` – list of active feature slugs or ``[]``
+        ``build_path``    – ``resolved.build_path`` or ``""``
+        ``params``        – the *extra_params* dict (CLI ``--test-param`` values)
+        """
+        env = Environment(
+            loader=FileSystemLoader(str(template_path.parent)),
+            keep_trailing_newline=True,
+        )
+        template = env.get_template(template_path.name)
+
+        device_slug: str = ""
+        release_slug: str = ""
+        feature_slugs: List[str] = []
+        build_path: str = ""
+        if resolved is not None:
+            device = getattr(resolved, "device", None)
+            if device is not None:
+                device_slug = getattr(device, "slug", "") or ""
+            release = getattr(resolved, "release", None)
+            if release is not None:
+                release_slug = getattr(release, "slug", "") or ""
+            features = getattr(resolved, "features", []) or []
+            feature_slugs = [
+                getattr(f, "slug", "") for f in features if getattr(f, "slug", None)
+            ]
+            build_path = getattr(resolved, "build_path", "") or ""
+
+        context: Dict[str, Any] = {
+            "device_slug": device_slug,
+            "release_slug": release_slug,
+            "feature_slugs": feature_slugs,
+            "build_path": build_path,
+            "params": extra_params,
+        }
+        try:
+            return template.render(**context)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                f"Failed to render Jinja2 job template '{template_path}': {exc}"
+            ) from exc
+
     def _merged_config(
         self,
         direct_config: Optional[DirectTestConfig],
         overrides: Optional[DirectRunOverrides],
+        resolved: Optional["ResolvedConfig"] = None,
     ) -> DirectTestConfig:
         base = direct_config or DirectTestConfig()
         transport = base.transport or DirectTransportConfig()
@@ -571,7 +632,11 @@ class DirectTestRunner:
                         f"Local test-definition file does not exist: '{abs_job}'."
                     )
                 try:
-                    raw = yaml.safe_load(abs_job.read_text(encoding="utf-8")) or {}
+                    text = abs_job.read_text(encoding="utf-8")
+                    suffix = abs_job.suffix.lower()
+                    if suffix in (".jinja2", ".j2"):
+                        text = self._render_job_template(text, abs_job, resolved, extra_params)
+                    raw = yaml.safe_load(text) or {}
                 except (OSError, yaml.YAMLError) as exc:
                     raise RuntimeError(
                         f"Failed to read LAVA job '{abs_job}': {exc}"

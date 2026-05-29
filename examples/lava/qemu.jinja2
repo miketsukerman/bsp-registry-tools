@@ -1,0 +1,57 @@
+{# LAVA job template for direct QEMU testing via --test-job-path             #}
+{# Rendered by bsp/direct_runner.py before being parsed as YAML.             #}
+{#                                                                            #}
+{# Available context variables:                                               #}
+{#   device_slug    - device slug (e.g. "qemu-arm64")                        #}
+{#   release_slug   - release slug (e.g. "scarthgap")                        #}
+{#   feature_slugs  - list of active feature slugs                           #}
+{#   build_path     - relative build output directory path                   #}
+{#   params         - dict of --test-param KEY=VALUE overrides               #}
+
+job_name: "{{ device_slug }}-{{ release_slug }}{% if feature_slugs %}-{{ feature_slugs | join('-') }}{% endif %} smoke"
+device_type: qemu
+
+timeouts:
+  job:
+    minutes: 30
+  action:
+    minutes: 15
+  connection:
+    minutes: 5
+
+priority: medium
+visibility: public
+
+context:
+  arch: arm64
+  machine: virt
+
+actions:
+  - deploy:
+      timeout:
+        minutes: 10
+      to: tmpfs
+      images:
+        rootfs:
+          url: "file://{{ build_path }}/tmp/deploy/images/{{ device_slug }}/core-image-minimal-{{ device_slug }}.wic.gz"
+          image_arg: "-drive file={rootfs},format=raw,if=none,id=rootfs -device virtio-blk-device,drive=rootfs"
+
+  - boot:
+      timeout:
+        minutes: 10
+      method: qemu
+      media: tmpfs
+      auto_login:
+        login_prompt: "login:"
+        username: root
+      prompts:
+        - "root@"
+
+  - test:
+      timeout:
+        minutes: 10
+      definitions:
+        - repository: https://github.com/Linaro/test-definitions.git
+          from: git
+          path: automated/linux/smoke/smoke.yaml
+          name: smoke

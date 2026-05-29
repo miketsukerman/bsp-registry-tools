@@ -1196,3 +1196,264 @@ actions:
 
         assert result.passed is True
         assert result.suites[0].name == "param-suite"
+
+
+class TestJinja2JobPath:
+    """Tests for Jinja2 template support in --test-job-path."""
+
+    def test_jinja2_template_rendered_before_yaml_parse(self, tmp_path):
+        """A .jinja2 job file is rendered as Jinja2 before being parsed as YAML."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo hello"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.jinja2"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/smoke.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="jinja2-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "smoke-suite"
+
+    def test_j2_extension_also_rendered(self, tmp_path):
+        """A .j2 job file is rendered as Jinja2 before being parsed as YAML."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "net.yaml").write_text(
+            """
+metadata:
+  name: net-suite
+run:
+  steps:
+    - "echo net-ok"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.j2"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/net.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="j2-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "net-suite"
+
+    def test_jinja2_template_uses_resolved_context(self, tmp_path):
+        """Template variables (device_slug, release_slug, etc.) are available."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        # Suite that checks its name was set from the template rendering
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo hello"
+""",
+            encoding="utf-8",
+        )
+        # Template uses device_slug and release_slug in a comment (no-op for YAML)
+        # but conditionally includes a definition based on feature_slugs
+        job_file = base / "job.jinja2"
+        job_file.write_text(
+            """
+# device={{ device_slug }} release={{ release_slug }}
+actions:
+  - test:
+      definitions:
+        - path: defs/smoke.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+
+        device = SimpleNamespace(slug="qemu-arm64")
+        release = SimpleNamespace(slug="scarthgap")
+        resolved = SimpleNamespace(
+            build_path=str(tmp_path / "build"),
+            device=device,
+            release=release,
+            features=[],
+        )
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="jinja2-context",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "smoke-suite"
+
+    def test_jinja2_template_params_available(self, tmp_path):
+        """CLI --test-param values are available as ``params`` in the template."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "param.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+run:
+  steps:
+    - "echo hello"
+""",
+            encoding="utf-8",
+        )
+        # Template selects a definition path using a param value
+        job_file = base / "job.jinja2"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/{{ params.get('SUITE', 'param') }}.yaml
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                params={"SUITE": "param"},
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="jinja2-params",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "param-suite"
+
+    def test_jinja2_conditional_definitions(self, tmp_path):
+        """Jinja2 conditionals in a job template are evaluated correctly."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+
+        (defs_dir / "smoke.yaml").write_text(
+            """
+metadata:
+  name: smoke-suite
+run:
+  steps:
+    - "echo hello"
+""",
+            encoding="utf-8",
+        )
+        (defs_dir / "extra.yaml").write_text(
+            """
+metadata:
+  name: extra-suite
+run:
+  steps:
+    - "echo extra"
+""",
+            encoding="utf-8",
+        )
+        # Template conditionally adds an extra suite based on a feature slug
+        job_file = base / "job.jinja2"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/smoke.yaml
+{% if 'extra' in feature_slugs %}
+        - path: defs/extra.yaml
+{% endif %}
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+
+        device = SimpleNamespace(slug="qemu-arm64")
+        release = SimpleNamespace(slug="scarthgap")
+        extra_feature = SimpleNamespace(slug="extra")
+        resolved = SimpleNamespace(
+            build_path=str(tmp_path / "build"),
+            device=device,
+            release=release,
+            features=[extra_feature],
+        )
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="jinja2-conditional",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["smoke-suite", "extra-suite"]

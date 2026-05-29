@@ -1331,7 +1331,9 @@ def main() -> int:
             action="append",
             dest="test_job_paths",
             metavar="PATH",
-            help="Local LAVA job YAML file path (repeatable). Suites are read from "
+            help="Local LAVA job YAML (or Jinja2 template) file path (repeatable). "
+                 "Files ending in .jinja2 or .j2 are rendered as Jinja2 templates "
+                 "before parsing. Suites are read from "
                  "actions[].test.definitions[].path relative to the job file's directory. "
                  "No --test-repo-url is required when using this option."
         )
