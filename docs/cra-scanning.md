@@ -110,6 +110,7 @@ scan:
   fail_on: CRITICAL               # exit non-zero at this severity level
                                   # NONE | LOW | MEDIUM | HIGH | CRITICAL (default)
   sbom_format: cyclonedx          # cyclonedx (default) | spdx-json | spdx-tag-value
+                                  # used only when generating a new SBOM
   output_dir: reports/            # output directory for reports and SBOMs
                                   # (default: <build_path>/reports/)
   artifact_patterns:              # glob patterns to select image files
@@ -117,6 +118,12 @@ scan:
     - "**/*.rootfs.tar.bz2"
     - "**/*.ext4"
   artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  sbom_paths:                     # existing SBOM files to reuse with syft+grype
+    - "tmp/deploy/images/core-image.spdx.json"
+  sbom_patterns:                  # glob patterns for reusable SBOM discovery
+    - "**/*.spdx.json"
+  sbom_dirs:                      # subdirs under build_path to search for SBOMs
     - "tmp/deploy/images"
   upload: false                   # upload reports to cloud storage (optional)
 
@@ -146,6 +153,9 @@ registry:
 | `output_dir` | `<build_path>/reports/` | Directory for scan reports and SBOMs |
 | `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.rootfs.tar.bz2`, … | Glob patterns to select image files to scan |
 | `artifact_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search |
+| `sbom_paths` | `[]` | Explicit existing SPDX-JSON/CycloneDX-JSON SBOM files to reuse with `syft+grype` |
+| `sbom_patterns` | `[]` | Glob patterns for reusable SBOM discovery under `sbom_dirs` |
+| `sbom_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search for SBOMs |
 | `upload` | `false` | Upload reports to cloud storage (same as `deploy`) |
 | `trivy_os_family` | *(auto)* | Force Trivy OS-family (e.g. `debian`). See [Empty SBOM](#empty-sbom-package-database-missing-or-empty). |
 | `trivy_os_version` | *(none)* | Pin Trivy OS version (e.g. `"12"`). Used with `trivy_os_family`. |
@@ -178,6 +188,27 @@ scan:
 > | Fast CI gate (< 5 min) | Trivy |
 > | Nightly deep-scan with binary-level CVE detection | **EMBA** |
 > | Proprietary binary firmware (`.bin`, raw flash) | **EMBA** |
+
+### Reusing an existing Yocto SBOM with `syft+grype`
+
+If Yocto already emitted an SBOM for the image, `bsp scan` can skip Syft and
+reuse that document directly with Grype.
+
+- Reuse mode is supported only with `tool: syft+grype`
+- Supported reusable formats: **SPDX-JSON** and **CycloneDX-JSON**
+- `sbom_format` applies only when generating a new SBOM; it does not transform
+  an imported SBOM
+- `--sbom-path` / `scan.sbom_paths` are an alternate input mode, so do not mix
+  them with `--image-path`
+
+Example:
+
+```yaml
+scan:
+  tool: syft+grype
+  sbom_paths:
+    - "tmp/deploy/images/core-image-minimal.spdx.json"
+```
 
 EMBA writes its outputs to a per-artifact subdirectory under `output_dir`:
 
@@ -311,6 +342,7 @@ bsp scan <preset | --device D --release R [--feature F ...]>
          [--sbom-format cyclonedx|spdx-json|spdx-tag-value]
          [--output-dir PATH]
          [--image-path PATH]    # scan a specific artifact (repeatable)
+         [--sbom-path PATH]     # reuse an existing SBOM (repeatable, syft+grype only)
          [--dry-run]            # list what would be scanned
 ```
 
@@ -329,6 +361,11 @@ bsp scan imx8-scarthgap --dry-run
 # Scan a specific WIC image explicitly
 bsp scan imx8-scarthgap \
     --image-path build/imx8/scarthgap/tmp/deploy/images/core-image-minimal-imx8.wic
+
+# Reuse an existing Yocto SPDX SBOM instead of generating one with Syft
+bsp scan imx8-scarthgap \
+    --tool syft+grype \
+    --sbom-path build/imx8/scarthgap/tmp/deploy/images/core-image-minimal-imx8.spdx.json
 
 # Use Syft + Grype instead of Trivy
 bsp scan imx8-scarthgap --tool syft+grype

@@ -35,6 +35,7 @@ scan:
   fail_on: CRITICAL               # exit non-zero at this severity level
                                   # NONE | LOW | MEDIUM | HIGH | CRITICAL (default)
   sbom_format: cyclonedx          # cyclonedx (default) | spdx-json | spdx-tag-value
+                                  # used only when generating a new SBOM
   output_dir: reports/            # output directory for reports and SBOMs
                                   # (default: <build_path>/reports/)
   artifact_patterns:              # glob patterns to select image files
@@ -42,6 +43,10 @@ scan:
     - "**/*.rootfs.tar.bz2"
     - "**/*.ext4"
   artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  sbom_paths: []                  # existing SPDX-JSON/CycloneDX-JSON SBOMs to reuse
+  sbom_patterns: []               # glob patterns for reusable SBOM discovery
+  sbom_dirs:
     - "tmp/deploy/images"
   upload: false                   # upload reports to cloud storage (optional)
 

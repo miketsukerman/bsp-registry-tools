@@ -1533,7 +1533,7 @@ class TestBspManagerScan:
         with patch("bsp.bsp_manager.ImageScanner") as MockScanner:
             mock_instance = MockScanner.return_value
             mock_instance.scan.return_value = mock_result
-            mock_instance._find_artifacts.return_value = []
+            mock_instance._resolve_scan_inputs.return_value = ([], [])
             result = mgr.scan_bsp("rpi5-scarthgap", dry_run=True)
 
         # In dry_run mode the scanner is bypassed, so we get an empty result
@@ -1553,7 +1553,7 @@ class TestBspManagerScan:
         with patch("bsp.bsp_manager.ImageScanner") as MockScanner:
             mock_instance = MockScanner.return_value
             mock_instance.scan.return_value = mock_result
-            mock_instance._find_artifacts.return_value = []
+            mock_instance._resolve_scan_inputs.return_value = ([], [])
             result = mgr.scan_by_components("rpi5", "scarthgap", dry_run=True)
 
         assert isinstance(result, ScanResult)

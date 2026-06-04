@@ -934,7 +934,7 @@ class ImageScanner:
         if isinstance(data, dict):
             if data.get("spdxVersion") and isinstance(data.get("packages"), list):
                 return "spdx-json"
-            if data.get("bomFormat") == "CycloneDX" and isinstance(data.get("components"), list):
+            if isinstance(data.get("components"), list):
                 return "cyclonedx-json"
 
         self.logger.error(

@@ -853,6 +853,7 @@ bsp scan --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--sbom-format FORMAT` | SBOM format: `cyclonedx` (default), `spdx-json`, `spdx-tag-value` |
 | `--output-dir PATH` | Directory for reports and SBOMs (default: `<build_path>/reports/`) |
 | `--image-path PATH` | Explicit artifact to scan (repeatable; overrides auto-discovery) |
+| `--sbom-path PATH` | Existing SPDX-JSON or CycloneDX-JSON SBOM to reuse with `syft+grype` (repeatable) |
 | `--dry-run` | List what would be scanned without running the scanner |
 
 **Examples:**
@@ -871,9 +872,18 @@ bsp scan poky-qemuarm64-scarthgap --dry-run
 bsp scan poky-qemuarm64-scarthgap \
   --image-path build/poky/tmp/deploy/images/qemuarm64/core-image-minimal.wic
 
+# Reuse an existing Yocto SPDX SBOM with Grype (Syft is skipped)
+bsp scan poky-qemuarm64-scarthgap \
+  --tool syft+grype \
+  --sbom-path build/poky/tmp/deploy/images/qemuarm64/core-image-minimal.spdx.json
+
 # Scan immediately after a build (--scan flag on bsp build)
 bsp build poky-qemuarm64-scarthgap --scan --scan-fail-on CRITICAL
 ```
+
+`--sbom-path` is an alternate input mode: use either image artifacts or existing
+SBOMs, not both. Reuse mode is supported only with `syft+grype`, and
+`--sbom-format` applies only when generating a new SBOM.
 
 **Prerequisites:** Install [Trivy](https://trivy.dev/latest/getting-started/installation/) before using `bsp scan`.
 
