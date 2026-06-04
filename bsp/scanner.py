@@ -307,7 +307,7 @@ class ImageScanner:
         self,
         artifact_paths: Optional[List[Path]] = None,
     ) -> tuple[List[Path], List[Path]]:
-        """Resolve the effective artifact or existing-SBOM inputs for the scan."""
+        """Resolve the effective scan inputs as ``(artifacts, sboms)``."""
         if artifact_paths is not None:
             return list(artifact_paths), []
 
@@ -920,7 +920,13 @@ class ImageScanner:
             return 0
 
     def _detect_reusable_sbom_format(self, sbom_path: Path) -> str:
-        """Validate and detect a reusable SBOM format supported by Grype."""
+        """
+        Validate and detect a reusable Grype-supported SBOM format.
+
+        Returns ``"spdx-json"`` or ``"cyclonedx-json"``. Exits the process
+        with code 1 when the file is not valid JSON or not one of the
+        supported reusable formats.
+        """
         try:
             data = json.loads(sbom_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:

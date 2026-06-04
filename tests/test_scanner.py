@@ -1109,7 +1109,7 @@ class TestRunSyftGrype:
             with pytest.raises(SystemExit):
                 scanner.scan()
 
-    def test_reused_sbom_exits_when_tool_is_trivy(self, tmp_path):
+    def test_reused_sbom_rejects_trivy_tool(self, tmp_path):
         sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
         sbom.parent.mkdir(parents=True)
         sbom.write_text(SPDX_SBOM_JSON)
