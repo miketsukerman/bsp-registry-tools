@@ -2776,12 +2776,21 @@ class BspManager:
         scanner = ImageScanner(scan_cfg, effective_build_path)
 
         if dry_run:
-            artifacts = [Path(p) for p in image_paths] if image_paths else scanner._find_artifacts()
-            logging.info("[dry-run] Would scan %d artifact(s):", len(artifacts))
-            for art in artifacts:
-                logging.info("  %s", art)
+            artifacts, sboms = scanner._resolve_scan_inputs(
+                artifact_paths=[Path(p) for p in image_paths] if image_paths else None
+            )
             result = ScanResult(fail_on=scan_cfg.fail_on, dry_run=True)
-            result.scanned_artifacts = artifacts
+            sbom_mode = image_paths is None and bool(scan_cfg.sbom_paths or scan_cfg.sbom_patterns)
+            if sboms or sbom_mode:
+                logging.info("[dry-run] Would scan %d existing SBOM(s):", len(sboms))
+                for sbom in sboms:
+                    logging.info("  %s", sbom)
+                result.scanned_sboms = sboms
+            else:
+                logging.info("[dry-run] Would scan %d artifact(s):", len(artifacts))
+                for art in artifacts:
+                    logging.info("  %s", art)
+                result.scanned_artifacts = artifacts
             return result
 
         # Run the actual scan
@@ -2789,7 +2798,10 @@ class BspManager:
         result = scanner.scan(artifact_paths=artifact_path_objs)
 
         # Print summary
-        print(f"\nScan completed: {result.total_count} finding(s) across {len(result.scanned_artifacts)} artifact(s)")
+        if result.scanned_sboms:
+            print(f"\nScan completed: {result.total_count} finding(s) across {len(result.scanned_sboms)} reused SBOM(s)")
+        else:
+            print(f"\nScan completed: {result.total_count} finding(s) across {len(result.scanned_artifacts)} artifact(s)")
         if result.total_count:
             sev_counts = [
                 f"CRITICAL={result.critical_count}",
@@ -2798,9 +2810,15 @@ class BspManager:
                 f"LOW={result.low_count}",
             ]
             print("  Severity breakdown: " + "  ".join(sev_counts))
-        if result.sboms:
-            print(f"  SBOM(s) generated:")
-            for sbom in result.sboms:
+        generated_sboms = [sbom for sbom in result.sboms if sbom.source == "generated"]
+        reused_sboms = [sbom for sbom in result.sboms if sbom.source == "reused"]
+        if generated_sboms:
+            print("  SBOM(s) generated:")
+            for sbom in generated_sboms:
+                print(f"    {sbom.path} ({sbom.component_count} components, format: {sbom.sbom_format})")
+        if reused_sboms:
+            print("  SBOM(s) reused:")
+            for sbom in reused_sboms:
                 print(f"    {sbom.path} ({sbom.component_count} components, format: {sbom.sbom_format})")
         if result.report_files:
             print(f"  Report(s):")

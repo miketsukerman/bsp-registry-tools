@@ -75,6 +75,7 @@ class TestScanResult:
         assert r.findings == []
         assert r.sboms == []
         assert r.scanned_artifacts == []
+        assert r.scanned_sboms == []
         assert r.report_files == []
         assert r.fail_on == "CRITICAL"
         assert r.dry_run is False
@@ -278,6 +279,44 @@ class TestFindArtifacts:
         cfg = ScanConfig()
         zst_patterns = [p for p in cfg.artifact_patterns if ".zst" in p]
         assert zst_patterns == [], f"Unexpected .zst patterns in defaults: {zst_patterns}"
+
+
+# =============================================================================
+# ImageScanner SBOM discovery tests
+# =============================================================================
+
+
+class TestFindSboms:
+    def test_returns_configured_sbom_paths(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+
+        cfg = ScanConfig(sbom_paths=["tmp/deploy/images/image.spdx.json"])
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        assert scanner._resolve_configured_sbom_paths() == [sbom]
+
+    def test_finds_sboms_from_patterns(self, tmp_path):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        spdx = images_dir / "image.spdx.json"
+        cdx = images_dir / "image.cdx.json"
+        spdx.write_text(SPDX_SBOM_JSON)
+        cdx.write_text(SYFT_SBOM_JSON)
+
+        cfg = ScanConfig(
+            sbom_patterns=["*.spdx.json", "*.cdx.json"],
+            sbom_dirs=["tmp/deploy/images"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        assert scanner._find_sboms() == [spdx, cdx]
+
+    def test_exits_when_configured_sbom_path_missing(self, tmp_path):
+        scanner = ImageScanner(ScanConfig(sbom_paths=["missing.spdx.json"]), str(tmp_path))
+        with pytest.raises(SystemExit):
+            scanner._resolve_configured_sbom_paths()
 
 
 # =============================================================================
@@ -926,6 +965,15 @@ SYFT_SBOM_JSON = json.dumps({
     "components": [{"name": "libssl"}, {"name": "bash"}, {"name": "glibc"}],
 })
 
+SPDX_SBOM_JSON = json.dumps({
+    "spdxVersion": "SPDX-2.3",
+    "SPDXID": "SPDXRef-DOCUMENT",
+    "packages": [
+        {"name": "libssl", "SPDXID": "SPDXRef-libssl"},
+        {"name": "bash", "SPDXID": "SPDXRef-bash"},
+    ],
+})
+
 
 class TestRunSyftGrype:
     def _make_scanner(self, tmp_path, **cfg_kwargs):
@@ -1019,6 +1067,60 @@ class TestRunSyftGrype:
             f"Expected '0 packages' warning, got: {[r.message for r in caplog.records]}"
         )
 
+    def test_reuses_existing_sbom_with_grype_only(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, sbom_paths=["tmp/deploy/images/image.spdx.json"])
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        called_tools = []
+
+        def fake_run(cmd, **kwargs):
+            called_tools.append(cmd[0])
+            if "grype" in cmd[0]:
+                file_path = cmd[cmd.index("--file") + 1]
+                Path(file_path).write_text(GRYPE_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/grype"):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = scanner.scan()
+
+        assert called_tools == ["grype"]
+        assert result.scanned_sboms == [sbom]
+        assert result.scanned_artifacts == []
+        assert result.sboms[0].path == sbom
+        assert result.sboms[0].source == "reused"
+        assert result.sboms[0].component_count == 2
+        assert len(result.findings) == 1
+
+    def test_reused_sbom_rejects_unsupported_format(self, tmp_path):
+        scanner = self._make_scanner(tmp_path, sbom_paths=["tmp/deploy/images/image.json"])
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(json.dumps({"hello": "world"}))
+
+        with patch("shutil.which", return_value="/usr/bin/grype"):
+            with pytest.raises(SystemExit):
+                scanner.scan()
+
+    def test_reused_sbom_exits_when_tool_is_trivy(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        scanner = ImageScanner(
+            ScanConfig(tool="trivy", sbom_paths=["tmp/deploy/images/image.spdx.json"]),
+            str(tmp_path),
+        )
+
+        with pytest.raises(SystemExit):
+            scanner.scan()
+
 
 # =============================================================================
 # ImageScanner._parse_grype_json tests
@@ -1098,6 +1200,25 @@ class TestImageScannerScan:
             result = scanner.scan()
         assert result.total_count == 0
         assert result.scanned_artifacts == []
+        assert result.scanned_sboms == []
+
+    def test_explicit_artifact_paths_override_configured_sboms(self, tmp_path):
+        artifact = tmp_path / "explicit.rootfs.tar.gz"
+        artifact.write_bytes(b"fake")
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+
+        cfg = ScanConfig(tool="trivy", sbom_paths=["tmp/deploy/images/image.spdx.json"])
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch("shutil.which", return_value="/usr/bin/trivy"):
+            with patch.object(scanner, "_run_trivy", return_value=([], None, [])) as mock_run:
+                result = scanner.scan(artifact_paths=[artifact])
+
+        mock_run.assert_called_once_with(artifact, tmp_path / "reports")
+        assert result.scanned_artifacts == [artifact]
+        assert result.scanned_sboms == []
 
     def test_scan_exits_on_unknown_tool(self, tmp_path):
         cfg = ScanConfig(tool="unknown-tool")
@@ -1340,6 +1461,32 @@ class TestCliScanArguments:
                 _, kwargs = mock_mgr.scan_bsp.call_args
                 assert kwargs.get("image_paths") == [image]
 
+    def test_scan_sbom_path_flag(self, tmp_path):
+        reg = self._make_registry(tmp_path)
+        sbom = str(tmp_path / "image.spdx.json")
+        with patch("sys.argv", ["bsp", "--registry", str(reg), "scan", "rpi5-scarthgap", "--sbom-path", sbom]):
+            with patch("bsp.cli.BspManager") as MockBspMgr:
+                mock_mgr = MockBspMgr.return_value
+                mock_mgr.scan_bsp.return_value = ScanResult()
+                from bsp.cli import main as cli_main
+                cli_main()
+                _, kwargs = mock_mgr.scan_bsp.call_args
+                assert kwargs.get("scan_overrides", {}).get("sbom_paths") == [sbom]
+
+    def test_scan_rejects_mixed_image_and_sbom_paths(self, tmp_path):
+        reg = self._make_registry(tmp_path)
+        image = str(tmp_path / "my-image.wic")
+        sbom = str(tmp_path / "image.spdx.json")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(reg), "scan", "rpi5-scarthgap",
+            "--image-path", image, "--sbom-path", sbom,
+        ]):
+            with patch("bsp.cli.BspManager") as MockBspMgr:
+                from bsp.cli import main as cli_main
+                rc = cli_main()
+                assert rc == 1
+                MockBspMgr.return_value.scan_bsp.assert_not_called()
+
     def test_scan_by_components(self, tmp_path):
         reg = self._make_registry(tmp_path)
         with patch("sys.argv", ["bsp", "--registry", str(reg), "scan",
@@ -1411,6 +1558,30 @@ class TestBspManagerScan:
 
         assert isinstance(result, ScanResult)
 
+    def test_scan_bsp_dry_run_uses_reused_sbom_inputs(self, tmp_path):
+        from bsp import BspManager
+
+        reg = tmp_path / "bsp-registry.yaml"
+        reg.write_text(SCAN_REGISTRY_YAML)
+
+        mgr = BspManager(config_path=str(reg))
+        mgr.initialize()
+
+        with patch("bsp.bsp_manager.ImageScanner") as MockScanner:
+            mock_instance = MockScanner.return_value
+            mock_instance._resolve_scan_inputs.return_value = (
+                [],
+                [tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"],
+            )
+            result = mgr.scan_bsp(
+                "rpi5-scarthgap",
+                scan_overrides={"sbom_paths": ["tmp/deploy/images/image.spdx.json"]},
+                dry_run=True,
+            )
+
+        assert result.scanned_sboms == [tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"]
+        assert result.scanned_artifacts == []
+
     def test_scan_bsp_exits_on_failure(self, tmp_path):
         """scan_bsp should call sys.exit when result.passed is False and not dry_run."""
         from bsp import BspManager
@@ -1457,6 +1628,22 @@ scan:
         # Other fields remain from root config
         assert cfg.tool == "trivy"
 
+    def test_scan_bsp_resolve_scan_config_merges_sbom_path_overrides(self, tmp_path):
+        from bsp import BspManager
+
+        reg = tmp_path / "bsp-registry.yaml"
+        reg.write_text(SCAN_REGISTRY_YAML)
+
+        mgr = BspManager(config_path=str(reg))
+        mgr.initialize()
+
+        resolved = mgr.resolver.resolve("rpi5", "scarthgap")
+        cfg = mgr._resolve_scan_config(
+            resolved,
+            scan_overrides={"sbom_paths": ["/tmp/imported.spdx.json"]},
+        )
+        assert cfg.sbom_paths == ["/tmp/imported.spdx.json"]
+
     def test_resolve_scan_config_defaults_when_no_config(self, tmp_path):
         """When no scan block exists, defaults are used."""
         from bsp import BspManager
@@ -1490,6 +1677,9 @@ class TestScanConfigModel:
         assert cfg.upload is False
         assert "**/*.rootfs.tar.gz" in cfg.artifact_patterns
         assert "**/*.rootfs.tar.bz2" in cfg.artifact_patterns
+        assert cfg.sbom_paths == []
+        assert cfg.sbom_patterns == []
+        assert cfg.sbom_dirs == ["tmp/deploy/images"]
 
     def test_registry_root_has_scan_field(self):
         from bsp.models import RegistryRoot
@@ -1514,6 +1704,10 @@ scan:
   fail_on: HIGH
   sbom_format: spdx-json
   output_dir: /tmp/scan-reports
+  sbom_paths:
+    - tmp/deploy/images/image.spdx.json
+  sbom_patterns:
+    - "*.spdx.json"
 """
         reg = tmp_path / "bsp-registry.yaml"
         reg.write_text(yaml_content)
@@ -1527,6 +1721,8 @@ scan:
         assert mgr.model.scan.fail_on == "HIGH"
         assert mgr.model.scan.sbom_format == "spdx-json"
         assert mgr.model.scan.output_dir == "/tmp/scan-reports"
+        assert mgr.model.scan.sbom_paths == ["tmp/deploy/images/image.spdx.json"]
+        assert mgr.model.scan.sbom_patterns == ["*.spdx.json"]
 
     def test_preset_level_scan_config_parsed(self, tmp_path):
         """Preset-level scan block is resolved and available in resolved.scan_config."""
@@ -1560,6 +1756,8 @@ registry:
         tool: syft+grype
         severity: CRITICAL
         fail_on: NONE
+        sbom_paths:
+          - tmp/deploy/images/image.spdx.json
 """
         reg = tmp_path / "bsp-registry.yaml"
         reg.write_text(yaml_with_preset_scan)
@@ -1572,6 +1770,7 @@ registry:
         assert resolved.scan_config.tool == "syft+grype"
         assert resolved.scan_config.severity == "CRITICAL"
         assert resolved.scan_config.fail_on == "NONE"
+        assert resolved.scan_config.sbom_paths == ["tmp/deploy/images/image.spdx.json"]
 
 
 # =============================================================================

@@ -662,6 +662,13 @@ class ScanConfig:
         artifact_dirs: Subdirectories under the build output path to
                        search for artifacts.  Mirrors
                        :attr:`DeployConfig.artifact_dirs`.
+        sbom_paths: Explicit existing SBOM files to reuse with the
+                    ``syft+grype`` backend.  Relative paths are resolved
+                    under the build output path.
+        sbom_patterns: Glob patterns (relative to each SBOM directory)
+                       that select existing SBOM files to reuse.
+        sbom_dirs: Subdirectories under the build output path to search
+                   for SBOM files matching ``sbom_patterns``.
         upload: When ``True``, upload scan reports to the same cloud
                 storage as ``deploy`` (uses the active ``DeployConfig``).
                 Default: ``False``.
@@ -722,6 +729,11 @@ class ScanConfig:
         "**/*.rpi-sdimg",
     ])
     artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+    ])
+    sbom_paths: List[str] = field(default_factory=empty_list)
+    sbom_patterns: List[str] = field(default_factory=empty_list)
+    sbom_dirs: List[str] = field(default_factory=lambda: [
         "tmp/deploy/images",
     ])
     upload: bool = False

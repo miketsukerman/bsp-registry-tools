@@ -118,6 +118,9 @@ def _collect_scan_overrides(args) -> dict:
     output_dir = getattr(args, "scan_output_dir", None)
     if output_dir is not None:
         overrides["output_dir"] = output_dir
+    sbom_paths = getattr(args, "scan_sbom_paths", None)
+    if sbom_paths is not None:
+        overrides["sbom_paths"] = sbom_paths
     return overrides
 
 
@@ -1121,6 +1124,18 @@ def main() -> int:
             )
         )
         scan_parser.add_argument(
+            "--sbom-path",
+            action="append",
+            dest="scan_sbom_paths",
+            metavar="PATH",
+            default=None,
+            help=(
+                "Existing SPDX-JSON or CycloneDX-JSON SBOM file to reuse with "
+                "syft+grype (can be specified multiple times). "
+                "Overrides SBOM auto-discovery when provided."
+            )
+        )
+        scan_parser.add_argument(
             "--dry-run",
             action="store_true",
             dest="dry_run",
@@ -1790,8 +1805,13 @@ def main() -> int:
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
             dry_run = getattr(args, "dry_run", False)
-            scan_overrides = _collect_scan_overrides(args)
             image_paths = getattr(args, "scan_image_paths", None)
+            sbom_paths = getattr(args, "scan_sbom_paths", None)
+            if image_paths and sbom_paths:
+                logging.error("Use either --image-path or --sbom-path, not both.")
+                scan_parser.print_help()
+                return 1
+            scan_overrides = _collect_scan_overrides(args)
 
             if _check_exclusive(bsp_name, device, release, scan_parser):
                 return 1

@@ -123,10 +123,11 @@ class ScanFinding:
 
 @dataclass
 class SbomResult:
-    """Result of SBOM generation for a single artifact."""
+    """Result of SBOM generation or reuse for a single scan input."""
     path: Path
     sbom_format: str
     component_count: int = 0
+    source: str = "generated"
 
 
 @dataclass
@@ -135,6 +136,7 @@ class ScanResult:
     findings: List[ScanFinding] = field(default_factory=list)
     sboms: List[SbomResult] = field(default_factory=list)
     scanned_artifacts: List[Path] = field(default_factory=list)
+    scanned_sboms: List[Path] = field(default_factory=list)
     report_files: List[Path] = field(default_factory=list)
     fail_on: str = "CRITICAL"
     dry_run: bool = False
@@ -216,18 +218,11 @@ class ImageScanner:
             :class:`ScanResult` with all findings and SBOM metadata.
         """
         result = ScanResult(fail_on=self.config.fail_on)
-
-        artifacts = artifact_paths if artifact_paths is not None else self._find_artifacts()
-
-        if not artifacts:
-            self.logger.warning(
-                "No artifacts found to scan under '%s'. "
-                "Check artifact_patterns and artifact_dirs in the scan config.",
-                self.build_path,
-            )
-            return result
-
+        artifacts, sboms = self._resolve_scan_inputs(artifact_paths=artifact_paths)
         result.scanned_artifacts = list(artifacts)
+        result.scanned_sboms = list(sboms)
+        if not artifacts and not sboms:
+            return result
 
         # Resolve output directory
         if self.config.output_dir:
@@ -237,7 +232,22 @@ class ImageScanner:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         tool = self.config.tool.lower()
-        if tool == "trivy":
+        if sboms:
+            if tool not in ("syft+grype", "syft_grype"):
+                self.logger.error(
+                    "Existing SBOM reuse is only supported with the 'syft+grype' backend; "
+                    "current tool is '%s'.",
+                    self.config.tool,
+                )
+                sys.exit(1)
+            self._check_tool_availability("grype")
+            for sbom_path in sboms:
+                findings, sbom, report_files = self._run_grype_on_sbom(sbom_path, output_dir, reused=True)
+                result.findings.extend(findings)
+                if sbom:
+                    result.sboms.append(sbom)
+                result.report_files.extend(report_files)
+        elif tool == "trivy":
             self._check_tool_availability("trivy")
             for artifact in artifacts:
                 findings, sbom, report_files = self._run_trivy(artifact, output_dir)
@@ -271,7 +281,7 @@ class ImageScanner:
         return result
 
     # ------------------------------------------------------------------
-    # Artifact discovery
+    # Input discovery
     # ------------------------------------------------------------------
 
     def _find_artifacts(self) -> List[Path]:
@@ -291,6 +301,83 @@ class ImageScanner:
                         seen.add(match)
 
         self.logger.info("Found %d artifact(s) to scan in %s", len(found), self.build_path)
+        return found
+
+    def _resolve_scan_inputs(
+        self,
+        artifact_paths: Optional[List[Path]] = None,
+    ) -> tuple[List[Path], List[Path]]:
+        """Resolve the effective artifact or existing-SBOM inputs for the scan."""
+        if artifact_paths is not None:
+            return list(artifact_paths), []
+
+        if self.config.sbom_paths:
+            return [], self._resolve_configured_sbom_paths()
+
+        if self.config.sbom_patterns:
+            return [], self._find_sboms()
+
+        artifacts = self._find_artifacts()
+        if not artifacts:
+            self.logger.warning(
+                "No artifacts found to scan under '%s'. "
+                "Check artifact_patterns and artifact_dirs in the scan config.",
+                self.build_path,
+            )
+        return artifacts, []
+
+    def _resolve_configured_sbom_paths(self) -> List[Path]:
+        """Resolve explicit SBOM file paths configured in ``ScanConfig``."""
+        found: List[Path] = []
+        missing: List[Path] = []
+        seen: set = set()
+
+        for raw_path in self.config.sbom_paths:
+            path = Path(raw_path)
+            if not path.is_absolute():
+                path = self.build_path / path
+            if not path.exists():
+                missing.append(path)
+                continue
+            if path.is_file() and path not in seen:
+                found.append(path)
+                seen.add(path)
+
+        if missing:
+            self.logger.error(
+                "Configured SBOM path(s) not found: %s",
+                ", ".join(str(path) for path in missing),
+            )
+            sys.exit(1)
+
+        return found
+
+    def _find_sboms(self) -> List[Path]:
+        """Find existing SBOM files under ``build_path`` using configured patterns."""
+        if not self.config.sbom_patterns:
+            return []
+
+        found: List[Path] = []
+        seen: set = set()
+        for sbom_dir in self.config.sbom_dirs:
+            search_dir = self.build_path / sbom_dir
+            if not search_dir.is_dir():
+                self.logger.debug("SBOM dir not found, skipping: %s", search_dir)
+                continue
+            for pattern in self.config.sbom_patterns:
+                for match in sorted(search_dir.glob(pattern)):
+                    if match.is_file() and match not in seen:
+                        found.append(match)
+                        seen.add(match)
+
+        if found:
+            self.logger.info("Found %d reusable SBOM(s) in %s", len(found), self.build_path)
+        else:
+            self.logger.warning(
+                "No SBOMs found to reuse under '%s'. "
+                "Check sbom_paths, sbom_patterns, and sbom_dirs in the scan config.",
+                self.build_path,
+            )
         return found
 
     # ------------------------------------------------------------------
@@ -715,6 +802,7 @@ class ImageScanner:
                     path=sbom_path,
                     sbom_format=self.config.sbom_format,
                     component_count=component_count,
+                    source="generated",
                 )
                 report_files.append(sbom_path)
             else:
@@ -728,30 +816,59 @@ class ImageScanner:
 
         # -- CVE scan via Grype (from the SBOM) --------------------------------
         if sbom_path.exists():
-            grype_cmd = [
-                "grype",
-                f"sbom:{sbom_path}",
-                "--output", "json",
-                "--file", str(grype_report_path),
-                "--fail-on", self.config.fail_on.lower(),
-                "--only-fixed",
-            ]
-            # Severity filter: grype doesn't have a --severity filter, so we
-            # filter in-process after parsing. We keep --fail-on in the command
-            # to let grype set its own exit code as a cross-check.
-            self.logger.info("Running Grype CVE scan: %s", " ".join(grype_cmd))
-            try:
-                proc = subprocess.run(
-                    grype_cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if grype_report_path.exists():
-                    findings = self._parse_grype_json(grype_report_path)
-                    report_files.append(grype_report_path)
-            except (OSError, subprocess.SubprocessError) as exc:
-                self.logger.error("Failed to run Grype: %s", exc)
+            findings, _, grype_report_files = self._run_grype_on_sbom(
+                sbom_path,
+                output_dir,
+                reused=False,
+            )
+            report_files.extend(grype_report_files)
+
+        return findings, sbom_result, report_files
+
+    def _run_grype_on_sbom(
+        self,
+        sbom_path: Path,
+        output_dir: Path,
+        reused: bool,
+    ) -> tuple:
+        """Run Grype against an existing SBOM file."""
+        detected_format = self._detect_reusable_sbom_format(sbom_path)
+        component_count = self._count_syft_sbom_components(sbom_path, detected_format)
+        sbom_result = SbomResult(
+            path=sbom_path,
+            sbom_format="cyclonedx" if detected_format == "cyclonedx-json" else "spdx-json",
+            component_count=component_count,
+            source="reused" if reused else "generated",
+        )
+
+        stem = sbom_path.stem.replace(".", "_")
+        grype_report_path = output_dir / f"grype-{stem}.json"
+        grype_cmd = [
+            "grype",
+            f"sbom:{sbom_path}",
+            "--output", "json",
+            "--file", str(grype_report_path),
+            "--fail-on", self.config.fail_on.lower(),
+            "--only-fixed",
+        ]
+        # Severity filter: grype doesn't have a --severity filter, so we
+        # filter in-process after parsing. We keep --fail-on in the command
+        # to let grype set its own exit code as a cross-check.
+        self.logger.info("Running Grype CVE scan: %s", " ".join(grype_cmd))
+        findings: List[ScanFinding] = []
+        report_files: List[Path] = []
+        try:
+            subprocess.run(
+                grype_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if grype_report_path.exists():
+                findings = self._parse_grype_json(grype_report_path)
+                report_files.append(grype_report_path)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.logger.error("Failed to run Grype: %s", exc)
 
         return findings, sbom_result, report_files
 
@@ -801,6 +918,30 @@ class ImageScanner:
             return text.count("PackageName:")
         except (OSError, json.JSONDecodeError):
             return 0
+
+    def _detect_reusable_sbom_format(self, sbom_path: Path) -> str:
+        """Validate and detect a reusable SBOM format supported by Grype."""
+        try:
+            data = json.loads(sbom_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.error(
+                "Unsupported SBOM '%s': reusable SBOM input must be valid SPDX-JSON or CycloneDX-JSON. %s",
+                sbom_path,
+                exc,
+            )
+            sys.exit(1)
+
+        if isinstance(data, dict):
+            if data.get("spdxVersion") and isinstance(data.get("packages"), list):
+                return "spdx-json"
+            if data.get("bomFormat") == "CycloneDX" and isinstance(data.get("components"), list):
+                return "cyclonedx-json"
+
+        self.logger.error(
+            "Unsupported SBOM '%s': reusable SBOM input must be SPDX-JSON or CycloneDX-JSON.",
+            sbom_path,
+        )
+        sys.exit(1)
 
     # ------------------------------------------------------------------
     # EMBA backend
