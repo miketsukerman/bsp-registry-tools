@@ -337,7 +337,7 @@ class ImageScanner:
             if not path.is_absolute():
                 candidate = path
                 if candidate.exists():
-                    path = candidate
+                    path = candidate.resolve()
                 else:
                     path = self.build_path / path
             if not path.exists():
