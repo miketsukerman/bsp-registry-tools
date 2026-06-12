@@ -1,11 +1,11 @@
 """
-CRA image scanner: runs Trivy, Syft+Grype, or EMBA against Yocto build artifacts.
+CRA image scanner: runs Trivy, Syft+Grype, EMBA, or sbom-cve-check against Yocto build artifacts.
 
 This module supports the EU Cyber Resilience Act (CRA) requirements for:
 - Software Bill of Materials (SBOM) generation
 - CVE/vulnerability assessment of embedded Linux images
 
-Three scanner backends are supported:
+Four scanner backends are supported:
 - **Trivy** (default): ``trivy fs``/``trivy rootfs`` for CVE scanning plus
   ``trivy sbom`` for SBOM generation.
 - **Syft + Grype**: ``syft`` for SBOM generation and ``grype`` for CVE
@@ -13,6 +13,10 @@ Three scanner backends are supported:
 - **EMBA**: comprehensive firmware security analyser that performs binary-level
   CVE detection without requiring a package-manager database.  Produces a
   CycloneDX SBOM and CSV CVE reports.
+- **sbom-cve-check**: lightweight Yocto-centric CVE checker that consumes an
+  existing SPDX SBOM (v2.2 or v3.0) and queries NVD / CVE List databases.
+  Requires an SBOM as input; pair with ``sbom_paths``/``sbom_patterns`` to
+  reuse Yocto-generated SBOMs.
 
 Trivy and Syft/Grype are external CLI tools; neither is a Python dependency.
 Install instructions for Trivy: https://trivy.dev/latest/getting-started/installation/
@@ -21,6 +25,9 @@ Install instructions for Syft/Grype: https://github.com/anchore/syft / https://g
 EMBA must be cloned from GitHub and set up separately; it is not a pip package.
 Install instructions: https://github.com/e-m-b-a/emba/wiki/Installation
 Docker image: embeddedanalyzer/emba
+
+sbom-cve-check is available as a pip package:
+Install instructions: pip install sbom-cve-check[extra]
 """
 
 import csv
@@ -233,20 +240,29 @@ class ImageScanner:
 
         tool = self.config.tool.lower()
         if sboms:
-            if tool not in ("syft+grype", "syft_grype"):
+            if tool not in ("syft+grype", "syft_grype", "sbom-cve-check", "sbom_cve_check"):
                 self.logger.error(
-                    "Existing SBOM reuse is only supported with the 'syft+grype' backend; "
-                    "current tool is '%s'.",
+                    "Existing SBOM reuse is only supported with the 'syft+grype' or "
+                    "'sbom-cve-check' backend; current tool is '%s'.",
                     self.config.tool,
                 )
                 sys.exit(1)
-            self._check_tool_availability("grype")
-            for sbom_path in sboms:
-                findings, sbom, report_files = self._run_grype_on_sbom(sbom_path, output_dir, reused=True)
-                result.findings.extend(findings)
-                if sbom:
-                    result.sboms.append(sbom)
-                result.report_files.extend(report_files)
+            if tool in ("sbom-cve-check", "sbom_cve_check"):
+                self._check_tool_availability("sbom-cve-check")
+                for sbom_path in sboms:
+                    findings, sbom, report_files = self._run_sbom_cve_check_on_sbom(sbom_path, output_dir)
+                    result.findings.extend(findings)
+                    if sbom:
+                        result.sboms.append(sbom)
+                    result.report_files.extend(report_files)
+            else:
+                self._check_tool_availability("grype")
+                for sbom_path in sboms:
+                    findings, sbom, report_files = self._run_grype_on_sbom(sbom_path, output_dir, reused=True)
+                    result.findings.extend(findings)
+                    if sbom:
+                        result.sboms.append(sbom)
+                    result.report_files.extend(report_files)
         elif tool == "trivy":
             self._check_tool_availability("trivy")
             for artifact in artifacts:
@@ -271,9 +287,17 @@ class ImageScanner:
                 if sbom:
                     result.sboms.append(sbom)
                 result.report_files.extend(report_files)
+        elif tool in ("sbom-cve-check", "sbom_cve_check"):
+            self.logger.error(
+                "The 'sbom-cve-check' backend requires an SBOM as input. "
+                "Set 'sbom_paths' or 'sbom_patterns' in the scan config, or pass "
+                "'--sbom-path PATH' on the command line to provide a Yocto SBOM "
+                "(e.g. ${IMAGE_NAME}.rootfs.spdx.json)."
+            )
+            sys.exit(1)
         else:
             self.logger.error(
-                "Unknown scan tool '%s'. Supported tools: trivy, syft+grype, emba.",
+                "Unknown scan tool '%s'. Supported tools: trivy, syft+grype, emba, sbom-cve-check.",
                 self.config.tool,
             )
             sys.exit(1)
@@ -401,6 +425,10 @@ class ImageScanner:
                 ),
                 "syft": "https://github.com/anchore/syft#installation",
                 "grype": "https://github.com/anchore/grype#installation",
+                "sbom-cve-check": (
+                    "https://github.com/bootlin/sbom-cve-check\n"
+                    "  Quick install: pip install sbom-cve-check[extra]"
+                ),
             }
             hint = install_hints.get(tool, f"https://github.com/search?q={tool}")
             self.logger.error(
@@ -1250,6 +1278,211 @@ class ImageScanner:
             return len(data.get("components", []))
         except (OSError, json.JSONDecodeError):
             return 0
+
+    # ------------------------------------------------------------------
+    # sbom-cve-check backend
+    # ------------------------------------------------------------------
+
+    def _run_sbom_cve_check_on_sbom(
+        self,
+        sbom_path: Path,
+        output_dir: Path,
+    ) -> tuple:
+        """
+        Run ``sbom-cve-check`` against an existing SPDX SBOM file.
+
+        ``sbom-cve-check`` (https://github.com/bootlin/sbom-cve-check) is a
+        lightweight Yocto-centric CVE checker that parses SPDX 2.x/3.0 SBOMs
+        and queries NVD / CVE List databases.
+
+        Unlike Trivy and Grype, ``sbom-cve-check`` only accepts **SBOM files**
+        as input (not raw image artifacts).  Use this backend together with
+        ``sbom_paths`` / ``sbom_patterns`` to reuse Yocto-generated SBOMs.
+
+        An optional Yocto VEX manifest (``${IMAGE_NAME}.rootfs.json``, produced
+        by ``vex.bbclass``) can be supplied via
+        ``scan.sbom_cve_check_vex_manifest_path`` to filter kernel CVEs that
+        are not applicable to the compiled source tree.
+
+        Returns:
+            Tuple of ``(findings, sbom_result_or_None, report_files)``.
+        """
+        stem = sbom_path.stem.replace(".", "_")
+        report_path = output_dir / f"sbom-cve-check-{stem}.json"
+
+        # Detect SBOM format to pass --sbom-type (spdx2 vs spdx3)
+        sbom_type = self._detect_sbom_cve_check_type(sbom_path)
+
+        cmd = [
+            "sbom-cve-check",
+            "--sbom-path", str(sbom_path),
+            "--sbom-type", sbom_type,
+            "--export-type", "yocto-cve-check-manifest",
+            "--export-path", str(report_path),
+        ]
+
+        vex_manifest = self.config.sbom_cve_check_vex_manifest_path
+        if vex_manifest:
+            vex_path = Path(vex_manifest)
+            if not vex_path.is_absolute():
+                vex_path = self.build_path / vex_path
+            if vex_path.exists():
+                cmd += ["--yocto-vex-manifest", str(vex_path)]
+            else:
+                self.logger.warning(
+                    "sbom-cve-check VEX manifest not found at '%s'; skipping --yocto-vex-manifest.",
+                    vex_path,
+                )
+
+        databases_dir = self.config.sbom_cve_check_databases_dir
+        if databases_dir:
+            cmd += ["--databases-dir", str(databases_dir)]
+
+        extra_args = self.config.sbom_cve_check_extra_args
+        if extra_args:
+            cmd += extra_args.split()
+
+        self.logger.info("Running sbom-cve-check CVE scan: %s", " ".join(cmd))
+
+        findings: List[ScanFinding] = []
+        report_files: List[Path] = []
+        sbom_result: Optional[SbomResult] = None
+
+        # Record the reused SBOM
+        detected_format = self._detect_reusable_sbom_format(sbom_path)
+        component_count = self._count_syft_sbom_components(sbom_path, detected_format)
+        sbom_result = SbomResult(
+            path=sbom_path,
+            sbom_format="spdx-json",
+            component_count=component_count,
+            source="reused",
+        )
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode not in (0, 1):
+                self.logger.warning(
+                    "sbom-cve-check exited with code %d for '%s'.\nstderr: %s",
+                    proc.returncode,
+                    sbom_path.name,
+                    proc.stderr,
+                )
+            if report_path.exists():
+                findings = self._parse_sbom_cve_check_json(report_path)
+                report_files.append(report_path)
+            else:
+                self.logger.warning(
+                    "sbom-cve-check did not produce a report for '%s'. stderr: %s",
+                    sbom_path.name,
+                    proc.stderr,
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.logger.error("Failed to run sbom-cve-check: %s", exc)
+
+        return findings, sbom_result, report_files
+
+    def _detect_sbom_cve_check_type(self, sbom_path: Path) -> str:
+        """
+        Detect whether the SBOM is SPDX 2.x (``spdx2``) or SPDX 3.0 (``spdx3``).
+
+        Returns the string expected by ``sbom-cve-check --sbom-type``.
+        Defaults to ``"spdx2"`` when detection is inconclusive.
+        """
+        try:
+            data = json.loads(sbom_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "spdx2"
+
+        if isinstance(data, dict):
+            context = data.get("@context", "")
+            if isinstance(context, str) and "spdx.org/rdf/3" in context:
+                return "spdx3"
+        return "spdx2"
+
+    def _parse_sbom_cve_check_json(self, report_path: Path) -> List[ScanFinding]:
+        """
+        Parse a ``sbom-cve-check`` yocto-cve-check-manifest JSON report.
+
+        Only ``"Unpatched"`` issues are returned as findings; ``"Patched"``
+        and ``"Ignored"`` entries are skipped.
+
+        Severity is derived from the CVSS v3 score (preferred), then v2,
+        then v4, using the standard CVSS v3 numeric ranges.
+        """
+        try:
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning(
+                "Could not parse sbom-cve-check report %s: %s", report_path, exc
+            )
+            return []
+
+        min_severity_idx = (
+            _SEVERITY_ORDER.index(self.config.severity.upper())
+            if self.config.severity.upper() in _SEVERITY_ORDER
+            else 0
+        )
+
+        findings: List[ScanFinding] = []
+        for pkg in data.get("package", []):
+            pkg_name = pkg.get("name", "")
+            pkg_version = pkg.get("version", "")
+            for issue in pkg.get("issue", []):
+                status = issue.get("status", "")
+                # Only report unpatched vulnerabilities
+                if status != "Unpatched":
+                    continue
+                cve_id = issue.get("id", "")
+                if not cve_id:
+                    continue
+                severity = self._cvss_score_to_severity(
+                    issue.get("scorev3", "0.0"),
+                    issue.get("scorev2", "0.0"),
+                    issue.get("scorev4", "0.0"),
+                )
+                sev_idx = (
+                    _SEVERITY_ORDER.index(severity)
+                    if severity in _SEVERITY_ORDER
+                    else 0
+                )
+                if sev_idx < min_severity_idx:
+                    continue
+                findings.append(ScanFinding(
+                    cve_id=cve_id,
+                    severity=severity,
+                    package_name=pkg_name,
+                    package_version=pkg_version,
+                    description=issue.get("summary", ""),
+                ))
+        return findings
+
+    @staticmethod
+    def _cvss_score_to_severity(scorev3: str, scorev2: str, scorev4: str) -> str:
+        """
+        Derive a canonical severity level from CVSS scores.
+
+        Prefers CVSSv3; falls back to v2 then v4 when v3 is zero.
+        """
+        for raw in (scorev3, scorev2, scorev4):
+            try:
+                score = float(raw)
+            except (ValueError, TypeError):
+                continue
+            if score <= 0.0:
+                continue
+            if score >= 9.0:
+                return "CRITICAL"
+            if score >= 7.0:
+                return "HIGH"
+            if score >= 4.0:
+                return "MEDIUM"
+            return "LOW"
+        return "NONE"
 
     # ------------------------------------------------------------------
     # Helpers

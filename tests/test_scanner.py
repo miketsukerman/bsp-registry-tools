@@ -2211,3 +2211,400 @@ class TestRunEmba:
 
         mock_emba.assert_called_once()
         assert result.total_count == 1
+
+
+# =============================================================================
+# ImageScanner._run_sbom_cve_check_on_sbom tests
+# =============================================================================
+
+
+# Minimal yocto-cve-check-manifest JSON report produced by sbom-cve-check.
+SBOM_CVE_CHECK_REPORT_JSON = json.dumps({
+    "version": "1",
+    "package": [
+        {
+            "name": "openssl",
+            "layer": "meta",
+            "version": "3.0.0",
+            "products": [{"product": "openssl", "cvesInRecord": "Yes"}],
+            "issue": [
+                {
+                    "id": "CVE-2024-9999",
+                    "status": "Unpatched",
+                    "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-9999",
+                    "summary": "A test vulnerability",
+                    "scorev2": "0.0",
+                    "scorev3": "7.5",
+                    "scorev4": "0.0",
+                    "modified": None,
+                    "vector": "NETWORK",
+                    "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                },
+                {
+                    "id": "CVE-2024-8888",
+                    "status": "Patched",
+                    "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-8888",
+                    "summary": "Already patched",
+                    "scorev2": "0.0",
+                    "scorev3": "5.0",
+                    "scorev4": "0.0",
+                    "modified": None,
+                    "vector": "NETWORK",
+                    "vectorString": None,
+                },
+            ],
+            "cpes": ["cpe:2.3:a:openssl:openssl:3.0.0:*:*:*:*:*:*:*"],
+        },
+        {
+            "name": "bash",
+            "layer": "meta",
+            "version": "5.2",
+            "products": [],
+            "issue": [],
+            "cpes": [],
+        },
+    ],
+})
+
+
+class TestRunSbomCveCheck:
+    def _make_scanner(self, tmp_path, **cfg_kwargs):
+        return ImageScanner(
+            ScanConfig(tool="sbom-cve-check", **cfg_kwargs),
+            str(tmp_path),
+        )
+
+    def test_runs_sbom_cve_check_on_spdx2_sbom(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = self._make_scanner(
+            tmp_path, sbom_paths=["tmp/deploy/images/image.spdx.json"]
+        )
+
+        called_cmds = []
+
+        def fake_run(cmd, **kwargs):
+            called_cmds.append(cmd)
+            # Write a fake report at --export-path
+            export_path = cmd[cmd.index("--export-path") + 1]
+            Path(export_path).write_text(SBOM_CVE_CHECK_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = scanner.scan()
+
+        assert len(called_cmds) == 1
+        cmd = called_cmds[0]
+        assert "sbom-cve-check" in cmd[0]
+        assert "--sbom-path" in cmd
+        assert str(sbom) in cmd
+        assert "--export-type" in cmd
+        assert "yocto-cve-check-manifest" in cmd
+        assert "--sbom-type" in cmd
+        assert "spdx2" in cmd
+        assert result.scanned_sboms == [sbom]
+        # Only the Unpatched CVE-2024-9999 should be a finding
+        assert len(result.findings) == 1
+        assert result.findings[0].cve_id == "CVE-2024-9999"
+        assert result.findings[0].severity == "HIGH"
+        assert result.findings[0].package_name == "openssl"
+        assert result.sboms[0].source == "reused"
+
+    def test_detects_spdx3_sbom_type(self, tmp_path):
+        sbom = tmp_path / "image.spdx.json"
+        sbom.write_text(SPDX3_SBOM_JSON)
+        scanner = self._make_scanner(tmp_path)
+        assert scanner._detect_sbom_cve_check_type(sbom) == "spdx3"
+
+    def test_detects_spdx2_sbom_type(self, tmp_path):
+        sbom = tmp_path / "image.spdx.json"
+        sbom.write_text(SPDX_SBOM_JSON)
+        scanner = self._make_scanner(tmp_path)
+        assert scanner._detect_sbom_cve_check_type(sbom) == "spdx2"
+
+    def test_passes_vex_manifest_when_configured(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        vex = tmp_path / "tmp" / "deploy" / "images" / "image.rootfs.json"
+        vex.write_text("{}")
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = self._make_scanner(
+            tmp_path,
+            sbom_paths=["tmp/deploy/images/image.spdx.json"],
+            sbom_cve_check_vex_manifest_path="tmp/deploy/images/image.rootfs.json",
+        )
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            export_path = cmd[cmd.index("--export-path") + 1]
+            Path(export_path).write_text(SBOM_CVE_CHECK_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with patch("subprocess.run", side_effect=fake_run):
+                scanner.scan()
+
+        assert "--yocto-vex-manifest" in captured_cmd
+        vex_idx = captured_cmd.index("--yocto-vex-manifest")
+        assert captured_cmd[vex_idx + 1] == str(vex)
+
+    def test_skips_missing_vex_manifest_with_warning(self, tmp_path, caplog):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = self._make_scanner(
+            tmp_path,
+            sbom_paths=["tmp/deploy/images/image.spdx.json"],
+            sbom_cve_check_vex_manifest_path="tmp/deploy/images/nonexistent.json",
+        )
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            export_path = cmd[cmd.index("--export-path") + 1]
+            Path(export_path).write_text(SBOM_CVE_CHECK_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+                with patch("subprocess.run", side_effect=fake_run):
+                    scanner.scan()
+
+        assert "--yocto-vex-manifest" not in captured_cmd
+        assert any("VEX manifest not found" in r.message for r in caplog.records)
+
+    def test_sbom_cve_check_rejects_artifact_inputs(self, tmp_path):
+        images_dir = tmp_path / "tmp" / "deploy" / "images"
+        images_dir.mkdir(parents=True)
+        (images_dir / "image.rootfs.tar.gz").write_bytes(b"data")
+
+        cfg = ScanConfig(
+            tool="sbom-cve-check",
+            artifact_dirs=["tmp/deploy/images"],
+            artifact_patterns=["**/*.rootfs.tar.gz"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with pytest.raises(SystemExit):
+                scanner.scan()
+
+    def test_reused_sbom_rejects_sbom_cve_check_without_sbom_paths(self, tmp_path):
+        """sbom-cve-check without sbom_paths must exit with error (no artifacts)."""
+        cfg = ScanConfig(tool="sbom-cve-check")
+        scanner = ImageScanner(cfg, str(tmp_path))
+        # No sboms, no artifacts → empty result (not an error)
+        result = scanner.scan()
+        assert result.total_count == 0
+
+    def test_trivy_still_rejects_sbom_reuse(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        scanner = ImageScanner(
+            ScanConfig(tool="trivy", sbom_paths=["tmp/deploy/images/image.spdx.json"]),
+            str(tmp_path),
+        )
+        with pytest.raises(SystemExit):
+            scanner.scan()
+
+    def test_filters_patched_issues(self, tmp_path):
+        scanner = self._make_scanner(tmp_path)
+        report = tmp_path / "report.json"
+        report.write_text(SBOM_CVE_CHECK_REPORT_JSON)
+        findings = scanner._parse_sbom_cve_check_json(report)
+        # Only CVE-2024-9999 (Unpatched); CVE-2024-8888 (Patched) is excluded
+        assert len(findings) == 1
+        assert findings[0].cve_id == "CVE-2024-9999"
+
+    def test_filters_below_severity_threshold(self, tmp_path):
+        scanner = ImageScanner(ScanConfig(tool="sbom-cve-check", severity="CRITICAL"), str(tmp_path))
+        data = {
+            "version": "1",
+            "package": [
+                {
+                    "name": "pkg",
+                    "version": "1.0",
+                    "issue": [
+                        {"id": "CVE-HIGH", "status": "Unpatched",
+                         "scorev3": "7.5", "scorev2": "0.0", "scorev4": "0.0", "summary": ""},
+                        {"id": "CVE-CRITICAL", "status": "Unpatched",
+                         "scorev3": "9.8", "scorev2": "0.0", "scorev4": "0.0", "summary": ""},
+                    ],
+                }
+            ],
+        }
+        report = tmp_path / "report.json"
+        report.write_text(json.dumps(data))
+        findings = scanner._parse_sbom_cve_check_json(report)
+        ids = {f.cve_id for f in findings}
+        assert "CVE-HIGH" not in ids
+        assert "CVE-CRITICAL" in ids
+
+    def test_handles_invalid_json_report(self, tmp_path, caplog):
+        scanner = self._make_scanner(tmp_path)
+        report = tmp_path / "report.json"
+        report.write_text("{broken")
+        with caplog.at_level(logging.WARNING, logger="ImageScanner"):
+            findings = scanner._parse_sbom_cve_check_json(report)
+        assert findings == []
+        assert any("Could not parse" in r.message for r in caplog.records)
+
+    def test_cvss_score_to_severity_prefers_v3(self, tmp_path):
+        scanner = self._make_scanner(tmp_path)
+        assert scanner._cvss_score_to_severity("9.8", "0.0", "0.0") == "CRITICAL"
+        assert scanner._cvss_score_to_severity("7.5", "0.0", "0.0") == "HIGH"
+        assert scanner._cvss_score_to_severity("5.0", "0.0", "0.0") == "MEDIUM"
+        assert scanner._cvss_score_to_severity("2.0", "0.0", "0.0") == "LOW"
+        assert scanner._cvss_score_to_severity("0.0", "0.0", "0.0") == "NONE"
+
+    def test_cvss_score_falls_back_to_v2(self, tmp_path):
+        scanner = self._make_scanner(tmp_path)
+        assert scanner._cvss_score_to_severity("0.0", "7.8", "0.0") == "HIGH"
+
+    def test_tool_availability_check_includes_sbom_cve_check(self, tmp_path, caplog):
+        scanner = self._make_scanner(tmp_path)
+        with patch("shutil.which", return_value=None):
+            with caplog.at_level(logging.ERROR, logger="ImageScanner"):
+                with pytest.raises(SystemExit):
+                    scanner._check_tool_availability("sbom-cve-check")
+        assert any("sbom-cve-check" in r.message for r in caplog.records)
+
+    def test_passes_databases_dir_when_configured(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        db_dir = tmp_path / "databases"
+        db_dir.mkdir()
+        scanner = self._make_scanner(
+            tmp_path,
+            sbom_paths=["tmp/deploy/images/image.spdx.json"],
+            sbom_cve_check_databases_dir=str(db_dir),
+        )
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            export_path = cmd[cmd.index("--export-path") + 1]
+            Path(export_path).write_text(SBOM_CVE_CHECK_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with patch("subprocess.run", side_effect=fake_run):
+                scanner.scan()
+
+        assert "--databases-dir" in captured_cmd
+        db_idx = captured_cmd.index("--databases-dir")
+        assert captured_cmd[db_idx + 1] == str(db_dir)
+
+    def test_passes_extra_args_when_configured(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+        scanner = self._make_scanner(
+            tmp_path,
+            sbom_paths=["tmp/deploy/images/image.spdx.json"],
+            sbom_cve_check_extra_args="--disable-auto-updates --verbose",
+        )
+
+        captured_cmd = []
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            export_path = cmd[cmd.index("--export-path") + 1]
+            Path(export_path).write_text(SBOM_CVE_CHECK_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with patch("subprocess.run", side_effect=fake_run):
+                scanner.scan()
+
+        assert "--disable-auto-updates" in captured_cmd
+        assert "--verbose" in captured_cmd
+
+    def test_scan_dispatch_calls_sbom_cve_check(self, tmp_path):
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+
+        cfg = ScanConfig(
+            tool="sbom-cve-check",
+            sbom_paths=["tmp/deploy/images/image.spdx.json"],
+        )
+        scanner = ImageScanner(cfg, str(tmp_path))
+
+        with patch("shutil.which", return_value="/usr/bin/sbom-cve-check"):
+            with patch.object(scanner, "_run_sbom_cve_check_on_sbom", return_value=(
+                [ScanFinding("CVE-1", "HIGH", "pkg", "1.0")],
+                SbomResult(path=sbom, sbom_format="spdx-json", component_count=2, source="reused"),
+                [tmp_path / "report.json"],
+            )) as mock_run:
+                result = scanner.scan()
+
+        mock_run.assert_called_once_with(sbom, tmp_path / "reports")
+        assert result.total_count == 1
+        assert result.scanned_sboms == [sbom]
+
+
+# =============================================================================
+# CLI scan --vex-manifest-path flag tests
+# =============================================================================
+
+
+class TestCliScanVexManifestPath:
+    def _make_registry(self, tmp_path) -> Path:
+        reg = tmp_path / "bsp-registry.yaml"
+        reg.write_text(SCAN_REGISTRY_YAML)
+        return reg
+
+    def test_vex_manifest_path_flag_forwarded_to_scan_overrides(self, tmp_path):
+        reg = self._make_registry(tmp_path)
+        sbom = str(tmp_path / "image.spdx.json")
+        vex = str(tmp_path / "image.rootfs.json")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(reg), "scan", "rpi5-scarthgap",
+            "--tool", "sbom-cve-check",
+            "--sbom-path", sbom,
+            "--vex-manifest-path", vex,
+        ]):
+            with patch("bsp.cli.BspManager") as MockBspMgr:
+                mock_mgr = MockBspMgr.return_value
+                mock_mgr.scan_bsp.return_value = ScanResult()
+                from bsp.cli import main as cli_main
+                cli_main()
+                _, kwargs = mock_mgr.scan_bsp.call_args
+                overrides = kwargs.get("scan_overrides", {})
+                assert overrides.get("sbom_cve_check_vex_manifest_path") == vex
+                assert overrides.get("sbom_paths") == [sbom]
+                assert overrides.get("tool") == "sbom-cve-check"
