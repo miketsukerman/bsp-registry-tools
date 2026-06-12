@@ -985,6 +985,37 @@ SPDX_SBOM_JSON = json.dumps({
     ],
 })
 
+SPDX3_SBOM_JSON = json.dumps({
+    "@context": "https://spdx.org/rdf/3.0.1/spdx-context.jsonld",
+    "@graph": [
+        {
+            "type": "CreationInfo",
+            "created": "2011-04-05T23:00:00Z",
+            "createdBy": [
+                "http://spdx.org/spdxdocs/bitbake-addba517-4804-5ae3-87c2-0c3a1a5812ba/bitbake/agent/OpenEmbedded"
+            ],
+        },
+        {
+            "type": "software_Package",
+            "spdxId": "http://spdx.org/spdxdocs/bitbake-addba517/libssl",
+            "name": "libssl",
+            "packageVersion": "3.0.0",
+        },
+        {
+            "type": "software_Package",
+            "spdxId": "http://spdx.org/spdxdocs/bitbake-addba517/bash",
+            "name": "bash",
+            "packageVersion": "5.2",
+        },
+        {
+            "type": "software_Package",
+            "spdxId": "http://spdx.org/spdxdocs/bitbake-addba517/glibc",
+            "name": "glibc",
+            "packageVersion": "2.38",
+        },
+    ],
+})
+
 
 class TestRunSyftGrype:
     def _make_scanner(self, tmp_path, **cfg_kwargs):
@@ -1131,6 +1162,54 @@ class TestRunSyftGrype:
 
         with pytest.raises(SystemExit):
             scanner.scan()
+
+    def test_reuses_spdx3_sbom_with_grype_only(self, tmp_path):
+        """SPDX 3.0 JSON-LD SBOMs (Yocto BitBake output) must be accepted and scanned with Grype."""
+        scanner = self._make_scanner(tmp_path, sbom_paths=["tmp/deploy/images/image.spdx.json"])
+        sbom = tmp_path / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX3_SBOM_JSON)
+        output_dir = tmp_path / "reports"
+        output_dir.mkdir()
+
+        called_tools = []
+
+        def fake_run(cmd, **kwargs):
+            called_tools.append(cmd[0])
+            if "grype" in cmd[0]:
+                file_path = cmd[cmd.index("--file") + 1]
+                Path(file_path).write_text(GRYPE_REPORT_JSON)
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stderr = ""
+            return proc
+
+        with patch("shutil.which", return_value="/usr/bin/grype"):
+            with patch("subprocess.run", side_effect=fake_run):
+                result = scanner.scan()
+
+        assert called_tools == ["grype"]
+        assert result.scanned_sboms == [sbom]
+        assert result.sboms[0].path == sbom
+        assert result.sboms[0].source == "reused"
+        assert result.sboms[0].sbom_format == "spdx-json"
+        assert result.sboms[0].component_count == 3
+        assert len(result.findings) == 1
+
+    def test_spdx3_component_count(self, tmp_path):
+        """SPDX 3.0 @graph Package elements are counted correctly."""
+        scanner = self._make_scanner(tmp_path)
+        sbom = tmp_path / "image.spdx.json"
+        sbom.write_text(SPDX3_SBOM_JSON)
+        count = scanner._count_syft_sbom_components(sbom, "spdx-json")
+        assert count == 3
+
+    def test_spdx3_detect_format(self, tmp_path):
+        """SPDX 3.0 JSON-LD format is detected as spdx-json."""
+        scanner = self._make_scanner(tmp_path)
+        sbom = tmp_path / "image.spdx.json"
+        sbom.write_text(SPDX3_SBOM_JSON)
+        assert scanner._detect_reusable_sbom_format(sbom) == "spdx-json"
 
 
 # =============================================================================

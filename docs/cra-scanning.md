@@ -195,7 +195,9 @@ If Yocto already emitted an SBOM for the image, `bsp scan` can skip Syft and
 reuse that document directly with Grype.
 
 - Reuse mode is supported only with `tool: syft+grype`
-- Supported reusable formats: **SPDX-JSON** and **CycloneDX-JSON**
+- Supported reusable formats: **SPDX-JSON** (2.x and 3.0) and **CycloneDX-JSON**
+- Yocto BitBake generates SPDX 3.0 JSON-LD files (with `@context` and `@graph`);
+  these are accepted directly without conversion
 - `sbom_format` applies only when generating a new SBOM; it does not transform
   an imported SBOM
 - `--sbom-path` / `scan.sbom_paths` are an alternate input mode, so do not mix

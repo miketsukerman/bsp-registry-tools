@@ -916,6 +916,13 @@ class ImageScanner:
             text = sbom_path.read_text(encoding="utf-8")
             if fmt in ("cyclonedx-json", "spdx-json"):
                 data = json.loads(text)
+                # SPDX 3.0 JSON-LD: count Package elements in @graph
+                if "@graph" in data:
+                    return sum(
+                        1 for item in data["@graph"]
+                        if isinstance(item, dict)
+                        and str(item.get("type", "")).lower().endswith("package")
+                    )
                 return len(data.get("components", data.get("packages", [])))
             # spdx-tag-value
             return text.count("PackageName:")
@@ -929,6 +936,12 @@ class ImageScanner:
         Returns ``"spdx-json"`` or ``"cyclonedx-json"``. Exits the process
         with code 1 when the file is not valid JSON or not one of the
         supported reusable formats.
+
+        Supported formats:
+        - SPDX 3.0 JSON-LD (Yocto BitBake output): ``@context`` containing
+          ``spdx.org/rdf/3`` and an ``@graph`` list.
+        - SPDX 2.x JSON: top-level ``spdxVersion`` with a ``packages`` list.
+        - CycloneDX JSON: top-level ``components`` list.
         """
         try:
             data = json.loads(sbom_path.read_text(encoding="utf-8"))
@@ -941,13 +954,23 @@ class ImageScanner:
             sys.exit(1)
 
         if isinstance(data, dict):
+            # SPDX 3.0 JSON-LD (Yocto BitBake SBOM format)
+            context = data.get("@context", "")
+            if (
+                isinstance(context, str)
+                and "spdx.org/rdf/3" in context
+                and isinstance(data.get("@graph"), list)
+            ):
+                return "spdx-json"
+            # SPDX 2.x JSON
             if data.get("spdxVersion") and isinstance(data.get("packages"), list):
                 return "spdx-json"
+            # CycloneDX JSON
             if isinstance(data.get("components"), list):
                 return "cyclonedx-json"
 
         self.logger.error(
-            "Unsupported SBOM '%s': reusable SBOM input must be SPDX-JSON or CycloneDX-JSON.",
+            "Unsupported SBOM '%s': reusable SBOM input must be SPDX-JSON (2.x or 3.0) or CycloneDX-JSON.",
             sbom_path,
         )
         sys.exit(1)
