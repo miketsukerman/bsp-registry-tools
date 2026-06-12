@@ -335,7 +335,11 @@ class ImageScanner:
         for raw_path in self.config.sbom_paths:
             path = Path(raw_path)
             if not path.is_absolute():
-                path = self.build_path / path
+                candidate = path
+                if candidate.exists():
+                    path = candidate
+                else:
+                    path = self.build_path / path
             if not path.exists():
                 missing.append(path)
                 continue

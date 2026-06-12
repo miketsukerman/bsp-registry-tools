@@ -297,6 +297,17 @@ class TestFindSboms:
 
         assert scanner._resolve_configured_sbom_paths() == [sbom]
 
+    def test_prefers_existing_working_dir_relative_sbom_path(self, tmp_path, monkeypatch):
+        sbom = tmp_path / "build" / "other" / "tmp" / "deploy" / "images" / "image.spdx.json"
+        sbom.parent.mkdir(parents=True)
+        sbom.write_text(SPDX_SBOM_JSON)
+        monkeypatch.chdir(tmp_path)
+
+        cfg = ScanConfig(sbom_paths=["build/other/tmp/deploy/images/image.spdx.json"])
+        scanner = ImageScanner(cfg, str(tmp_path / "build" / "preset"))
+
+        assert scanner._resolve_configured_sbom_paths() == [sbom]
+
     def test_finds_sboms_from_patterns(self, tmp_path):
         images_dir = tmp_path / "tmp" / "deploy" / "images"
         images_dir.mkdir(parents=True)
