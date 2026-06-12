@@ -970,7 +970,7 @@ class ImageScanner:
                 return "cyclonedx-json"
 
         self.logger.error(
-            "Unsupported SBOM '%s': reusable SBOM input must be SPDX-JSON (2.x or 3.0) or CycloneDX-JSON.",
+            "Unsupported SBOM '%s': reusable SBOM input must be SPDX-JSON (2.x or 3.x) or CycloneDX-JSON.",
             sbom_path,
         )
         sys.exit(1)
