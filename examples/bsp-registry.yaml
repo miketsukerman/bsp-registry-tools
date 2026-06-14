@@ -43,11 +43,11 @@ scan:
     - "**/*.rootfs.tar.bz2"
     - "**/*.ext4"
   artifact_dirs:                  # subdirs under build_path to search
-    - "tmp/deploy/images"
+    - "build/tmp/deploy/images"
   sbom_paths: []                  # existing SPDX-JSON/CycloneDX-JSON SBOMs to reuse
   sbom_patterns: []               # glob patterns for reusable SBOM discovery
   sbom_dirs:
-    - "tmp/deploy/images"
+    - "build/tmp/deploy/images"
   upload: false                   # upload reports to cloud storage (optional)
 
 # Optional top-level LAVA server settings.
@@ -93,6 +93,6 @@ deploy:
     - "**/bzImage"
     - "**/uImage"
   artifact_dirs:                                    # subdirs under build_path to search
-    - tmp/deploy/images
-    - tmp/deploy/sdk
+    - build/tmp/deploy/images
+    - build/tmp/deploy/sdk
   include_manifest: true                            # upload a JSON manifest of all artifacts
