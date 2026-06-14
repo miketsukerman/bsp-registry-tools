@@ -721,7 +721,7 @@ bsp export --device <device> --release <release> [--feature FEATURE...] --repo-m
 | Option | Description |
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
-| `--repo-manifest` | Export Android repo manifest XML with pinned commit SHAs (CLI only) |
+| `--repo-manifest` | Export Android repo manifest XML from KAS lock/unlocked dumps (CLI only) |
 
 **Examples:**
 
@@ -732,7 +732,7 @@ bsp export poky-qemuarm64-scarthgap
 # Save to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 
-# Export Android repo manifest XML with pinned SHAs
+# Export Android repo manifest XML
 bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
 
 # Export Android repo manifest XML using component mode
@@ -740,9 +740,11 @@ bsp export --device qemuarm64 --release scarthgap --repo-manifest --output qemua
 ```
 
 When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
-manifest generated from `kas dump --lock --sort`. The manifest contains pinned
-40-character commit SHAs for each exported repository, making it suitable for
-release capture and later replay in CI or production source checkout flows.
+manifest generated from `kas dump --lock --sort` plus an unlocked
+`kas dump --sort`. Commit revisions from lock output are preferred when
+available; otherwise revision may come from unlocked config or be omitted.
+This makes it suitable for release capture and later replay in CI or
+production source checkout flows.
 
 **Typical production workflow:**
 
@@ -752,7 +754,7 @@ release capture and later replay in CI or production source checkout flows.
 3. Commit the exported XML into a dedicated manifest repository (or release
    branch) so it can be selected later with `repo init -m ...`.
 4. Reuse the same manifest in CI, factory, or field-reproduction workflows to
-   sync the exact pinned source revisions.
+   sync the recorded source revisions.
 
 **Recommended release capture example:**
 
@@ -795,8 +797,8 @@ repo sync -c --no-tags --optimized-fetch --prune
 - The exported Android repo manifest is currently available from the **CLI
   only**.
 - Reproducibility depends on the repositories being accessible at the recorded
-  URLs and SHAs.
-- The manifest captures pinned Git revisions, but it does **not** capture local
+  URLs and revisions.
+- The manifest captures recorded Git revisions, but it does **not** capture local
   environment state, credentials, downloaded artifacts, or non-Git external
   inputs.
 
