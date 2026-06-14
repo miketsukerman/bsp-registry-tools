@@ -851,6 +851,57 @@ repos:
         assert 'project name="meta-foo"' in xml
         assert 'revision=' not in xml
 
+    def test_export_repo_manifest_xml_supports_kas5_overrides_lock_format(self, kas_config_file):
+        """KAS 5.x kas dump --lock outputs overrides.repos with only commits (no URLs)."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        # KAS 5.x lock format: only commits in overrides.repos, no URLs
+        locked_yaml = """
+header:
+  version: 14
+overrides:
+  repos:
+    meta-foo:
+      commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    meta-bar:
+      commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"""
+        # Unlocked dump still has full repo info including URLs
+        unlocked_yaml = """
+header:
+  version: 14
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    branch: main
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    branch: master
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'project name="meta-bar"' in xml
+        # Commits from lock output should be used as revisions
+        assert 'revision="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' in xml
+        assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
+        # Paths from unlocked output should be present
+        assert 'path="sources/meta-foo"' in xml
+
 
 class TestKasConfigExport:
     def test_export_kas_config_passes_lock_flag_to_dump(self, kas_config_file):

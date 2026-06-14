@@ -863,7 +863,7 @@ class KasManager:
             logging.error(f"Config dump failed: {e}")
             sys.exit(1)
 
-    def _extract_locked_repos(self, lock_yaml: str) -> List[Dict[str, str]]:
+    def _extract_locked_repos(self, lock_yaml: str, require_url: bool = True) -> List[Dict[str, str]]:
         """Parse kas dump YAML and return normalized repository rows."""
         try:
             docs = list(yaml.safe_load_all(lock_yaml))
@@ -955,8 +955,8 @@ class KasManager:
             if not isinstance(repo_cfg, dict):
                 continue
             url = repo_cfg.get("url")
-            if not url:
-                # Skip local/non-fetch repositories
+            if require_url and not url:
+                # Skip local/non-fetch repositories when URL is required
                 continue
             revision = (
                 repo_cfg.get("commit")
@@ -965,6 +965,9 @@ class KasManager:
                 or repo_cfg.get("tag")
                 or repo_cfg.get("refspec")
             )
+            if not url and not revision:
+                # Skip repos with no URL and no revision — nothing useful to contribute
+                continue
             if not revision:
                 logging.warning(
                     "Repository '%s' has no revision/commit in lock output; exporting manifest project without revision",
@@ -972,13 +975,14 @@ class KasManager:
                 )
             row: Dict[str, str] = {
                 "name": str(repo_name),
-                "url": str(url),
                 "path": str(repo_cfg.get("path") or repo_name),
             }
+            if url:
+                row["url"] = str(url)
             if revision:
                 row["revision"] = str(revision)
             rows.append(row)
-        if not rows:
+        if require_url and not rows:
             logging.error("No remote repositories found in lock output")
             sys.exit(1)
         return rows
@@ -1115,9 +1119,13 @@ class KasManager:
         try:
             lock_result = self._run_kas_command(lock_args, show_output=False)
             unlocked_result = self._run_kas_command(unlocked_args, show_output=False)
-            locked_rows = self._extract_locked_repos(lock_result.stdout)
+            locked_rows = self._extract_locked_repos(lock_result.stdout, require_url=False)
             unlocked_rows = self._extract_locked_repos(unlocked_result.stdout)
             rows = self._merge_manifest_rows(locked_rows, unlocked_rows)
+            rows = [row for row in rows if row.get("url")]
+            if not rows:
+                logging.error("No remote repositories found in lock output")
+                sys.exit(1)
             manifest_xml = self._build_android_repo_manifest_xml(rows)
 
             if output_file:
