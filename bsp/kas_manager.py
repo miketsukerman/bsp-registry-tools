@@ -917,8 +917,9 @@ class KasManager:
         ``<manifest>`` XML document suitable for use as a ``repo init``
         manifest.
 
-        Remote names are derived from the repo URL hostnames (e.g.
-        ``github.com`` → ``github``, ``git.yoctoproject.org`` → ``yocto``).
+        Remote names are derived from the second-level domain of each repo URL
+        hostname (e.g. ``github.com`` → ``github``,
+        ``git.yoctoproject.org`` → ``yoctoproject``).
         Duplicate short names receive a numeric suffix.  The first remote
         encountered is used as the ``<default>`` remote.
 
@@ -1016,7 +1017,7 @@ class KasManager:
             if repo_path:
                 proj.set("path", repo_path)
 
-            if remote_name and fetch != fetch_urls_ordered[0] if fetch_urls_ordered else True:
+            if remote_name and (fetch_urls_ordered and fetch != fetch_urls_ordered[0]):
                 proj.set("remote", remote_name)
 
             commit = repo_data.get("commit") or ""

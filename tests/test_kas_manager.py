@@ -641,72 +641,70 @@ repos:
             build_dir=str(kas_config_file.parent / "build"),
         )
 
+    @staticmethod
+    def _parse_xml(xml_str):
+        """Strip the XML declaration and parse the manifest element."""
+        import xml.etree.ElementTree as ET
+        return ET.fromstring(xml_str.split("\n", 1)[1])
+
     def test_single_remote_derived_from_hostname(self, kas_config_file):
         """Two repos on the same host produce exactly one <remote> element."""
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.SAME_HOST_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         remotes = root.findall("remote")
         assert len(remotes) == 1
         assert remotes[0].get("name") == "github"
         assert remotes[0].get("fetch") == "https://github.com"
 
     def test_project_name_strips_git_suffix(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = root.findall("project")
         names = {p.get("name") for p in projects}
         assert "openembedded/bitbake" in names
         assert not any(n.endswith(".git") for n in names)
 
     def test_project_path_set(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = {p.get("name"): p for p in root.findall("project")}
         assert projects["openembedded/bitbake"].get("path") == "layers/bitbake"
 
     def test_commit_preferred_over_branch_as_revision(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = {p.get("name"): p for p in root.findall("project")}
         assert projects["openembedded/bitbake"].get("revision") == "abc1234def5678901234567890abcdef01234567"
 
     def test_branch_used_when_no_commit(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.BRANCH_ONLY_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = root.findall("project")
         assert projects[0].get("revision") == "scarthgap"
 
     def test_commit_only_no_branch(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.COMMIT_ONLY_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = root.findall("project")
         assert projects[0].get("revision") == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
     def test_no_revision_attribute_when_neither_set(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.NO_REVISION_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         projects = root.findall("project")
         assert projects[0].get("revision") is None
 
     def test_multiple_hosts_generate_multiple_remotes(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.MULTI_HOST_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         remotes = root.findall("remote")
         remote_names = {r.get("name") for r in remotes}
         assert len(remotes) == 2
@@ -715,19 +713,17 @@ repos:
         assert "github" in remote_names
 
     def test_same_host_repos_share_remote(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.SAME_HOST_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         # Both repos are on github.com — only one <remote>
         remotes = root.findall("remote")
         assert len(remotes) == 1
 
     def test_default_element_points_to_first_remote(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest(self.MULTI_HOST_KAS_YAML)
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         default = root.find("default")
         assert default is not None
         # MULTI_HOST_KAS_YAML has poky (yoctoproject.org) first
@@ -740,10 +736,9 @@ repos:
         assert xml_str.startswith('<?xml version="1.0" encoding="UTF-8"?>')
 
     def test_empty_repos_produces_empty_manifest(self, kas_config_file):
-        import xml.etree.ElementTree as ET
         mgr = self._make_manager(kas_config_file)
         xml_str = mgr._kas_yaml_to_repo_manifest("repos: {}")
-        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        root = self._parse_xml(xml_str)
         assert root.tag == "manifest"
         assert len(root.findall("project")) == 0
         assert len(root.findall("remote")) == 0
