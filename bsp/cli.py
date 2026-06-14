@@ -477,7 +477,28 @@ def main() -> int:
         export_parser.add_argument(
             "--output", "-o",
             type=str,
-            help="Output file path (default: stdout)"
+            help="Output file path for KAS YAML (default: stdout). Only used with --format kas."
+        )
+        export_parser.add_argument(
+            "--format", "-F",
+            dest="export_format",
+            choices=["kas", "repo-manifest"],
+            default="kas",
+            help="Export format: 'kas' (default) dumps the merged KAS YAML; "
+                 "'repo-manifest' creates a Google Repo manifest directory."
+        )
+        export_parser.add_argument(
+            "--output-dir",
+            dest="output_dir",
+            type=str,
+            help="Output directory for the repo manifest (required with --format repo-manifest)."
+        )
+        export_parser.add_argument(
+            "--lock",
+            action="store_true",
+            default=False,
+            help="Pin exact commit SHAs via 'kas dump --lock' (only effective with "
+                 "--format repo-manifest)."
         )
 
         # ----------------------------------------------------------------
@@ -1089,14 +1110,39 @@ def main() -> int:
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
             output = getattr(args, "output", None)
+            export_format = getattr(args, "export_format", "kas")
+            output_dir = getattr(args, "output_dir", None)
+            lock = getattr(args, "lock", False)
+
+            # Validate format-specific requirements
+            if export_format == "repo-manifest" and not output_dir:
+                logging.error(
+                    "--output-dir is required when using --format repo-manifest"
+                )
+                export_parser.print_help()
+                return 1
+            if export_format == "kas" and output_dir:
+                logging.warning(
+                    "--output-dir is ignored when --format is 'kas'; use --output instead."
+                )
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.export_bsp_config(bsp_name=bsp_name, output_file=output)
+                bsp_mgr.export_bsp_config(
+                    bsp_name=bsp_name,
+                    output_file=output,
+                    fmt=export_format,
+                    output_dir=output_dir,
+                    lock=lock,
+                )
             elif device and release:
                 bsp_mgr.export_by_components(
-                    device, release, features, output_file=output
+                    device, release, features,
+                    output_file=output,
+                    fmt=export_format,
+                    output_dir=output_dir,
+                    lock=lock,
                 )
             else:
                 logging.error(

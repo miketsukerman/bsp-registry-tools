@@ -7,8 +7,10 @@ import os
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -868,4 +870,275 @@ class KasManager:
             raise
         except Exception as e:
             logging.error(f"Failed to export KAS configuration: {e}")
+            sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # Google Repo manifest export
+    # ------------------------------------------------------------------
+
+    def dump_config_locked(self) -> Optional[str]:
+        """
+        Dump the KAS configuration with locked (pinned) commit SHAs.
+
+        Uses ``kas dump --lock`` to produce a YAML with every repo's current
+        HEAD SHA resolved to an exact commit, making the configuration fully
+        reproducible.
+
+        Returns:
+            The locked YAML string, or ``None`` on failure.
+
+        Raises:
+            SystemExit: If the dump fails.
+        """
+        if not self.validate_kas_files(check_includes=True):
+            sys.exit(1)
+
+        if not self.check_kas_available():
+            logging.error("KAS is not available")
+            sys.exit(1)
+
+        kas_files_str = self._get_kas_files_string()
+        args = ["dump", "--lock", kas_files_str]
+
+        try:
+            result = self._run_kas_command(args, show_output=False)
+            return result.stdout
+        except SystemExit:
+            raise
+        except Exception as e:
+            logging.error(f"Locked config dump failed: {e}")
+            sys.exit(1)
+
+    def _kas_yaml_to_repo_manifest(self, config_yaml: str) -> str:
+        """
+        Convert a KAS merged-config YAML string to a Google Repo manifest XML.
+
+        Parses the ``repos`` section of the KAS YAML and builds a
+        ``<manifest>`` XML document suitable for use as a ``repo init``
+        manifest.
+
+        Remote names are derived from the repo URL hostnames (e.g.
+        ``github.com`` → ``github``, ``git.yoctoproject.org`` → ``yocto``).
+        Duplicate short names receive a numeric suffix.  The first remote
+        encountered is used as the ``<default>`` remote.
+
+        Each ``<project>`` uses the pinned ``commit`` SHA as its revision
+        when available, falling back to ``branch``.  If neither is present,
+        the ``revision`` attribute is omitted.
+
+        Args:
+            config_yaml: Merged KAS YAML string (output of ``kas dump``).
+
+        Returns:
+            Pretty-printed XML string for ``default.xml``.
+        """
+        data = yaml.safe_load(config_yaml) or {}
+        repos: Dict[str, Any] = data.get("repos", {}) or {}
+
+        # --- build remote table: fetch_url -> short_name ---
+        remote_names: Dict[str, str] = {}   # fetch_url -> remote name
+        name_counts: Dict[str, int] = {}    # base name -> usage count
+
+        def _short_name_for(hostname: str) -> str:
+            """Derive a short remote name from a hostname."""
+            # e.g. git.yoctoproject.org -> yocto
+            #      github.com            -> github
+            #      gitlab.example.com   -> example
+            parts = hostname.split(".")
+            if len(parts) >= 2:
+                # skip "git", "www" prefixes; take the most descriptive part
+                candidate = parts[-2]
+            else:
+                candidate = parts[0]
+            return candidate
+
+        def _fetch_and_project(url: str):
+            """Return (fetch_base_url, project_name_without_git_suffix)."""
+            parsed = urlparse(url)
+            # fetch base = scheme + netloc
+            fetch = f"{parsed.scheme}://{parsed.netloc}"
+            # project = path without leading slash, without .git suffix
+            project = parsed.path.lstrip("/")
+            if project.endswith(".git"):
+                project = project[:-4]
+            return fetch, project
+
+        # First pass: collect unique fetch URLs and assign short names
+        fetch_urls_ordered: List[str] = []
+        for _repo_key, repo_data in repos.items():
+            if not isinstance(repo_data, dict):
+                continue
+            url = repo_data.get("url", "")
+            if not url:
+                continue
+            fetch, _proj = _fetch_and_project(url)
+            if fetch in remote_names:
+                continue
+            parsed = urlparse(url)
+            base = _short_name_for(parsed.netloc)
+            if base not in name_counts:
+                name_counts[base] = 0
+                remote_names[fetch] = base
+            else:
+                name_counts[base] += 1
+                remote_names[fetch] = f"{base}{name_counts[base]}"
+            fetch_urls_ordered.append(fetch)
+
+        # --- build XML tree ---
+        manifest = ET.Element("manifest")
+
+        # <remote> elements
+        for fetch in fetch_urls_ordered:
+            r = ET.SubElement(manifest, "remote")
+            r.set("name", remote_names[fetch])
+            r.set("fetch", fetch)
+
+        # <default> pointing to the first remote (if any)
+        if fetch_urls_ordered:
+            d = ET.SubElement(manifest, "default")
+            d.set("remote", remote_names[fetch_urls_ordered[0]])
+            d.set("sync-j", "4")
+
+        # <project> elements
+        for _repo_key, repo_data in repos.items():
+            if not isinstance(repo_data, dict):
+                continue
+            url = repo_data.get("url", "")
+            if not url:
+                continue
+            fetch, project_name = _fetch_and_project(url)
+            remote_name = remote_names.get(fetch, "")
+
+            proj = ET.SubElement(manifest, "project")
+            proj.set("name", project_name)
+
+            repo_path = repo_data.get("path")
+            if repo_path:
+                proj.set("path", repo_path)
+
+            if remote_name and fetch != fetch_urls_ordered[0] if fetch_urls_ordered else True:
+                proj.set("remote", remote_name)
+
+            commit = repo_data.get("commit") or ""
+            branch = repo_data.get("branch") or ""
+            if commit:
+                proj.set("revision", commit)
+            elif branch:
+                proj.set("revision", branch)
+
+        # Pretty-print: indent then serialise with declaration
+        ET.indent(manifest, space="  ")
+        xml_bytes = ET.tostring(manifest, encoding="unicode", xml_declaration=False)
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_bytes + "\n"
+
+    def export_repo_manifest(self, output_dir: str, lock: bool = False) -> str:
+        """
+        Generate a Google Repo manifest directory from the KAS configuration.
+
+        Produces a ``default.xml`` manifest in *output_dir* and initialises the
+        directory as a git repository so it can be used directly with
+        ``repo init -u <output_dir>``.
+
+        When *lock* is ``True``, ``kas dump --lock`` is used to resolve pinned
+        commit SHAs, and an additional ``locked.xml`` is written alongside
+        ``default.xml``.
+
+        Args:
+            output_dir: Path to the directory that will contain the manifest.
+            lock: When ``True``, resolve and pin commit SHAs via ``kas dump --lock``.
+
+        Returns:
+            The generated manifest XML string.
+
+        Raises:
+            SystemExit: If validation, KAS, or git operations fail.
+        """
+        logging.info("Generating Google Repo manifest...")
+
+        if not self.validate_kas_files(check_includes=True):
+            logging.error("Cannot generate manifest due to missing KAS files")
+            sys.exit(1)
+
+        if not self.check_kas_available():
+            logging.error("KAS is not available")
+            sys.exit(1)
+
+        try:
+            if lock:
+                config_yaml = self.dump_config_locked()
+            else:
+                config_yaml = self.dump_config(show_output=False)
+
+            if not config_yaml:
+                logging.error("Failed to obtain KAS configuration")
+                sys.exit(1)
+
+            xml_str = self._kas_yaml_to_repo_manifest(config_yaml)
+
+            out_path = Path(output_dir)
+            out_path.mkdir(parents=True, exist_ok=True)
+
+            default_xml = out_path / "default.xml"
+            default_xml.write_text(xml_str, encoding="utf-8")
+            logging.info(f"Repo manifest written to: {default_xml}")
+
+            if lock:
+                locked_xml = out_path / "locked.xml"
+                locked_xml.write_text(xml_str, encoding="utf-8")
+                logging.info(f"Locked manifest written to: {locked_xml}")
+
+            # Initialise a git repo so the directory can be passed directly to
+            # `repo init -u <output_dir>` as a local manifest repository.
+            git_dir = out_path / ".git"
+            if not git_dir.exists():
+                subprocess.run(
+                    ["git", "init", str(out_path)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            subprocess.run(
+                ["git", "-C", str(out_path), "add", "default.xml"],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if lock:
+                subprocess.run(
+                    ["git", "-C", str(out_path), "add", "locked.xml"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            # Only commit when there is something staged (avoids error on re-run)
+            result = subprocess.run(
+                ["git", "-C", str(out_path), "diff", "--cached", "--quiet"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode != 0:
+                # Configure a minimal git identity if not already set
+                env = os.environ.copy()
+                env.setdefault("GIT_AUTHOR_NAME", "bsp-registry-tools")
+                env.setdefault("GIT_AUTHOR_EMAIL", "bsp@localhost")
+                env.setdefault("GIT_COMMITTER_NAME", "bsp-registry-tools")
+                env.setdefault("GIT_COMMITTER_EMAIL", "bsp@localhost")
+                subprocess.run(
+                    ["git", "-C", str(out_path), "commit", "-m", "repo manifest"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                )
+
+            logging.info("Repo manifest directory is ready.")
+            return xml_str
+
+        except SystemExit:
+            raise
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Git operation failed: {e}")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"Failed to generate repo manifest: {e}")
             sys.exit(1)

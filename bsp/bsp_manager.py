@@ -1533,14 +1533,21 @@ class BspManager:
         resolved: ResolvedConfig,
         output_file: Optional[str] = None,
         label: str = "",
+        fmt: str = "kas",
+        output_dir: Optional[str] = None,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
 
         Args:
             resolved: Resolved build configuration
-            output_file: Optional file path to save the configuration
+            output_file: Optional file path to save the KAS YAML (``fmt="kas"`` only)
             label: Descriptive label for log messages
+            fmt: Export format – ``"kas"`` (default) or ``"repo-manifest"``
+            output_dir: Directory for the repo-manifest output (``fmt="repo-manifest"`` only)
+            lock: When ``True`` and ``fmt="repo-manifest"``, pin commit SHAs via
+                  ``kas dump --lock``
         """
         logging.info(f"Exporting KAS configuration for {label or resolved.device.slug}")
 
@@ -1585,29 +1592,47 @@ class BspManager:
                     search_paths=[str(self.config_path.parent)],
                     env_manager=self.env_manager,
                 )
-                config_yaml = kas_mgr.export_kas_config(output_file)
+
+                if fmt == "repo-manifest":
+                    xml_str = kas_mgr.export_repo_manifest(output_dir=output_dir, lock=lock)
+                    abs_output_dir = str(Path(output_dir).resolve())
+                    print(f"\nRepo manifest written to: {abs_output_dir}/default.xml")
+                    print(
+                        f"\nTo synchronise sources run:\n"
+                        f"  repo init -u {abs_output_dir}\n"
+                        f"  repo sync"
+                    )
+                else:
+                    config_yaml = kas_mgr.export_kas_config(output_file)
+                    if not output_file:
+                        print("\n" + "=" * 60)
+                        print(f"KAS Configuration for {label or resolved.device.slug}")
+                        print("=" * 60)
+                        print(config_yaml)
+                        print("=" * 60)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
-        if not output_file:
-            print("\n" + "=" * 60)
-            print(f"KAS Configuration for {label or resolved.device.slug}")
-            print("=" * 60)
-            print(config_yaml)
-            print("=" * 60)
-
         logging.info("Configuration exported successfully!")
 
     def export_bsp_config(
-        self, bsp_name: str, output_file: Optional[str] = None
+        self,
+        bsp_name: str,
+        output_file: Optional[str] = None,
+        fmt: str = "kas",
+        output_dir: Optional[str] = None,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
 
         Args:
             bsp_name: Name of the BSP preset to export
-            output_file: Optional file path to save the configuration
+            output_file: Optional file path to save the KAS YAML (``fmt="kas"`` only)
+            fmt: Export format – ``"kas"`` (default) or ``"repo-manifest"``
+            output_dir: Directory for the repo-manifest output (``fmt="repo-manifest"`` only)
+            lock: When ``True`` and ``fmt="repo-manifest"``, pin commit SHAs
 
         Raises:
             SystemExit: If preset not found or export fails
@@ -1619,6 +1644,9 @@ class BspManager:
                 resolved,
                 output_file=output_file,
                 label=f"{preset.name} - {preset.description}",
+                fmt=fmt,
+                output_dir=output_dir,
+                lock=lock,
             )
 
     def export_by_components(
@@ -1627,6 +1655,9 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         output_file: Optional[str] = None,
+        fmt: str = "kas",
+        output_dir: Optional[str] = None,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -1635,7 +1666,10 @@ class BspManager:
             device_slug: Device slug
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs
-            output_file: Optional file path to save the configuration
+            output_file: Optional file path to save the KAS YAML (``fmt="kas"`` only)
+            fmt: Export format – ``"kas"`` (default) or ``"repo-manifest"``
+            output_dir: Directory for the repo-manifest output (``fmt="repo-manifest"`` only)
+            lock: When ``True`` and ``fmt="repo-manifest"``, pin commit SHAs
 
         Raises:
             SystemExit: If any component is not found or export fails
@@ -1649,6 +1683,9 @@ class BspManager:
             resolved,
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
+            fmt=fmt,
+            output_dir=output_dir,
+            lock=lock,
         )
 
     # ------------------------------------------------------------------

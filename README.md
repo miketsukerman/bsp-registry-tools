@@ -597,23 +597,49 @@ bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
 #### `export` — Export BSP configuration
 
 ```bash
-bsp export <bsp_name> [--output OUTPUT]
-bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
+bsp export <bsp_name> [--output OUTPUT] [--format FORMAT] [--output-dir DIR] [--lock]
+bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT] [--format FORMAT] [--output-dir DIR] [--lock]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
+| `--output OUTPUT`, `-o OUTPUT` | Output file path for KAS YAML (default: stdout). Only used with `--format kas`. |
+| `--format FORMAT`, `-F FORMAT` | Export format: `kas` (default) or `repo-manifest`. |
+| `--output-dir DIR` | Output directory for the repo manifest (required with `--format repo-manifest`). |
+| `--lock` | Resolve and pin exact commit SHAs via `kas dump --lock` (only effective with `--format repo-manifest`). |
 
-**Examples:**
+**Examples — KAS YAML format (default):**
 
 ```bash
-# Print to stdout
+# Print merged KAS YAML to stdout
 bsp export poky-qemuarm64-scarthgap
 
-# Save to file
+# Save KAS YAML to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
 ```
+
+**Examples — Google Repo manifest format:**
+
+The `repo-manifest` format produces a `default.xml` Google Repo manifest in a git-initialised directory.  You can then point `repo init` at that directory and run `repo sync` to check out all Yocto layers.
+
+```bash
+# Generate a manifest with branch references
+bsp export poky-qemuarm64-scarthgap \
+  --format repo-manifest \
+  --output-dir ./manifest-repo
+
+# Generate a manifest with pinned commit SHAs (reproducible builds)
+bsp export poky-qemuarm64-scarthgap \
+  --format repo-manifest \
+  --output-dir ./manifest-repo \
+  --lock
+
+# Initialise and sync sources
+repo init -u ./manifest-repo
+repo sync
+```
+
+When `--lock` is set, a `locked.xml` file is also written alongside `default.xml`; both contain the same pinned-SHA content.
 
 #### `server` — Start an HTTP server (REST + GraphQL)
 

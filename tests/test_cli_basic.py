@@ -252,3 +252,103 @@ class TestBuildCommand:
         assert args[0] == "test-bsp"
         assert kwargs.get("checkout_only") is True
         assert kwargs.get("build_path_override") == custom_path
+
+
+class TestExportCommand:
+    """Tests for the bsp export command flags."""
+
+    def _make_registry(self, tmp_dir):
+        """Return a minimal registry file with one preset."""
+        from tests.conftest import MINIMAL_REGISTRY_YAML
+        registry_path = tmp_dir / "bsp-registry.yaml"
+        registry_path.write_text(MINIMAL_REGISTRY_YAML)
+        return registry_path
+
+    def test_export_default_format_is_kas(self, registry_file):
+        """export without --format calls export_bsp_config with fmt='kas'."""
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp"
+        ]):
+            with patch.object(BspManager, "export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("fmt") == "kas"
+
+    def test_export_repo_manifest_requires_output_dir(self, registry_file, capsys):
+        """--format repo-manifest without --output-dir should fail with exit code 1."""
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "export", "test-bsp", "--format", "repo-manifest"
+        ]):
+            exit_code = bsp.main()
+        assert exit_code == 1
+
+    def test_export_repo_manifest_calls_export_bsp_config_with_correct_args(
+        self, registry_file, tmp_dir
+    ):
+        """--format repo-manifest passes fmt='repo-manifest' and output_dir."""
+        out_dir = str(tmp_dir / "manifest-repo")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "export", "test-bsp",
+            "--format", "repo-manifest",
+            "--output-dir", out_dir,
+        ]):
+            with patch.object(BspManager, "export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("fmt") == "repo-manifest"
+        assert kwargs.get("output_dir") == out_dir
+        assert kwargs.get("lock") is False
+
+    def test_export_lock_flag_forwarded(self, registry_file, tmp_dir):
+        """--lock is forwarded through to export_bsp_config."""
+        out_dir = str(tmp_dir / "manifest-repo")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "export", "test-bsp",
+            "--format", "repo-manifest",
+            "--output-dir", out_dir,
+            "--lock",
+        ]):
+            with patch.object(BspManager, "export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("lock") is True
+
+    def test_export_by_components_repo_manifest(self, registry_file, tmp_dir):
+        """--device/--release with --format repo-manifest works."""
+        out_dir = str(tmp_dir / "manifest-repo")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "export",
+            "--device", "test-device",
+            "--release", "test-release",
+            "--format", "repo-manifest",
+            "--output-dir", out_dir,
+        ]):
+            with patch.object(BspManager, "export_by_components") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("fmt") == "repo-manifest"
+        assert kwargs.get("output_dir") == out_dir
+
+    def test_export_kas_format_with_output_file(self, registry_file, tmp_dir):
+        """--format kas --output <file> passes output_file correctly."""
+        out_file = str(tmp_dir / "config.yaml")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "export", "test-bsp",
+            "--format", "kas",
+            "--output", out_file,
+        ]):
+            with patch.object(BspManager, "export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("output_file") == out_file
+        assert kwargs.get("fmt") == "kas"

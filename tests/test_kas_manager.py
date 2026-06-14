@@ -564,3 +564,276 @@ class TestKasManager:
         # env is passed as a keyword arg
         called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
+
+
+class TestRepoManifestExport:
+    """Tests for KasManager Google Repo manifest generation."""
+
+    # ------------------------------------------------------------------ helpers
+    SIMPLE_KAS_YAML = """
+repos:
+  bitbake:
+    url: "https://github.com/openembedded/bitbake.git"
+    path: "layers/bitbake"
+    branch: "2.8"
+    commit: "abc1234def5678901234567890abcdef01234567"
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+    branch: "scarthgap"
+"""
+
+    # Two repos that share the same host (github.com)
+    SAME_HOST_KAS_YAML = """
+repos:
+  bitbake:
+    url: "https://github.com/openembedded/bitbake.git"
+    path: "layers/bitbake"
+    branch: "2.8"
+    commit: "abc1234def5678901234567890abcdef01234567"
+  meta-oe:
+    url: "https://github.com/openembedded/meta-openembedded.git"
+    path: "layers/meta-oe"
+    branch: "scarthgap"
+"""
+
+    MULTI_HOST_KAS_YAML = """
+repos:
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+    branch: "scarthgap"
+  meta-oe:
+    url: "https://github.com/openembedded/meta-openembedded.git"
+    path: "layers/meta-oe"
+    branch: "scarthgap"
+    commit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+"""
+
+    BRANCH_ONLY_KAS_YAML = """
+repos:
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+    branch: "scarthgap"
+"""
+
+    COMMIT_ONLY_KAS_YAML = """
+repos:
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+    commit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+"""
+
+    NO_REVISION_KAS_YAML = """
+repos:
+  poky:
+    url: "https://git.yoctoproject.org/poky"
+    path: "layers/poky"
+"""
+
+    # ------------------------------------------------------------------ unit tests for _kas_yaml_to_repo_manifest
+
+    def _make_manager(self, kas_config_file):
+        return KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build"),
+        )
+
+    def test_single_remote_derived_from_hostname(self, kas_config_file):
+        """Two repos on the same host produce exactly one <remote> element."""
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SAME_HOST_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        remotes = root.findall("remote")
+        assert len(remotes) == 1
+        assert remotes[0].get("name") == "github"
+        assert remotes[0].get("fetch") == "https://github.com"
+
+    def test_project_name_strips_git_suffix(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = root.findall("project")
+        names = {p.get("name") for p in projects}
+        assert "openembedded/bitbake" in names
+        assert not any(n.endswith(".git") for n in names)
+
+    def test_project_path_set(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = {p.get("name"): p for p in root.findall("project")}
+        assert projects["openembedded/bitbake"].get("path") == "layers/bitbake"
+
+    def test_commit_preferred_over_branch_as_revision(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = {p.get("name"): p for p in root.findall("project")}
+        assert projects["openembedded/bitbake"].get("revision") == "abc1234def5678901234567890abcdef01234567"
+
+    def test_branch_used_when_no_commit(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.BRANCH_ONLY_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = root.findall("project")
+        assert projects[0].get("revision") == "scarthgap"
+
+    def test_commit_only_no_branch(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.COMMIT_ONLY_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = root.findall("project")
+        assert projects[0].get("revision") == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+    def test_no_revision_attribute_when_neither_set(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.NO_REVISION_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        projects = root.findall("project")
+        assert projects[0].get("revision") is None
+
+    def test_multiple_hosts_generate_multiple_remotes(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.MULTI_HOST_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        remotes = root.findall("remote")
+        remote_names = {r.get("name") for r in remotes}
+        assert len(remotes) == 2
+        # git.yoctoproject.org → short name is "yoctoproject"
+        assert "yoctoproject" in remote_names
+        assert "github" in remote_names
+
+    def test_same_host_repos_share_remote(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SAME_HOST_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        # Both repos are on github.com — only one <remote>
+        remotes = root.findall("remote")
+        assert len(remotes) == 1
+
+    def test_default_element_points_to_first_remote(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.MULTI_HOST_KAS_YAML)
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        default = root.find("default")
+        assert default is not None
+        # MULTI_HOST_KAS_YAML has poky (yoctoproject.org) first
+        assert default.get("remote") == "yoctoproject"
+        assert default.get("sync-j") == "4"
+
+    def test_xml_declaration_present(self, kas_config_file):
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest(self.SIMPLE_KAS_YAML)
+        assert xml_str.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+
+    def test_empty_repos_produces_empty_manifest(self, kas_config_file):
+        import xml.etree.ElementTree as ET
+        mgr = self._make_manager(kas_config_file)
+        xml_str = mgr._kas_yaml_to_repo_manifest("repos: {}")
+        root = ET.fromstring(xml_str.split("\n", 1)[1])
+        assert root.tag == "manifest"
+        assert len(root.findall("project")) == 0
+        assert len(root.findall("remote")) == 0
+
+    # ------------------------------------------------------------------ export_repo_manifest integration tests
+
+    def test_export_repo_manifest_writes_default_xml(self, kas_config_file, tmp_path):
+        from unittest.mock import patch as mock_patch, MagicMock
+        mgr = self._make_manager(kas_config_file)
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "dump_config", return_value=self.SIMPLE_KAS_YAML), \
+             mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            out_dir = str(tmp_path / "manifest-repo")
+            mgr.export_repo_manifest(output_dir=out_dir, lock=False)
+        assert (tmp_path / "manifest-repo" / "default.xml").exists()
+
+    def test_export_repo_manifest_no_locked_xml_without_lock(self, kas_config_file, tmp_path):
+        from unittest.mock import patch as mock_patch
+        mgr = self._make_manager(kas_config_file)
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "dump_config", return_value=self.SIMPLE_KAS_YAML), \
+             mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            out_dir = str(tmp_path / "manifest-repo")
+            mgr.export_repo_manifest(output_dir=out_dir, lock=False)
+        assert not (tmp_path / "manifest-repo" / "locked.xml").exists()
+
+    def test_export_repo_manifest_writes_locked_xml_when_lock_true(self, kas_config_file, tmp_path):
+        from unittest.mock import patch as mock_patch
+        mgr = self._make_manager(kas_config_file)
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "dump_config_locked", return_value=self.SIMPLE_KAS_YAML), \
+             mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            out_dir = str(tmp_path / "manifest-repo")
+            mgr.export_repo_manifest(output_dir=out_dir, lock=True)
+        assert (tmp_path / "manifest-repo" / "locked.xml").exists()
+
+    def test_export_repo_manifest_inits_git_repo(self, kas_config_file, tmp_path):
+        from unittest.mock import patch as mock_patch, call
+        mgr = self._make_manager(kas_config_file)
+        git_calls = []
+        def fake_run(cmd, **kwargs):
+            git_calls.append(cmd)
+            result = type("R", (), {"returncode": 1})()  # simulate staged changes
+            if cmd[1:3] == ["-C", str(tmp_path / "manifest-repo")] and "diff" in cmd:
+                result.returncode = 1
+            else:
+                result.returncode = 0
+            return result
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "dump_config", return_value=self.SIMPLE_KAS_YAML), \
+             mock_patch("subprocess.run", side_effect=fake_run):
+            out_dir = str(tmp_path / "manifest-repo")
+            mgr.export_repo_manifest(output_dir=out_dir, lock=False)
+        # git init should have been called
+        assert any("git" in str(c) and "init" in c for c in git_calls)
+
+    def test_export_repo_manifest_returns_xml_string(self, kas_config_file, tmp_path):
+        from unittest.mock import patch as mock_patch
+        mgr = self._make_manager(kas_config_file)
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "dump_config", return_value=self.SIMPLE_KAS_YAML), \
+             mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            out_dir = str(tmp_path / "manifest-repo")
+            result = mgr.export_repo_manifest(output_dir=out_dir, lock=False)
+        assert isinstance(result, str)
+        assert "manifest" in result
+        assert "project" in result
+
+    def test_dump_config_locked_passes_lock_flag(self, kas_config_file):
+        from unittest.mock import patch as mock_patch, MagicMock
+        mgr = self._make_manager(kas_config_file)
+        captured = []
+        def fake_run_kas(args, show_output=True):
+            captured.append(args)
+            r = MagicMock()
+            r.stdout = self.SIMPLE_KAS_YAML
+            return r
+        with mock_patch.object(mgr, "validate_kas_files", return_value=True), \
+             mock_patch.object(mgr, "check_kas_available", return_value=True), \
+             mock_patch.object(mgr, "_run_kas_command", side_effect=fake_run_kas):
+            mgr.dump_config_locked()
+        assert len(captured) == 1
+        assert "--lock" in captured[0]
+        assert "dump" in captured[0]
