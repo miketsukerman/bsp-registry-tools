@@ -2168,6 +2168,7 @@ class BspManager:
         resolved: ResolvedConfig,
         command: Optional[str] = None,
         label: str = "",
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Start a KAS shell session for the given ResolvedConfig.
@@ -2176,6 +2177,7 @@ class BspManager:
             resolved: Resolved build configuration
             command: Optional command to run in the shell
             label: Descriptive label for log messages
+            build_path_override: If provided, overrides the build output path from the registry
         """
         logging.info(f"Starting shell for {label or resolved.device.slug}")
 
@@ -2188,10 +2190,15 @@ class BspManager:
                     label=label or resolved.device.slug,
                 )
 
-        self.prepare_build_directory(resolved.build_path)
-        self._copy_files(resolved)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
 
-        kas_mgr = self._get_kas_manager_for_resolved(resolved, use_container=True)
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved, use_container=True, build_path_override=build_path_override
+        )
 
         try:
             if command:
@@ -2203,13 +2210,19 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
-    def shell_into_bsp(self, bsp_name: str, command: Optional[str] = None) -> None:
+    def shell_into_bsp(
+        self,
+        bsp_name: str,
+        command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+    ) -> None:
         """
         Enter interactive shell for a BSP preset.
 
         Args:
             bsp_name: Name of the BSP preset
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or shell fails
@@ -2218,7 +2231,10 @@ class BspManager:
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._shell_resolved(
-                resolved, command=command, label=f"{preset.name} - {preset.description}"
+                resolved,
+                command=command,
+                label=f"{preset.name} - {preset.description}",
+                build_path_override=build_path_override,
             )
 
     def shell_by_components(
@@ -2227,6 +2243,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Enter interactive shell by specifying device, release, and features directly.
@@ -2236,6 +2253,7 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found or shell fails
@@ -2246,7 +2264,10 @@ class BspManager:
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
         self._shell_resolved(
-            resolved, command=command, label=f"{device_slug}/{release_slug}"
+            resolved,
+            command=command,
+            label=f"{device_slug}/{release_slug}",
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------

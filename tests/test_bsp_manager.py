@@ -4745,3 +4745,155 @@ class TestExportRepoManifest:
                 repo_manifest=True,
             )
         mock_export.assert_called_once_with(out)
+
+
+# =============================================================================
+# Tests for shell --path (build_path_override) support
+# =============================================================================
+
+class TestShellBuildPathOverride:
+    """Verify that build_path_override is honoured throughout the shell call stack."""
+
+    def _make_simple_registry(self, tmp_dir) -> "Path":
+        """Return a registry file with a single preset that has no Dockerfile."""
+        import textwrap
+        content = textwrap.dedent("""
+            specification:
+              version: "2.1"
+            containers:
+              ubuntu-22.04:
+                image: "test/ubuntu-22.04:latest"
+                file: null
+                args: []
+            registry:
+              devices:
+                - slug: shell-device
+                  description: "Shell Device"
+                  vendor: test-vendor
+                  soc_vendor: test-soc
+                  build:
+                    container: "ubuntu-22.04"
+                    path: build/default
+                    includes: []
+              releases:
+                - slug: shell-release
+                  description: "Shell Release"
+                  includes: []
+              features: []
+              bsp:
+                - name: shell-bsp
+                  description: "Shell BSP"
+                  device: shell-device
+                  release: shell-release
+                  features: []
+        """)
+        registry_path = tmp_dir / "bsp-registry.yaml"
+        registry_path.write_text(content)
+        return registry_path
+
+    def test_shell_resolved_uses_build_path_override_for_prepare(self, tmp_dir):
+        """_shell_resolved passes build_path_override to prepare_build_directory."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory") as mock_prepare, \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_prepare.assert_called_once_with(custom_path)
+
+    def test_shell_resolved_passes_override_to_copy_files(self, tmp_dir):
+        """_shell_resolved passes build_path_override to _copy_files."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory"), \
+             patch.object(manager, "_copy_files") as mock_copy, \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_copy.assert_called_once_with(resolved, build_path_override=custom_path)
+
+    def test_shell_resolved_passes_override_to_kas_manager_factory(self, tmp_dir):
+        """_shell_resolved passes build_path_override to _get_kas_manager_for_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory"), \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_factory.assert_called_once_with(
+            resolved, use_container=True, build_path_override=custom_path
+        )
+
+    def test_shell_into_bsp_forwards_build_path_override(self, tmp_dir):
+        """shell_into_bsp() passes build_path_override down to _shell_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+
+        with patch.object(manager, "_shell_resolved") as mock_shell_resolved:
+            manager.shell_into_bsp("shell-bsp", build_path_override=custom_path)
+
+        _, kwargs = mock_shell_resolved.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_by_components_forwards_build_path_override(self, tmp_dir):
+        """shell_by_components() passes build_path_override down to _shell_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+
+        with patch.object(manager, "_shell_resolved") as mock_shell_resolved:
+            manager.shell_by_components(
+                "shell-device", "shell-release", build_path_override=custom_path
+            )
+
+        _, kwargs = mock_shell_resolved.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_resolved_no_override_uses_resolved_build_path(self, tmp_dir):
+        """When build_path_override is None, resolved.build_path is used."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory") as mock_prepare, \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved)
+
+        mock_prepare.assert_called_once_with(resolved.build_path)

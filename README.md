@@ -694,12 +694,14 @@ bsp fetch --device qemuarm64 --release scarthgap --target core-image-minimal --p
 #### `shell` — Interactive shell in build environment
 
 ```bash
-bsp shell <bsp_name> [--command COMMAND]
+bsp shell <bsp_name> [--command COMMAND] [--path PATH]
+bsp shell --device <device> --release <release> [--feature FEATURE...] [--command COMMAND] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--command COMMAND`, `-c COMMAND` | Execute a specific command instead of starting interactive shell |
+| `--path PATH` | Override the output build directory path defined in the registry |
 
 **Examples:**
 
@@ -709,6 +711,12 @@ bsp shell poky-qemuarm64-scarthgap
 
 # Execute single command
 bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
+
+# Interactive shell with a custom build directory
+bsp shell poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
+# Component-based shell with a custom build directory
+bsp shell --device qemuarm64 --release scarthgap --path /mnt/fast-ssd/build
 ```
 
 #### `export` — Export BSP configuration
