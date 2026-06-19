@@ -803,6 +803,13 @@ def main() -> int:
             dest="shell_command",
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
         )
+        shell_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
+        )
 
         # ----------------------------------------------------------------
         # Deploy command
@@ -1715,14 +1722,21 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            build_path = getattr(args, "build_path", None)
 
             if _check_exclusive(bsp_name, device, release, shell_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.shell_into_bsp(bsp_name=bsp_name, command=shell_command)
+                bsp_mgr.shell_into_bsp(
+                    bsp_name=bsp_name,
+                    command=shell_command,
+                    build_path_override=build_path,
+                )
             elif device and release:
                 bsp_mgr.shell_by_components(
-                    device, release, features, command=shell_command
+                    device, release, features,
+                    command=shell_command,
+                    build_path_override=build_path,
                 )
             else:
                 logging.error(

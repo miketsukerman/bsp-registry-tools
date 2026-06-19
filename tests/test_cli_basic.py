@@ -467,3 +467,50 @@ class TestFetchCommand:
         _, kwargs = mock_fetch.call_args
         assert kwargs.get("target") == "core-image-minimal"
         assert kwargs.get("build_path_override") == custom_path
+
+
+class TestShellCommand:
+    def test_shell_path_forwarded_to_shell_into_bsp(self, registry_file, tmp_dir):
+        """--path argument is forwarded to shell_into_bsp() as build_path_override."""
+        custom_path = str(tmp_dir / "my-shell-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "--path", custom_path, "test-bsp"
+        ]):
+            with patch.object(BspManager, "shell_into_bsp") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_shell.assert_called_once()
+        args, kwargs = mock_shell.call_args
+        assert kwargs.get("bsp_name") == "test-bsp"
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_path_forwarded_to_shell_by_components(self, registry_file, tmp_dir):
+        """--path argument is forwarded to shell_by_components() as build_path_override."""
+        custom_path = str(tmp_dir / "my-shell-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "--device", "test-device", "--release", "test-release",
+            "--path", custom_path
+        ]):
+            with patch.object(BspManager, "shell_by_components") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_shell.assert_called_once()
+        _, kwargs = mock_shell.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_no_path_defaults_to_none(self, registry_file):
+        """When --path is not given, build_path_override is None."""
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "test-bsp"
+        ]):
+            with patch.object(BspManager, "shell_into_bsp") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_shell.call_args
+        assert kwargs.get("build_path_override") is None
