@@ -501,7 +501,7 @@ class TestKasManager:
         """--runtime-args is logged at DEBUG level when use_container=True."""
         import logging
         from bsp.models import DockerVolume
-        from unittest.mock import patch as mock_patch
+        from unittest.mock import patch as mock_patch, MagicMock
         vols = [DockerVolume(host="/host/data", container="/data")]
         manager = KasManager(
             kas_files=[str(kas_config_file)],
@@ -509,9 +509,14 @@ class TestKasManager:
             use_container=True,
             container_volumes=vols,
         )
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.returncode = 0
+        mock_proc.__enter__ = MagicMock(return_value=mock_proc)
+        mock_proc.__exit__ = MagicMock(return_value=False)
         with caplog.at_level(logging.DEBUG, logger="root"):
-            with mock_patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
+            with mock_patch("subprocess.Popen") as mock_popen:
+                mock_popen.return_value = mock_proc
                 try:
                     manager._run_kas_command(["build", str(kas_config_file)])
                 except SystemExit:
@@ -539,7 +544,7 @@ class TestKasManager:
     def test_run_kas_command_passes_runtime_args_in_cmd(self, kas_config_file):
         """_run_kas_command includes --runtime-args in the subprocess call."""
         from bsp.models import DockerVolume
-        from unittest.mock import patch as mock_patch, call
+        from unittest.mock import patch as mock_patch, MagicMock
         vols = [DockerVolume(host="/host/data", container="/data")]
         manager = KasManager(
             kas_files=[str(kas_config_file)],
@@ -547,38 +552,48 @@ class TestKasManager:
             use_container=True,
             container_volumes=vols,
         )
-        with mock_patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.returncode = 0
+        mock_proc.__enter__ = MagicMock(return_value=mock_proc)
+        mock_proc.__exit__ = MagicMock(return_value=False)
+        with mock_patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = mock_proc
             try:
                 manager._run_kas_command(["build", str(kas_config_file)])
             except SystemExit:
                 pass
-        called_cmd = mock_run.call_args[0][0]
+        called_cmd = mock_popen.call_args[0][0]
         assert "--runtime-args" in called_cmd
         rt_idx = called_cmd.index("--runtime-args")
         assert "-v /host/data:/data" in called_cmd[rt_idx + 1]
 
     def test_run_kas_command_no_runtime_args_when_nothing_to_pass(self, kas_config_file):
         """_run_kas_command does NOT include --runtime-args when nothing is configured."""
-        from unittest.mock import patch as mock_patch
+        from unittest.mock import patch as mock_patch, MagicMock
         manager = KasManager(
             kas_files=[str(kas_config_file)],
             build_dir=str(kas_config_file.parent / "build"),
             use_container=True,
         )
-        with mock_patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.returncode = 0
+        mock_proc.__enter__ = MagicMock(return_value=mock_proc)
+        mock_proc.__exit__ = MagicMock(return_value=False)
+        with mock_patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = mock_proc
             try:
                 manager._run_kas_command(["build", str(kas_config_file)])
             except SystemExit:
                 pass
-        called_cmd = mock_run.call_args[0][0]
+        called_cmd = mock_popen.call_args[0][0]
         assert "--runtime-args" not in called_cmd
 
     def test_run_kas_command_kas_runtime_args_not_in_env(self, kas_config_file):
         """KAS_RUNTIME_ARGS is removed from the environment before the subprocess call."""
         from bsp.models import DockerVolume
-        from unittest.mock import patch as mock_patch
+        from unittest.mock import patch as mock_patch, MagicMock
         vols = [DockerVolume(host="/host/data", container="/data")]
         manager = KasManager(
             kas_files=[str(kas_config_file)],
@@ -586,18 +601,155 @@ class TestKasManager:
             use_container=True,
             container_volumes=vols,
         )
-        with mock_patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.returncode = 0
+        mock_proc.__enter__ = MagicMock(return_value=mock_proc)
+        mock_proc.__exit__ = MagicMock(return_value=False)
+        with mock_patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = mock_proc
             try:
                 manager._run_kas_command(["build", str(kas_config_file)])
             except SystemExit:
                 pass
         # env is passed as a keyword arg
-        called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
+        called_env = mock_popen.call_args[1]["env"] if mock_popen.call_args[1] else mock_popen.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
 
 
-class TestRepoManifestExport:
+class TestContainerPathTranslation:
+    """Tests for _get_container_path_map and _translate_container_paths."""
+
+    def test_get_container_path_map_returns_empty_in_native_mode(self, kas_config_file, tmp_dir):
+        """Native mode: path map is empty (no translation)."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=False,
+        )
+        assert manager._get_container_path_map() == {}
+
+    def test_get_container_path_map_includes_build_dir(self, kas_config_file, tmp_dir):
+        """Container mode: /work/build maps to the resolved host build dir."""
+        build_dir = tmp_dir / "my-build"
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(build_dir),
+            use_container=True,
+        )
+        path_map = manager._get_container_path_map()
+        assert "/work/build" in path_map
+        assert path_map["/work/build"] == str(manager.build_dir)
+
+    def test_get_container_path_map_includes_repo_dir(self, kas_config_file, tmp_dir):
+        """Container mode: /repo maps to the original CWD at construction time."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=True,
+        )
+        path_map = manager._get_container_path_map()
+        assert "/repo" in path_map
+        assert path_map["/repo"] == str(manager.original_cwd)
+
+    def test_translate_container_paths_build_dir(self, kas_config_file, tmp_dir):
+        """Container build-dir path is replaced with the host build dir."""
+        build_dir = tmp_dir / "my-bsp-build"
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(build_dir),
+            use_container=True,
+        )
+        line = "/work/build/tmp/work/ecu150a1-poky-linux/u-boot-imx/2025.04/temp/log.do_compile.20247"
+        result = manager._translate_container_paths(line)
+        assert result == f"{manager.build_dir}/tmp/work/ecu150a1-poky-linux/u-boot-imx/2025.04/temp/log.do_compile.20247"
+
+    def test_translate_container_paths_repo_dir(self, kas_config_file, tmp_dir):
+        """Container /repo path is replaced with the host CWD."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=True,
+        )
+        line = "/repo/kas/machine.yaml not found"
+        result = manager._translate_container_paths(line)
+        assert result == f"{manager.original_cwd}/kas/machine.yaml not found"
+
+    def test_translate_container_paths_no_translation_in_native_mode(self, kas_config_file, tmp_dir):
+        """Native mode: paths are returned unchanged."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=False,
+        )
+        line = "/work/build/tmp/work/machine/u-boot/temp/log.do_compile.123"
+        assert manager._translate_container_paths(line) == line
+
+    def test_translate_container_paths_non_matching_line_unchanged(self, kas_config_file, tmp_dir):
+        """Lines without container paths pass through unchanged."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=True,
+        )
+        line = "NOTE: Executing SetScene Tasks"
+        assert manager._translate_container_paths(line) == line
+
+    def test_translate_container_paths_multiple_occurrences(self, kas_config_file, tmp_dir):
+        """Multiple container paths in a single line are all translated."""
+        build_dir = tmp_dir / "my-build"
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(build_dir),
+            use_container=True,
+        )
+        line = "see /work/build/tmp/log1 and /work/build/tmp/log2"
+        result = manager._translate_container_paths(line)
+        host_build = str(manager.build_dir)
+        assert f"{host_build}/tmp/log1" in result
+        assert f"{host_build}/tmp/log2" in result
+        assert "/work/build" not in result
+
+    def test_run_kas_command_output_translated_in_container_mode(self, kas_config_file, tmp_dir, capsys):
+        """Live output from container builds has /work/build replaced with host path."""
+        from unittest.mock import MagicMock, patch as mock_patch
+        build_dir = tmp_dir / "container-build"
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(build_dir),
+            use_container=True,
+        )
+        fake_output_line = "/work/build/tmp/work/machine/u-boot/temp/log.do_compile.99\n"
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([fake_output_line])
+        mock_proc.returncode = 0
+        mock_proc.__enter__ = MagicMock(return_value=mock_proc)
+        mock_proc.__exit__ = MagicMock(return_value=False)
+        with mock_patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = mock_proc
+            manager._run_kas_command(["build", str(kas_config_file)], show_output=True)
+        captured = capsys.readouterr()
+        assert "/work/build" not in captured.out
+        assert str(manager.build_dir) in captured.out
+
+    def test_run_kas_command_captured_output_not_translated(self, kas_config_file, tmp_dir):
+        """Captured output (show_output=False) is not path-translated (for programmatic use)."""
+        from unittest.mock import patch as mock_patch
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(tmp_dir / "build"),
+            use_container=True,
+        )
+        fake_stdout = "repos:\n  meta-foo:\n    url: http://example.com/meta-foo.git\n"
+        with mock_patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = fake_stdout
+            mock_run.return_value.stderr = ""
+            result = manager._run_kas_command(["dump", "--lock", str(kas_config_file)], show_output=False)
+        assert result.stdout == fake_stdout
+
+
+
     def test_export_repo_manifest_xml_uses_locked_dump_and_returns_xml(self, kas_config_file):
         manager = KasManager(
             kas_files=[str(kas_config_file)],

@@ -20,6 +20,17 @@ from .models import DockerVolume
 from .path_resolver import resolver
 
 # =============================================================================
+# Container path constants
+# =============================================================================
+
+# Default mount points used by kas-container for the project repo and build dir.
+# These are rewritten to host paths in live output when running in container mode
+# so that log paths (e.g. Yocto temp/log.do_compile.* paths) can be opened
+# directly from the host without manual translation.
+_KAS_CONTAINER_BUILD_DIR = "/work/build"
+_KAS_CONTAINER_REPO_DIR = "/repo"
+
+# =============================================================================
 # KAS Build System Manager
 # =============================================================================
 
@@ -254,6 +265,60 @@ class KasManager:
 
         expanded = EnvironmentManager.ENV_VAR_PATTERN.sub(_replace, value)
         return os.path.expandvars(expanded)
+
+    def _get_container_path_map(self) -> Dict[str, str]:
+        """
+        Return a mapping of container-side paths to their host-side equivalents.
+
+        Only meaningful when ``use_container=True``.  Used by
+        :meth:`_translate_container_paths` to rewrite log lines so that
+        paths shown to the user point to real host locations (e.g. Yocto
+        ``temp/log.do_compile.*`` paths can be opened directly without
+        manual translation).
+
+        Default mappings (kas-container standard mount points):
+
+        * ``/work/build`` → ``str(self.build_dir)``
+        * ``/repo``       → ``str(self.original_cwd)``
+
+        Returns:
+            Ordered dict of ``{container_path: host_path}``.  Longer keys
+            are listed first so that more-specific prefixes are replaced
+            before shorter ones.
+        """
+        if not self.use_container:
+            return {}
+        path_map: Dict[str, str] = {
+            _KAS_CONTAINER_BUILD_DIR: str(self.build_dir),
+            _KAS_CONTAINER_REPO_DIR: str(self.original_cwd),
+        }
+        return path_map
+
+    def _translate_container_paths(self, text: str) -> str:
+        """
+        Replace container-internal paths with their host-side equivalents.
+
+        Applied to every line of live build output when ``use_container=True``
+        so that paths in Yocto error messages and log references (e.g.
+        ``/work/build/tmp/work/…/log.do_compile.*``) are shown as the
+        actual host paths that can be opened directly.
+
+        The replacement is a plain-text prefix substitution driven by
+        :meth:`_get_container_path_map`.  Non-path text and lines without
+        any container path remain unchanged.  In native (non-container)
+        mode the text is returned as-is.
+
+        Args:
+            text: A line (or multi-line string) from kas output.
+
+        Returns:
+            Text with container paths replaced by host paths.
+        """
+        if not self.use_container:
+            return text
+        for container_path, host_path in self._get_container_path_map().items():
+            text = text.replace(container_path, host_path)
+        return text
 
     def _resolve_kas_file(self, kas_file: str) -> str:
         """
@@ -575,13 +640,33 @@ class KasManager:
 
         try:
             if show_output:
-                # Show live output to console for build progress
-                result = subprocess.run(
-                    cmd,
-                    check=True,
-                    cwd=self.build_dir,
-                    env=env
-                )
+                if self.use_container:
+                    # Container mode: stream output line-by-line through path translation
+                    # so that Yocto log paths (e.g. /work/build/tmp/work/…) are shown as
+                    # their real host-side equivalents that can be opened directly.
+                    # stderr is merged into stdout to keep ordering intact.
+                    with subprocess.Popen(
+                        cmd,
+                        cwd=self.build_dir,
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                    ) as proc:
+                        for raw_line in proc.stdout:
+                            print(self._translate_container_paths(raw_line), end="", flush=True)
+                    if proc.returncode != 0:
+                        raise subprocess.CalledProcessError(proc.returncode, cmd)
+                    result = subprocess.CompletedProcess(cmd, proc.returncode)
+                else:
+                    # Native mode: pass stdout/stderr through unchanged
+                    result = subprocess.run(
+                        cmd,
+                        check=True,
+                        cwd=self.build_dir,
+                        env=env
+                    )
             else:
                 # Capture output for programmatic use (export, validation)
                 result = subprocess.run(

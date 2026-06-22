@@ -603,6 +603,29 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor
 
 Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).
 
+**Container build log paths**
+
+When a build runs inside a container (`kas-container`), Yocto emits log paths that are internal to the container, for example:
+
+```
+/work/build/tmp/work/ecu150a1-poky-linux/u-boot-imx/2025.04/temp/log.do_compile.20247
+```
+
+`bsp build` automatically translates these paths to their host-side equivalents before printing them, so you can open log files directly without manual path mapping:
+
+```
+build/modular-bsp-ecu150a1/build/tmp/work/ecu150a1-poky-linux/u-boot-imx/2025.04/temp/log.do_compile.20247
+```
+
+The default translation rules are:
+
+| Container path | Host path |
+|----------------|-----------|
+| `/work/build`  | Effective build directory (`--path` or registry preset path) |
+| `/repo`        | Current working directory at build start |
+
+This translation is applied only to live (streamed) output in container mode. Captured output used internally (e.g. for `bsp export`) is not affected.
+
 **Examples:**
 
 ```bash
