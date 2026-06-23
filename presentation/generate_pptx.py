@@ -6,13 +6,22 @@ Generates a .pptx presentation from BSP Registry Tools content.
 
 Dependencies:
     pip install python-pptx pillow matplotlib
+    # for PPTX -> PDF conversion:
+    # install libreoffice (soffice)
 
 Usage:
     python3 generate_pptx.py
     # produces bsp_registry_tools.pptx in the same directory
+    python3 generate_pptx.py --to-pdf
+    # also produces bsp_registry_tools.pdf
+    python3 generate_pptx.py --convert-only --input-pptx bsp_registry_tools.pptx
+    # converts an existing PPTX to PDF
 """
 from __future__ import annotations
 
+import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +29,41 @@ HERE = Path(__file__).parent
 ARCH_IMG_LEFT_INCHES = 0.7
 ARCH_IMG_TOP_INCHES = 1.4
 ARCH_IMG_WIDTH_INCHES = 8.6
+
+
+def convert_pptx_to_pdf(pptx_path: Path, pdf_path: Path) -> None:
+    if not pptx_path.exists():
+        raise FileNotFoundError(f"Input PPTX not found: {pptx_path}")
+
+    soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice_bin:
+        raise RuntimeError(
+            "LibreOffice is required for PPTX->PDF conversion. "
+            "Install `soffice` (or `libreoffice`) and retry."
+        )
+
+    pptx_path = pptx_path.resolve()
+    outdir = pdf_path.parent.resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        soffice_bin,
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(outdir),
+        str(pptx_path),
+    ]
+    subprocess.run(cmd, check=True)
+
+    converted_pdf = outdir / f"{pptx_path.stem}.pdf"
+    if converted_pdf != pdf_path.resolve() and converted_pdf.exists():
+        converted_pdf.replace(pdf_path.resolve())
+    if not pdf_path.exists():
+        raise RuntimeError(f"PPTX->PDF conversion did not produce: {pdf_path}")
+
+    print(f"  Generated {pdf_path} ({pdf_path.stat().st_size:,} bytes)")
 
 
 def build_pptx(output: Path, arch_img: Path) -> None:
@@ -131,7 +175,38 @@ def build_pptx(output: Path, arch_img: Path) -> None:
     print(f"  Generated {output} ({output.stat().st_size:,} bytes, {len(prs.slides)} slides)")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate BSP Registry Tools PPTX and optional PDF.")
+    parser.add_argument("--to-pdf", action="store_true", help="Also convert generated PPTX to PDF.")
+    parser.add_argument(
+        "--convert-only",
+        action="store_true",
+        help="Only convert an existing PPTX to PDF (skip PPTX generation).",
+    )
+    parser.add_argument(
+        "--input-pptx",
+        type=Path,
+        default=HERE / "bsp_registry_tools.pptx",
+        help="Input PPTX path for conversion (default: presentation/bsp_registry_tools.pptx).",
+    )
+    parser.add_argument(
+        "--pdf-output",
+        type=Path,
+        default=HERE / "bsp_registry_tools.pdf",
+        help="PDF output path for conversion (default: presentation/bsp_registry_tools.pdf).",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
+    if args.convert_only:
+        print("[1/1] Converting PPTX to PDF …")
+        convert_pptx_to_pdf(args.input_pptx, args.pdf_output)
+        print("Done.")
+        return
+
     # Reuse the same architecture diagram generation as PDF tooling.
     sys.path.insert(0, str(HERE))
     from generate_pdf import generate_architecture_diagram
@@ -144,6 +219,10 @@ def main() -> None:
 
     print("[2/2] Building PPTX presentation …")
     build_pptx(output, arch_img)
+
+    if args.to_pdf:
+        print("[3/3] Converting PPTX to PDF …")
+        convert_pptx_to_pdf(output, args.pdf_output)
 
     print("Done.")
 
