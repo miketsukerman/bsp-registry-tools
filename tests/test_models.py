@@ -118,8 +118,8 @@ class TestSharedDataClasses:
         assert docker.volumes[0].container == "/container/path"
 
     def test_specification(self):
-        spec = Specification(version="2.0")
-        assert spec.version == "2.0"
+        spec = Specification(version="2.1")
+        assert spec.version == "2.1"
 
 
 # =============================================================================
@@ -412,7 +412,7 @@ class TestV2DataClasses:
         assert reg.bsp == []
 
     def test_registry_root_defaults(self):
-        spec = Specification(version="2.0")
+        spec = Specification(version="2.1")
         reg = Registry()
         root = RegistryRoot(specification=spec, registry=reg)
         assert root.containers == {}
@@ -420,7 +420,7 @@ class TestV2DataClasses:
         assert root.environments == {}
 
     def test_registry_root_with_global_environment(self):
-        spec = Specification(version="2.0")
+        spec = Specification(version="2.1")
         reg = Registry()
         env = GlobalEnvironment(
             variables=[EnvironmentVariable(name="DL_DIR", value="/downloads")],
@@ -586,7 +586,7 @@ class TestLavaServerConfigInRegistryRoot:
             artifact_server_url="http://fileserver/builds",
         )
         root = RegistryRoot(
-            specification=Specification(version="2.0"),
+            specification=Specification(version="2.1"),
             registry=Registry(),
             lava=lava,
         )
@@ -594,7 +594,7 @@ class TestLavaServerConfigInRegistryRoot:
 
     def test_registry_level_lava_defaults(self):
         root = RegistryRoot(
-            specification=Specification(version="2.0"),
+            specification=Specification(version="2.1"),
             registry=Registry(),
         )
         assert root.lava is None

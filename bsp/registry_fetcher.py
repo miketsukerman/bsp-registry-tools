@@ -168,19 +168,43 @@ class RegistryFetcher:
             sys.exit(1)
 
     def _pull(self, branch: str) -> None:
-        """Fetch from remote, switch to *branch*, and pull latest changes."""
-        cmds = [
+        """Fetch from remote, switch to *branch*, and pull latest changes.
+
+        If ``git pull`` fails, retries once with ``--rebase`` before giving up.
+        """
+        pre_cmds = [
             ["git", "-C", str(self.cache_dir), "fetch", "origin"],
             ["git", "-C", str(self.cache_dir), "checkout", branch],
-            ["git", "-C", str(self.cache_dir), "pull", "origin", branch],
         ]
-        for cmd in cmds:
+        for cmd in pre_cmds:
             self.logger.debug("Running: %s", " ".join(cmd))
             try:
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError as e:
                 self.logger.error(
-                    "git %s failed (return code %d): %s", cmd[2], e.returncode, e.stderr
+                    "git %s failed (return code %d): %s", cmd[3], e.returncode, e.stderr
+                )
+                sys.exit(1)
+
+        pull_cmd = ["git", "-C", str(self.cache_dir), "pull", "origin", branch]
+        self.logger.debug("Running: %s", " ".join(pull_cmd))
+        try:
+            subprocess.run(pull_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as pull_err:
+            self.logger.warning(
+                "git pull failed (return code %d): %s – retrying with --rebase",
+                pull_err.returncode,
+                pull_err.stderr,
+            )
+            rebase_cmd = ["git", "-C", str(self.cache_dir), "pull", "--rebase", "origin", branch]
+            self.logger.debug("Running: %s", " ".join(rebase_cmd))
+            try:
+                subprocess.run(rebase_cmd, check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as rebase_err:
+                self.logger.error(
+                    "git pull --rebase failed (return code %d): %s",
+                    rebase_err.returncode,
+                    rebase_err.stderr,
                 )
                 sys.exit(1)
 

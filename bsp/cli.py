@@ -5,22 +5,24 @@ CLI entry point for the BSP registry manager.
 import argparse
 import logging
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from .bsp_manager import BspManager
 from .completions import (
+    ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
+    OverrideCompleter,
     PresetsCompleter,
     ReleasesCompleter,
     RemotesCompleter,
+    VendorReleaseCompleter,
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
-from .models import ArchiveConfig
-from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH, RegistryFetcher
+from .models import ArchiveConfig, YoctoCacheConfig
+from .registry_fetcher import DEFAULT_BRANCH, DEFAULT_REMOTE_URL, RegistryFetcher
 from .remotes_manager import RemotesManager
-from .utils import SUPPORTED_REGISTRY_VERSION
+from .utils import SUPPORTED_REGISTRY_VERSION, get_installed_package_version
 
 # =============================================================================
 # Helpers
@@ -55,6 +57,16 @@ def _collect_deploy_overrides(args) -> dict:
             name=archive_name if archive_name is not None else defaults.name,
             format=archive_format if archive_format is not None else defaults.format,
         )
+
+    # Yocto cache upload config
+    deploy_cache = getattr(args, "deploy_cache", None)
+    if deploy_cache is not None:
+        overrides["yocto_cache"] = YoctoCacheConfig(
+            enabled=deploy_cache,
+            downloads=getattr(args, "deploy_cache_downloads", True),
+            sstate=getattr(args, "deploy_cache_sstate", True),
+        )
+
     return overrides
 
 
@@ -82,6 +94,52 @@ def _collect_gather_overrides(args) -> dict:
     return overrides
 
 
+def _collect_scan_overrides(args) -> dict:
+    """
+    Extract scan-related CLI arguments into a flat scan-override dict.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    tool = getattr(args, "scan_tool", None)
+    if tool is not None:
+        overrides["tool"] = tool
+    severity = getattr(args, "scan_severity", None)
+    if severity is not None:
+        overrides["severity"] = severity
+    fail_on = getattr(args, "scan_fail_on", None)
+    if fail_on is not None:
+        overrides["fail_on"] = fail_on
+    sbom_format = getattr(args, "scan_sbom_format", None)
+    if sbom_format is not None:
+        overrides["sbom_format"] = sbom_format
+    output_dir = getattr(args, "scan_output_dir", None)
+    if output_dir is not None:
+        overrides["output_dir"] = output_dir
+    return overrides
+
+
+def _collect_flash_overrides(args) -> dict:
+    """
+    Extract flash-related CLI arguments into a flat flash-override dict.
+
+    Keys with ``None`` values are omitted so they do not clobber registry
+    config defaults in the merge step inside ``BspManager``.
+    """
+    overrides = {}
+    tool = getattr(args, "flash_tool", None)
+    if tool is not None:
+        overrides["tool"] = tool
+    patterns = getattr(args, "flash_image_patterns", None)
+    if patterns:
+        overrides["image_patterns"] = patterns
+    extra_args = getattr(args, "flash_extra_args", None)
+    if extra_args is not None:
+        overrides["extra_args"] = extra_args
+    return overrides
+
+
 # =============================================================================
 # Remotes sub-command dispatcher (no registry loading required)
 # =============================================================================
@@ -97,11 +155,7 @@ def _dispatch_remotes(args) -> int:
 
     if subcmd is None:
         # Plain ``bsp remotes`` — list all remotes
-        remotes = mgr.load()
-        if not remotes:
-            print("(no remotes configured)")
-            print(f"Use 'bsp remotes add <name> <url>' to register a remote.")
-            return 0
+        remotes = mgr.ensure_default_remote(branch=getattr(args, "branch", DEFAULT_BRANCH))
         verbose = getattr(args, "remotes_verbose", False)
         for r in remotes:
             if verbose:
@@ -210,10 +264,7 @@ def main() -> int:
     """
     try:
         # Parse command line arguments
-        try:
-            _version = _pkg_version("bsp-registry-tools")
-        except PackageNotFoundError:
-            _version = "unknown"
+        _version = get_installed_package_version("bsp-registry-tools")
         _version_str = (
             f"bsp-registry-tools {_version}\n"
             f"Supported model description version: {SUPPORTED_REGISTRY_VERSION}"
@@ -284,6 +335,20 @@ def main() -> int:
             help="Release slug (use with --device for component-based build)"
         ).completer = ReleasesCompleter()
         build_parser.add_argument(
+            "--vendor-release",
+            type=str,
+            dest="vendor_release",
+            metavar="SLUG",
+            help="Vendor sub-release slug to resolve for build selection"
+        ).completer = VendorReleaseCompleter()
+        build_parser.add_argument(
+            "--override",
+            type=str,
+            dest="override_slug",
+            metavar="SLUG",
+            help="Vendor override slug to resolve for build selection"
+        ).completer = OverrideCompleter()
+        build_parser.add_argument(
             "--feature", "-f",
             action="append",
             dest="features",
@@ -349,6 +414,30 @@ def main() -> int:
             help="Compression format for the archive bundle (default: tar.gz)"
         )
         build_parser.add_argument(
+            "--deploy-cache",
+            action="store_true",
+            default=None,
+            dest="deploy_cache",
+            help=(
+                "Also upload Yocto DL_DIR / SSTATE_DIR caches after build. "
+                "Only effective when --deploy is used."
+            )
+        )
+        build_parser.add_argument(
+            "--no-deploy-cache-downloads",
+            action="store_false",
+            dest="deploy_cache_downloads",
+            default=True,
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)."
+        )
+        build_parser.add_argument(
+            "--no-deploy-cache-sstate",
+            action="store_false",
+            dest="deploy_cache_sstate",
+            default=True,
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
+        )
+        build_parser.add_argument(
             "--test",
             action="store_true",
             dest="run_test",
@@ -401,6 +490,143 @@ def main() -> int:
             metavar='PATH',
             help='Override output build directory path'
         )
+        build_parser.add_argument(
+            "--scan",
+            action="store_true",
+            dest="scan_after_build",
+            help="Scan built artifacts for CVEs (CRA) after a successful build"
+        )
+        build_parser.add_argument(
+            "--scan-tool",
+            type=str,
+            dest="scan_tool",
+            metavar="TOOL",
+            choices=["trivy", "syft+grype"],
+            default=None,
+            help="Scanner backend to use: trivy (default) or syft+grype"
+        )
+        build_parser.add_argument(
+            "--scan-severity",
+            type=str,
+            dest="scan_severity",
+            metavar="LEVEL",
+            choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Minimum CVE severity to report (default: HIGH)"
+        )
+        build_parser.add_argument(
+            "--scan-fail-on",
+            type=str,
+            dest="scan_fail_on",
+            metavar="LEVEL",
+            choices=["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Exit non-zero if any finding at this severity (default: CRITICAL)"
+        )
+        build_parser.add_argument(
+            "--scan-output-dir",
+            type=str,
+            dest="scan_output_dir",
+            metavar="PATH",
+            default=None,
+            help="Directory to write scan reports and SBOMs into"
+        )
+        build_parser.add_argument(
+            "--flash",
+            type=str,
+            dest="flash_target",
+            metavar="DEVICE",
+            default=None,
+            help="Flash built artifacts to DEVICE (e.g. /dev/sdb) after a successful build"
+        )
+        build_parser.add_argument(
+            "--flash-tool",
+            type=str,
+            dest="flash_tool",
+            metavar="TOOL",
+            choices=["bmaptool", "dd", "uuu"],
+            default=None,
+            help="Flash tool to use: bmaptool (default), dd, or uuu"
+        )
+        build_parser.add_argument(
+            "--docker-build-options",
+            type=str,
+            dest="docker_build_options",
+            metavar="OPTIONS",
+            default=None,
+            help=(
+                "Extra flags passed verbatim to 'docker build' (e.g. '--no-cache --network host'). "
+                "Overrides 'build_options' in the registry container definition."
+            )
+        )
+        build_parser.add_argument(
+            "--docker-no-cache",
+            dest="no_cache",
+            action="store_true",
+            default=False,
+            help=(
+                "Disable Docker layer cache when building the BSP container image. "
+                "Shorthand for --docker-build-options '--no-cache'."
+            ),
+        )
+
+        # ----------------------------------------------------------------
+        # Fetch command
+        # ----------------------------------------------------------------
+        fetch_parser = subparsers.add_parser("fetch", help="Fetch sources for BSP")
+        fetch_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset to fetch, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        fetch_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based fetch)"
+        ).completer = DevicesCompleter()
+        fetch_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based fetch)"
+        ).completer = ReleasesCompleter()
+        fetch_parser.add_argument(
+            "--vendor-release",
+            type=str,
+            dest="vendor_release",
+            metavar="SLUG",
+            help="Vendor sub-release slug to resolve for fetch selection"
+        ).completer = VendorReleaseCompleter()
+        fetch_parser.add_argument(
+            "--override",
+            type=str,
+            dest="override_slug",
+            metavar="SLUG",
+            help="Vendor override slug to resolve for fetch selection"
+        ).completer = OverrideCompleter()
+        fetch_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        fetch_parser.add_argument(
+            "--target",
+            type=str,
+            dest="target",
+            metavar="TARGET",
+            help="BitBake target to fetch (defaults to targets resolved from the KAS configuration)"
+        )
+        fetch_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
+        )
 
         # ----------------------------------------------------------------
         # List command (with optional subtype)
@@ -428,8 +654,35 @@ def main() -> int:
             help="Show only entries from the named remote registry"
         ).completer = RemotesCompleter()
 
-        # List containers command
-        subparsers.add_parser("containers", help="List available containers")
+        # Containers command
+        containers_parser = subparsers.add_parser(
+            "containers",
+            help="List or build container images from the registry",
+        )
+        containers_parser.add_argument(
+            "containers_action",
+            nargs="?",
+            choices=["list", "build"],
+            default="list",
+            help="Action to perform: 'list' (default) to list containers, 'build' to build them",
+        )
+        containers_parser.add_argument(
+            "container_name",
+            nargs="?",
+            type=str,
+            default=None,
+            help=(
+                "Container name to build (only used with 'build'; omit to build all). "
+                "Supports 'registry:container' syntax in multi-registry mode."
+            ),
+        ).completer = ContainerCompleter()
+        containers_parser.add_argument(
+            "--docker-no-cache",
+            dest="no_cache",
+            action="store_true",
+            default=False,
+            help="Disable Docker layer cache for the container build",
+        )
 
         # ----------------------------------------------------------------
         # Tree command
@@ -489,6 +742,18 @@ def main() -> int:
             type=str,
             help="Output file path (default: stdout)"
         )
+        export_parser.add_argument(
+            "--repo-manifest",
+            action="store_true",
+            dest="repo_manifest",
+            help="Export Android repo manifest XML"
+        )
+        export_parser.add_argument(
+            "--lock",
+            action="store_true",
+            dest="lock",
+            help="Use `kas dump --lock` when exporting KAS configuration"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -547,6 +812,13 @@ def main() -> int:
             type=str,
             dest="shell_command",
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
+        )
+        shell_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
         )
 
         # ----------------------------------------------------------------
@@ -641,33 +913,30 @@ def main() -> int:
             dest="dry_run",
             help="List what would be uploaded without actually uploading"
         )
-
-        # ----------------------------------------------------------------
-        # Flash command
-        # ----------------------------------------------------------------
-        flash_parser = subparsers.add_parser(
-            "flash",
-            help="Flash BSP image to a target device (SD card or eMMC)"
-        )
-        flash_parser.add_argument(
-            "bsp_name",
-            nargs="?",
-            type=str,
-            help="BSP preset name to flash"
-        )
-        flash_parser.add_argument(
-            "--target", "-t",
-            type=str,
-            required=True,
-            metavar="DEVICE",
-            help="Target block device (e.g. /dev/sda, /dev/mmcblk0)"
-        )
-        flash_parser.add_argument(
-            "--image", "-i",
-            type=str,
+        deploy_parser.add_argument(
+            "--deploy-cache",
+            action="store_true",
             default=None,
-            metavar="IMAGE",
-            help="Path to the image file to flash (auto-selected if omitted)"
+            dest="deploy_cache",
+            help=(
+                "Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage. "
+                "Cache directories are resolved from the registry environment config "
+                "or from the DL_DIR / SSTATE_DIR environment variables."
+            )
+        )
+        deploy_parser.add_argument(
+            "--no-deploy-cache-downloads",
+            action="store_false",
+            dest="deploy_cache_downloads",
+            default=True,
+            help="Skip uploading the DL_DIR downloads cache (only effective with --deploy-cache)."
+        )
+        deploy_parser.add_argument(
+            "--no-deploy-cache-sstate",
+            action="store_false",
+            dest="deploy_cache_sstate",
+            default=True,
+            help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
         )
 
         # ----------------------------------------------------------------
@@ -757,6 +1026,228 @@ def main() -> int:
             action="store_true",
             dest="dry_run",
             help="List what would be downloaded without actually downloading"
+        )
+        gather_parser.add_argument(
+            "--gather-cache",
+            action="store_true",
+            dest="gather_cache",
+            default=False,
+            help=(
+                "Also restore Yocto DL_DIR / SSTATE_DIR caches from cloud storage if "
+                "available. Missing caches are silently skipped."
+            )
+        )
+        gather_parser.add_argument(
+            "--cache-downloads-dir",
+            type=str,
+            dest="cache_downloads_dest",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to restore the Yocto downloads cache into. "
+                "Defaults to the DL_DIR env variable or a 'downloads/' sub-directory "
+                "inside --dest-dir. Only effective with --gather-cache."
+            )
+        )
+        gather_parser.add_argument(
+            "--cache-sstate-dir",
+            type=str,
+            dest="cache_sstate_dest",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Local directory to restore the Yocto sstate cache into. "
+                "Defaults to the SSTATE_DIR env variable or a 'sstate/' sub-directory "
+                "inside --dest-dir. Only effective with --gather-cache."
+            )
+        )
+
+        # ----------------------------------------------------------------
+        # Scan command (CRA image vulnerability scanning)
+        # ----------------------------------------------------------------
+        scan_parser = subparsers.add_parser(
+            "scan",
+            help="Scan built artifacts for CVEs and generate an SBOM (CRA compliance)"
+        )
+        scan_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset whose artifacts to scan, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        scan_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based scan)"
+        ).completer = DevicesCompleter()
+        scan_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based scan)"
+        ).completer = ReleasesCompleter()
+        scan_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        scan_parser.add_argument(
+            "--tool",
+            type=str,
+            dest="scan_tool",
+            metavar="TOOL",
+            choices=["trivy", "syft+grype"],
+            default=None,
+            help="Scanner backend: trivy (default) or syft+grype"
+        )
+        scan_parser.add_argument(
+            "--severity",
+            type=str,
+            dest="scan_severity",
+            metavar="LEVEL",
+            choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Minimum CVE severity to report (default: HIGH)"
+        )
+        scan_parser.add_argument(
+            "--fail-on",
+            type=str,
+            dest="scan_fail_on",
+            metavar="LEVEL",
+            choices=["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            default=None,
+            help="Exit non-zero if any finding at this severity (default: CRITICAL)"
+        )
+        scan_parser.add_argument(
+            "--sbom-format",
+            type=str,
+            dest="scan_sbom_format",
+            metavar="FORMAT",
+            choices=["cyclonedx", "spdx-json", "spdx-tag-value"],
+            default=None,
+            help="SBOM output format (default: cyclonedx)"
+        )
+        scan_parser.add_argument(
+            "--output-dir",
+            type=str,
+            dest="scan_output_dir",
+            metavar="PATH",
+            default=None,
+            help="Directory to write scan reports and SBOMs into"
+        )
+        scan_parser.add_argument(
+            "--image-path",
+            action="append",
+            dest="scan_image_paths",
+            metavar="PATH",
+            default=None,
+            help=(
+                "Explicit artifact file to scan (can be specified multiple times). "
+                "Overrides auto-discovery when provided."
+            )
+        )
+        scan_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="List what would be scanned without actually scanning"
+        )
+
+        # ----------------------------------------------------------------
+        # Flash command (SD-card / block-device flashing via bmap-tools)
+        # ----------------------------------------------------------------
+        flash_parser = subparsers.add_parser(
+            "flash",
+            help="Flash a built image to an SD card or block device using bmap-tools"
+        )
+        flash_parser.add_argument(
+            "bsp_name",
+            nargs="?",
+            type=str,
+            help="BSP preset whose image to flash, optionally prefixed with registry name (registry:preset). Mutually exclusive with --device/--release."
+        ).completer = PresetsCompleter()
+        flash_parser.add_argument(
+            "--device", "-d",
+            type=str,
+            dest="device",
+            help="Device slug (use with --release for component-based flash)"
+        ).completer = DevicesCompleter()
+        flash_parser.add_argument(
+            "--release",
+            type=str,
+            dest="release",
+            help="Release slug (use with --device for component-based flash)"
+        ).completer = ReleasesCompleter()
+        flash_parser.add_argument(
+            "--feature", "-f",
+            action="append",
+            dest="features",
+            metavar="FEATURE",
+            help="Feature slug to enable (can be specified multiple times)"
+        ).completer = FeaturesCompleter()
+        flash_parser.add_argument(
+            "--target", "-t",
+            type=str,
+            dest="flash_target",
+            metavar="DEVICE",
+            default=None,
+            help="Block device path to flash to (e.g. /dev/sdb)"
+        )
+        flash_parser.add_argument(
+            "--image-path",
+            type=str,
+            dest="flash_image_path",
+            metavar="PATH",
+            default=None,
+            help=(
+                "Explicit image file to flash. "
+                "Overrides auto-discovery when provided."
+            )
+        )
+        flash_parser.add_argument(
+            "--image-pattern",
+            action="append",
+            dest="flash_image_patterns",
+            metavar="PATTERN",
+            default=None,
+            help=(
+                "Glob pattern to find the flashable image (can be specified multiple times). "
+                "Overrides the default patterns when provided."
+            )
+        )
+        flash_parser.add_argument(
+            "--tool",
+            type=str,
+            dest="flash_tool",
+            metavar="TOOL",
+            choices=["bmaptool", "dd", "uuu"],
+            default=None,
+            help="Flash tool to use: bmaptool (default), dd, or uuu"
+        )
+        flash_parser.add_argument(
+            "--extra-args",
+            type=str,
+            dest="flash_extra_args",
+            metavar="ARGS",
+            default=None,
+            help="Extra arguments forwarded verbatim to the flash tool (e.g. '--nobmap')"
+        )
+        flash_parser.add_argument(
+            "--build-path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            default=None,
+            help="Override the build output directory used for artifact discovery"
+        )
+        flash_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="Show what would be flashed without actually writing to the device"
         )
 
         # ----------------------------------------------------------------
@@ -977,32 +1468,22 @@ def main() -> int:
             # If no --remote flags given on the CLI, fall back to configured remotes
             if args.remote:
                 remotes_raw = args.remote
+                using_configured_remotes = False
             else:
-                stored = RemotesManager().load()
-                if stored:
-                    # Encode stored remotes as URL@BRANCH@name=NAME strings so the
-                    # existing parse / fetch_multiple path handles them uniformly.
-                    remotes_raw = [
-                        f"{r.url}@{r.branch}@name={r.name}" for r in stored
-                    ]
-                    logging.info(
-                        "Using %d configured remote(s): %s",
-                        len(stored),
-                        [r.name for r in stored],
-                    )
-                else:
-                    remotes_raw = [DEFAULT_REMOTE_URL]
+                stored = RemotesManager().ensure_default_remote(branch=args.branch)
+                # Encode stored remotes as URL@BRANCH@name=NAME strings so the
+                # existing parse / fetch_multiple path handles them uniformly.
+                remotes_raw = [
+                    f"{r.url}@{r.branch}@name={r.name}" for r in stored
+                ]
+                using_configured_remotes = True
+                logging.info(
+                    "Using %d configured remote(s): %s",
+                    len(stored),
+                    [r.name for r in stored],
+                )
 
-            if len(remotes_raw) == 1 and remotes_raw[0] == DEFAULT_REMOTE_URL and not args.remote:
-                # Single default remote — use the legacy single-registry path for backward compat
-                registry_path = str(fetcher.fetch_registry(
-                    repo_url=DEFAULT_REMOTE_URL,
-                    branch=args.branch,
-                    update=args.update,
-                ))
-                logging.info("Using remote registry cached at: %s", registry_path)
-                bsp_mgr = BspManager(registry_path, verbose=args.verbose)
-            elif len(remotes_raw) == 1:
+            if len(remotes_raw) == 1 and not using_configured_remotes:
                 # Single explicit remote — backward-compat single-registry path
                 spec = RemoteRegistrySpec.parse(remotes_raw[0], default_branch=args.branch)
                 registry_path = str(fetcher.fetch_registry(
@@ -1049,6 +1530,11 @@ def main() -> int:
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
             run_test = getattr(args, "run_test", False)
+            scan_after_build = getattr(args, "scan_after_build", False)
+            scan_overrides = _collect_scan_overrides(args)
+            flash_target = getattr(args, "flash_target", None)
+            flash_after_build = flash_target is not None
+            flash_overrides = _collect_flash_overrides(args)
             wait = getattr(args, "wait", False)
             lava_server = getattr(args, "lava_server", None)
             lava_token = getattr(args, "lava_token", None)
@@ -1056,6 +1542,14 @@ def main() -> int:
             target = getattr(args, "target", None)
             task = getattr(args, "task", None)
             build_path = getattr(args, "build_path", None)
+            vendor_release = getattr(args, "vendor_release", None)
+            override_slug = getattr(args, "override_slug", None)
+            docker_build_options = getattr(args, "docker_build_options", None)
+            no_cache = getattr(args, "no_cache", False)
+            if no_cache:
+                docker_build_options = BspManager._compose_docker_build_options(
+                    docker_build_options, use_cache=False
+                )
 
             if _check_exclusive(bsp_name, device, release, build_parser):
                 return 1
@@ -1069,6 +1563,14 @@ def main() -> int:
                     task=task,
                     build_path_override=build_path,
                     feature_slugs=features,
+                    scan_after_build=scan_after_build,
+                    scan_overrides=scan_overrides,
+                    flash_after_build=flash_after_build,
+                    flash_target=flash_target,
+                    flash_overrides=flash_overrides,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
+                    docker_build_options=docker_build_options,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -1089,6 +1591,14 @@ def main() -> int:
                     target=target,
                     task=task,
                     build_path_override=build_path,
+                    scan_after_build=scan_after_build,
+                    scan_overrides=scan_overrides,
+                    flash_after_build=flash_after_build,
+                    flash_target=flash_target,
+                    flash_overrides=flash_overrides,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
+                    docker_build_options=docker_build_options,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
@@ -1109,6 +1619,44 @@ def main() -> int:
                 build_parser.print_help()
                 return 1
 
+        elif args.command == "fetch":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            target = getattr(args, "target", None)
+            build_path = getattr(args, "build_path", None)
+            vendor_release = getattr(args, "vendor_release", None)
+            override_slug = getattr(args, "override_slug", None)
+
+            if _check_exclusive(bsp_name, device, release, fetch_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.fetch_bsp(
+                    bsp_name,
+                    target=target,
+                    build_path_override=build_path,
+                    feature_slugs=features,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
+                )
+            elif device and release:
+                bsp_mgr.fetch_by_components(
+                    device,
+                    release,
+                    features,
+                    target=target,
+                    build_path_override=build_path,
+                    vendor_release_slug=vendor_release,
+                    override_slug=override_slug,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                fetch_parser.print_help()
+                return 1
+
         elif args.command == "list":
             list_type = getattr(args, "list_type", None)
             device = getattr(args, "device", None)
@@ -1126,7 +1674,14 @@ def main() -> int:
                 bsp_mgr.list_bsp(use_color=use_color, registry_filter=registry_filter)
 
         elif args.command == "containers":
-            bsp_mgr.list_containers(use_color=not args.no_color)
+            action = getattr(args, "containers_action", "list")
+            if action == "build":
+                bsp_mgr.build_containers(
+                    container_name=getattr(args, "container_name", None),
+                    no_cache=getattr(args, "no_cache", False),
+                )
+            else:
+                bsp_mgr.list_containers(use_color=not args.no_color)
 
         elif args.command == "tree":
             full = getattr(args, "full", False)
@@ -1141,14 +1696,26 @@ def main() -> int:
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
             output = getattr(args, "output", None)
+            repo_manifest = getattr(args, "repo_manifest", False)
+            lock = getattr(args, "lock", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.export_bsp_config(bsp_name=bsp_name, output_file=output)
+                bsp_mgr.export_bsp_config(
+                    bsp_name=bsp_name,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
+                    lock=lock,
+                )
             elif device and release:
                 bsp_mgr.export_by_components(
-                    device, release, features, output_file=output
+                    device,
+                    release,
+                    features,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
+                    lock=lock,
                 )
             else:
                 logging.error(
@@ -1183,14 +1750,21 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            build_path = getattr(args, "build_path", None)
 
             if _check_exclusive(bsp_name, device, release, shell_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.shell_into_bsp(bsp_name=bsp_name, command=shell_command)
+                bsp_mgr.shell_into_bsp(
+                    bsp_name=bsp_name,
+                    command=shell_command,
+                    build_path_override=build_path,
+                )
             elif device and release:
                 bsp_mgr.shell_by_components(
-                    device, release, features, command=shell_command
+                    device, release, features,
+                    command=shell_command,
+                    build_path_override=build_path,
                 )
             else:
                 logging.error(
@@ -1228,16 +1802,6 @@ def main() -> int:
                 deploy_parser.print_help()
                 return 1
 
-        elif args.command == "flash":
-            bsp_name = getattr(args, "bsp_name", None)
-            target = getattr(args, "target", None)
-            image = getattr(args, "image", None)
-            if not bsp_name:
-                logging.error("Specify a BSP preset name.")
-                flash_parser.print_help()
-                return 1
-            bsp_mgr.flash_bsp(bsp_name=bsp_name, target=target, image_path=image)
-
         elif args.command == "gather":
             device = getattr(args, "device", None)
             release = getattr(args, "release", None)
@@ -1246,6 +1810,9 @@ def main() -> int:
             dest_dir = getattr(args, "dest_dir", None)
             dry_run = getattr(args, "dry_run", False)
             date_override = getattr(args, "gather_date", None)
+            gather_cache = getattr(args, "gather_cache", False)
+            cache_downloads_dest = getattr(args, "cache_downloads_dest", None)
+            cache_sstate_dest = getattr(args, "cache_sstate_dest", None)
             gather_overrides = _collect_gather_overrides(args)
 
             if _check_exclusive(bsp_name, device, release, gather_parser):
@@ -1257,6 +1824,9 @@ def main() -> int:
                     deploy_overrides=gather_overrides,
                     dry_run=dry_run,
                     date_override=date_override,
+                    gather_cache=gather_cache,
+                    cache_downloads_dest=cache_downloads_dest,
+                    cache_sstate_dest=cache_sstate_dest,
                 )
             elif device and release:
                 bsp_mgr.gather_by_components(
@@ -1265,12 +1835,93 @@ def main() -> int:
                     deploy_overrides=gather_overrides,
                     dry_run=dry_run,
                     date_override=date_override,
+                    gather_cache=gather_cache,
+                    cache_downloads_dest=cache_downloads_dest,
+                    cache_sstate_dest=cache_sstate_dest,
                 )
             else:
                 logging.error(
                     "Specify either a BSP preset name or both --device and --release."
                 )
                 gather_parser.print_help()
+                return 1
+
+        elif args.command == "scan":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            dry_run = getattr(args, "dry_run", False)
+            scan_overrides = _collect_scan_overrides(args)
+            image_paths = getattr(args, "scan_image_paths", None)
+
+            if _check_exclusive(bsp_name, device, release, scan_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.scan_bsp(
+                    bsp_name,
+                    scan_overrides=scan_overrides,
+                    dry_run=dry_run,
+                    image_paths=image_paths,
+                )
+            elif device and release:
+                bsp_mgr.scan_by_components(
+                    device, release, features,
+                    scan_overrides=scan_overrides,
+                    dry_run=dry_run,
+                    image_paths=image_paths,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                scan_parser.print_help()
+                return 1
+
+        elif args.command == "flash":
+            device = getattr(args, "device", None)
+            release = getattr(args, "release", None)
+            features = getattr(args, "features", None) or []
+            bsp_name = getattr(args, "bsp_name", None)
+            flash_target = getattr(args, "flash_target", None)
+            flash_image_path = getattr(args, "flash_image_path", None)
+            dry_run = getattr(args, "dry_run", False)
+            build_path = getattr(args, "build_path", None)
+            flash_overrides = _collect_flash_overrides(args)
+
+            if not dry_run and not flash_target and getattr(args, "flash_tool", None) != "uuu":
+                logging.error(
+                    "--target / -t is required unless --dry-run is specified or --tool uuu is used."
+                )
+                flash_parser.print_help()
+                return 1
+
+            if _check_exclusive(bsp_name, device, release, flash_parser):
+                return 1
+            if bsp_name:
+                bsp_mgr.flash_bsp(
+                    bsp_name,
+                    target_device=flash_target or "",
+                    flash_overrides=flash_overrides,
+                    image_path=flash_image_path,
+                    dry_run=dry_run,
+                    build_path_override=build_path,
+                )
+            elif device and release:
+                bsp_mgr.flash_by_components(
+                    device, release,
+                    target_device=flash_target or "",
+                    feature_slugs=features,
+                    flash_overrides=flash_overrides,
+                    image_path=flash_image_path,
+                    dry_run=dry_run,
+                    build_path_override=build_path,
+                )
+            else:
+                logging.error(
+                    "Specify either a BSP preset name or both --device and --release."
+                )
+                flash_parser.print_help()
                 return 1
 
         elif args.command == "test":

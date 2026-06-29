@@ -3,11 +3,11 @@ Advantech Board Support Package (BSP) Registry Manager
 
 This package provides a comprehensive command-line interface and Python API for
 managing and building Yocto-based BSPs using the KAS build system. It uses a
-YAML-based registry (schema v2.0) to define devices, releases, features, and
+YAML-based registry (schema v2.2) to define devices, releases, features, and
 optional named BSP presets, making reproducible Yocto builds straightforward.
 
 Key Features:
-- BSP registry management via YAML configuration files (schema v2.0)
+- BSP registry management via YAML configuration files (schema v2.2)
 - Device / release / feature decomposition with compatibility checking
 - Docker container building and management for reproducible builds
 - KAS build system integration for Yocto-based builds

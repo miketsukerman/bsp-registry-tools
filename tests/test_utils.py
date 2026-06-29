@@ -1,5 +1,5 @@
 """
-Tests for YAML parsing utilities and container list-to-dict conversion (v2.0).
+Tests for YAML parsing utilities and container list-to-dict conversion (v2.1).
 """
 
 import subprocess
@@ -15,7 +15,7 @@ from bsp import (
     get_registry_from_yaml_file,
     convert_containers_list_to_dict,
 )
-from bsp.utils import build_docker, _deep_merge_yaml_dicts
+from bsp.utils import build_docker, normalize_build_option_tokens, _deep_merge_yaml_dicts
 from .conftest import INVALID_YAML, MINIMAL_REGISTRY_YAML, REGISTRY_WITH_ENV_YAML
 
 
@@ -52,7 +52,7 @@ class TestYamlParsing:
     def test_get_registry_from_yaml_file(self, registry_file):
         result = get_registry_from_yaml_file(registry_file)
         assert isinstance(result, RegistryRoot)
-        assert result.specification.version == "2.0"
+        assert result.specification.version == "2.1"
         assert len(result.registry.devices) == 1
         assert result.registry.devices[0].slug == "test-device"
 
@@ -109,6 +109,33 @@ registry:
         v1_file.write_text(v1_yaml)
         with pytest.raises(SystemExit):
             get_registry_from_yaml_file(v1_file)
+
+    def test_get_registry_future_minor_version_exits(self, tmp_dir):
+        """Registry files with a future minor version should exit (tool is too old)."""
+        future_yaml = """
+specification:
+  version: "2.99"
+registry:
+  bsp: []
+"""
+        future_file = tmp_dir / "future-registry.yaml"
+        future_file.write_text(future_yaml)
+        with pytest.raises(SystemExit):
+            get_registry_from_yaml_file(future_file)
+
+    def test_get_registry_older_minor_version_accepted(self, tmp_dir):
+        """Registry files with an older compatible minor version (2.0) should be accepted."""
+        v20_yaml = """
+specification:
+  version: "2.0"
+registry:
+  bsp: []
+"""
+        v20_file = tmp_dir / "v20-registry.yaml"
+        v20_file.write_text(v20_yaml)
+        result = get_registry_from_yaml_file(v20_file)
+        assert isinstance(result, RegistryRoot)
+        assert result.specification.version == "2.0"
 
     def test_get_registry_no_version_exits(self, tmp_dir):
         """Registry files without a version should exit immediately."""
@@ -220,6 +247,20 @@ class TestConvertContainersListToDict:
         result = convert_containers_list_to_dict(containers_list)
         assert result["net-container"].runtime_args == "-p 2222:2222 --cap-add=NET_ADMIN"
 
+    def test_container_build_options_set(self):
+        containers_list = [
+            {
+                "buildopts-container": {
+                    "image": "buildopts:latest",
+                    "file": "Dockerfile",
+                    "args": [],
+                    "build_options": "--network host --no-cache",
+                }
+            },
+        ]
+        result = convert_containers_list_to_dict(containers_list)
+        assert result["buildopts-container"].build_options == "--network host --no-cache"
+
     def test_container_volumes_default_empty(self):
         containers_list = [
             {"my-container": {"image": "my-image:latest", "file": "Dockerfile", "args": []}},
@@ -275,7 +316,7 @@ class TestConvertContainersListToDict:
         """Dict-format containers (parsed via dacite) should yield DockerVolume objects."""
         yaml_content = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   my-container:
     image: "my:latest"
@@ -302,6 +343,31 @@ registry:
         assert vols[0].read_only is False
         assert vols[1].host == "/host/ro"
         assert vols[1].read_only is True
+
+    def test_get_registry_list_format_build_options_preserved(self, tmp_dir):
+        """List-format containers should preserve `build_options` after conversion."""
+        yaml_content = """
+specification:
+  version: "2.1"
+containers:
+  - ubuntu-22.04:
+      file: Dockerfile.ubuntu
+      image: "advantech/bsp-registry/ubuntu-22.04/kas:5.2"
+      build_options: "--network host"
+      args:
+        - name: "DISTRO"
+          value: "ubuntu:22.04"
+registry:
+  devices: []
+  releases: []
+  features: []
+  bsp: []
+"""
+        reg_file = tmp_dir / "registry-list-containers.yaml"
+        reg_file.write_text(yaml_content)
+
+        result = get_registry_from_yaml_file(reg_file)
+        assert result.containers["ubuntu-22.04"].build_options == "--network host"
 
     def test_get_registry_distro_section(self, registry_with_distro_file):
         result = get_registry_from_yaml_file(registry_with_distro_file)
@@ -413,6 +479,157 @@ class TestBuildDocker:
         with pytest.raises(SystemExit):
             build_docker(str(tmp_path), "Dockerfile", "test:latest")
 
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_appended_before_context(self, mock_run, tmp_path):
+        """build_options tokens appear in the docker command before the build context '.'."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options="--no-cache --network host")
+
+        cmd = mock_run.call_args[0][0]
+        dot_index = cmd.index(".")
+        assert "--no-cache" in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--no-cache") < dot_index
+        assert cmd.index("--network") < dot_index
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_none_does_not_add_flags(self, mock_run, tmp_path):
+        """When build_options is None no extra tokens are inserted."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest", build_options=None)
+
+        cmd = mock_run.call_args[0][0]
+        # Standard flags only: docker build -f Dockerfile -t test-image:latest .
+        assert cmd == ["docker", "build", "-f", "Dockerfile", "-t", "test-image:latest", "."]
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_shell_quoting(self, mock_run, tmp_path):
+        """build_options respects shell quoting (quoted values with spaces stay together)."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options='--label "version=1 2"')
+
+        cmd = mock_run.call_args[0][0]
+        assert "--label" in cmd
+        assert "version=1 2" in cmd
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_network_equals_form_normalized(self, mock_run, tmp_path):
+        """`--network=host` in build_options is translated to `--network host` tokens."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(
+            dockerfile_dir,
+            "Dockerfile",
+            "test-image:latest",
+            build_options="--network=host",
+        )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--network=host" not in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--network") + 1 == cmd.index("host")
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_network_equals_via_env_expanded_and_normalized(
+        self, mock_run, tmp_path, monkeypatch
+    ):
+        """$ENV expansion keeps `--network=host` effective by normalizing to two tokens."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        monkeypatch.setenv("MY_DOCKER_BUILD_FLAGS", "--network=host")
+        build_docker(
+            dockerfile_dir,
+            "Dockerfile",
+            "test-image:latest",
+            build_options="$ENV{MY_DOCKER_BUILD_FLAGS}",
+        )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--network=host" not in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert cmd.index("--network") + 1 == cmd.index("host")
+
+    @patch("bsp.utils.subprocess.run")
+    def test_no_cache_appends_flag(self, mock_run, tmp_path):
+        """Passing build_options='--no-cache' adds --no-cache to the docker command."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options="--no-cache")
+
+        cmd = mock_run.call_args[0][0]
+        assert "--no-cache" in cmd
+
+    @patch("bsp.utils.subprocess.run")
+    def test_with_cache_no_flag(self, mock_run, tmp_path):
+        """Without build_options, --no-cache is absent from the docker command."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest")
+
+        cmd = mock_run.call_args[0][0]
+        assert "--no-cache" not in cmd
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_env_var_expanded(self, mock_run, tmp_path, monkeypatch):
+        """$ENV{VAR} placeholders in build_options are expanded before docker is called."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        monkeypatch.setenv("MY_DOCKER_BUILD_FLAGS", "--no-cache --network host")
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options="$ENV{MY_DOCKER_BUILD_FLAGS}")
+
+        cmd = mock_run.call_args[0][0]
+        assert "--no-cache" in cmd
+        assert "--network" in cmd
+        assert "host" in cmd
+
+    @patch("bsp.utils.subprocess.run")
+    def test_build_options_unset_env_var_preserved(self, mock_run, tmp_path, monkeypatch):
+        """An unset $ENV{VAR} reference is passed through as-is (not crashing)."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        dockerfile_dir = self._make_dockerfile_dir(tmp_path)
+
+        # Ensure the variable is unset
+        monkeypatch.delenv("_BSP_UNSET_VAR_", raising=False)
+        # Should not raise; the unexpanded token is passed verbatim to docker
+        build_docker(dockerfile_dir, "Dockerfile", "test-image:latest",
+                     build_options="$ENV{_BSP_UNSET_VAR_}")
+
+        assert mock_run.called
+
+
+class TestNormalizeBuildOptionTokens:
+    def test_network_equals_is_split_to_two_tokens(self):
+        tokens = normalize_build_option_tokens(["--network=host"])
+        assert tokens == ["--network", "host"]
+
+    def test_multiple_network_equals_tokens_are_all_normalized(self):
+        tokens = normalize_build_option_tokens(
+            ["--network=host", "--label", "x=1", "--network=none"]
+        )
+        assert tokens == ["--network", "host", "--label", "x=1", "--network", "none"]
+
+    def test_empty_network_value_is_preserved_after_normalization(self):
+        tokens = normalize_build_option_tokens(["--network="])
+        assert tokens == ["--network", ""]
+
 
 # =============================================================================
 # Tests for _deep_merge_yaml_dicts
@@ -504,7 +721,7 @@ class TestRegistryInclude:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
 registry:
@@ -526,7 +743,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - releases.yaml
 registry:
@@ -552,7 +769,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
 registry:
@@ -580,7 +797,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - devices.yaml
   - releases.yaml
@@ -606,7 +823,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - sub/devices.yaml
 registry:
@@ -648,7 +865,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - outer.yaml
 registry:
@@ -687,7 +904,7 @@ registry:
 
         main_yaml = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - a.yaml
 registry:
@@ -705,7 +922,7 @@ registry:
         """A missing include target causes SystemExit."""
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - nonexistent.yaml
 registry:
@@ -723,7 +940,7 @@ registry:
         """A non-list 'include' value causes SystemExit."""
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include: not-a-list
 registry:
   devices: []
@@ -755,7 +972,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - partial.yaml
 registry:
@@ -788,7 +1005,7 @@ registry:
 
         main_yaml = """
 specification:
-  version: "2.0"
+  version: "2.1"
 include:
   - containers.yaml
 containers:

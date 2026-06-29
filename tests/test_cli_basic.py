@@ -69,7 +69,7 @@ class TestMainCli:
         kas_file.write_text("header:\n  version: 14\nmachine: qemuarm64\n")
         registry_content = f"""
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   - ubuntu-22.04:
       image: "test/ubuntu-22.04:latest"
@@ -104,6 +104,91 @@ registry:
             with patch.object(KasManager, "export_kas_config", return_value="config: data"):
                 exit_code = bsp.main()
         assert exit_code == 0
+
+    def test_main_export_repo_manifest_preset(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp", "--repo-manifest"
+        ]):
+            with patch("bsp.BspManager.export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            bsp_name="test-bsp",
+            output_file=None,
+            repo_manifest=True,
+            lock=False,
+        )
+
+    def test_main_export_repo_manifest_components(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export",
+            "--device", "test-device", "--release", "test-release",
+            "--repo-manifest",
+        ]):
+            with patch("bsp.BspManager.export_by_components") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            "test-device",
+            "test-release",
+            [],
+            output_file=None,
+            repo_manifest=True,
+            lock=False,
+        )
+
+    def test_main_export_repo_manifest_with_output(self, registry_file, tmp_dir):
+        out = tmp_dir / "manifest.xml"
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp",
+            "--repo-manifest", "--output", str(out),
+        ]):
+            with patch("bsp.BspManager.export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_export.call_args
+        assert kwargs.get("output_file") == str(out)
+        assert kwargs.get("repo_manifest") is True
+        assert kwargs.get("lock") is False
+
+    def test_main_export_with_lock_preset(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp", "--lock"
+        ]):
+            with patch("bsp.BspManager.export_bsp_config") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            bsp_name="test-bsp",
+            output_file=None,
+            repo_manifest=False,
+            lock=True,
+        )
+
+    def test_main_export_with_lock_components(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export",
+            "--device", "test-device", "--release", "test-release", "--lock",
+        ]):
+            with patch("bsp.BspManager.export_by_components") as mock_export:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_export.assert_called_once_with(
+            "test-device",
+            "test-release",
+            [],
+            output_file=None,
+            repo_manifest=False,
+            lock=True,
+        )
+
+    def test_main_export_repo_manifest_rejects_preset_and_components_mix(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "export", "test-bsp",
+            "--repo-manifest", "--device", "test-device", "--release", "test-release",
+        ]):
+            exit_code = bsp.main()
+        assert exit_code != 0
 
     def test_main_tree_command(self, registry_file, capsys):
         with patch("sys.argv", ["bsp", "--registry", str(registry_file), "tree"]):
@@ -252,3 +337,180 @@ class TestBuildCommand:
         assert args[0] == "test-bsp"
         assert kwargs.get("checkout_only") is True
         assert kwargs.get("build_path_override") == custom_path
+
+
+class TestContainersCommand:
+    def test_containers_build_dispatches_to_manager(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "ubuntu-22.04"
+        ]):
+            with patch.object(BspManager, "build_containers") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            container_name="ubuntu-22.04", no_cache=False
+        )
+
+    def test_containers_build_no_cache_dispatches_to_manager(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "ubuntu-22.04", "--docker-no-cache"
+        ]):
+            with patch.object(BspManager, "build_containers") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            container_name="ubuntu-22.04", no_cache=True
+        )
+
+    def test_containers_build_all_when_no_name(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build"
+        ]):
+            with patch.object(BspManager, "build_containers") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            container_name=None, no_cache=False
+        )
+
+    def test_containers_build_all_no_cache(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "build", "--docker-no-cache"
+        ]):
+            with patch.object(BspManager, "build_containers") as mock_build:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_build.assert_called_once_with(
+            container_name=None, no_cache=True
+        )
+
+    def test_containers_no_action_lists(self, registry_file, capsys):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers"
+        ]):
+            exit_code = bsp.main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "ubuntu-22.04" in captured.out
+
+    def test_containers_list_explicit(self, registry_file, capsys):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "containers", "list"
+        ]):
+            exit_code = bsp.main()
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "ubuntu-22.04" in captured.out
+
+
+class TestBuildNoCacheFlag:
+    def test_bsp_build_no_cache_passes_docker_build_options(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp", "--docker-no-cache"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_build_bsp.call_args
+        assert kwargs.get("docker_build_options") is not None
+        import shlex
+        assert "--no-cache" in shlex.split(kwargs["docker_build_options"])
+
+    def test_bsp_build_no_cache_combined_with_docker_build_options(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "build", "test-bsp",
+            "--docker-no-cache", "--docker-build-options", "--network host"
+        ]):
+            with patch.object(BspManager, "build_bsp") as mock_build_bsp:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_build_bsp.call_args
+        opts = kwargs.get("docker_build_options") or ""
+        import shlex
+        tokens = shlex.split(opts)
+        assert "--no-cache" in tokens
+        assert "--network" in tokens
+        assert "host" in tokens
+
+class TestFetchCommand:
+    def test_fetch_target_passed_to_fetch_bsp(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "fetch", "test-bsp", "--target", "my-image"
+        ]):
+            with patch("bsp.BspManager.fetch_bsp") as mock_fetch:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_fetch.assert_called_once()
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("target") == "my-image"
+
+    def test_fetch_by_components_passes_target_and_path(self, registry_file, tmp_dir):
+        custom_path = str(tmp_dir / "fetch-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "fetch", "--device", "test-device", "--release", "test-release",
+            "--target", "core-image-minimal", "--path", custom_path
+        ]):
+            with patch("bsp.BspManager.fetch_by_components") as mock_fetch:
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_fetch.assert_called_once()
+        _, kwargs = mock_fetch.call_args
+        assert kwargs.get("target") == "core-image-minimal"
+        assert kwargs.get("build_path_override") == custom_path
+
+
+class TestShellCommand:
+    def test_shell_path_forwarded_to_shell_into_bsp(self, registry_file, tmp_dir):
+        """--path argument is forwarded to shell_into_bsp() as build_path_override."""
+        custom_path = str(tmp_dir / "my-shell-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "--path", custom_path, "test-bsp"
+        ]):
+            with patch.object(BspManager, "shell_into_bsp") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_shell.assert_called_once()
+        args, kwargs = mock_shell.call_args
+        assert kwargs.get("bsp_name") == "test-bsp"
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_path_forwarded_to_shell_by_components(self, registry_file, tmp_dir):
+        """--path argument is forwarded to shell_by_components() as build_path_override."""
+        custom_path = str(tmp_dir / "my-shell-build")
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "--device", "test-device", "--release", "test-release",
+            "--path", custom_path
+        ]):
+            with patch.object(BspManager, "shell_by_components") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        mock_shell.assert_called_once()
+        _, kwargs = mock_shell.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_no_path_defaults_to_none(self, registry_file):
+        """When --path is not given, build_path_override is None."""
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file),
+            "shell", "test-bsp"
+        ]):
+            with patch.object(BspManager, "shell_into_bsp") as mock_shell:
+                mock_shell.return_value = None
+                exit_code = bsp.main()
+        assert exit_code == 0
+        _, kwargs = mock_shell.call_args
+        assert kwargs.get("build_path_override") is None

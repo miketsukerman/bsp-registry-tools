@@ -1,12 +1,12 @@
-# BSP Registry Schema v2.0
+# BSP Registry Schema v2.2
 
-This document describes the v2.0 registry YAML schema used by `bsp-registry-tools`.
+This document describes the v2.2 registry YAML schema used by `bsp-registry-tools`.
 
 ---
 
 ## Overview
 
-Schema v2.0 separates the registry into independent sections:
+Schema v2.2 separates the registry into independent sections:
 
 | Section        | Purpose                                                       |
 |----------------|---------------------------------------------------------------|
@@ -19,6 +19,7 @@ Schema v2.0 separates the registry into independent sections:
 | `vendors`      | Optional top-level vendor definitions (cross-release vendor KAS includes) |
 | `include`      | Optional list of additional registry files to merge in        |
 | `deploy`       | Optional cloud deployment configuration (Azure / AWS)         |
+| `flash`        | Optional SD-card / block-device flashing configuration        |
 
 Builds can be driven either by a **named preset** (`bsp build my-preset`) or by
 composing components directly (`bsp build --device <d> --release <r>`).
@@ -33,7 +34,7 @@ the root file's own content is applied.
 
 ```yaml
 specification:
-  version: "2.0"          # required
+  version: "2.2"          # required
 
 include:                  # optional – list of additional registry files to merge in
   - devices/boards.yaml
@@ -84,10 +85,10 @@ deploy:                   # optional – global cloud deployment configuration
 
 ```yaml
 specification:
-  version: "2.0"
+  version: "2.2"
 ```
 
-The tool will exit with a clear error if `version` is not `"2.0"`.
+The tool will exit with a clear error if `version` is not compatible.  The schema follows [semantic versioning](https://semver.org/): the tool accepts any registry whose `version` has the same major number and a minor number ≤ `2.2` (e.g., `"2.0"`, `"2.1"`, and `"2.2"` are accepted).
 
 ---
 
@@ -101,7 +102,7 @@ is applied, so entries in the including file always take precedence.
 ```yaml
 # registry.yaml  ← main file (must contain specification)
 specification:
-  version: "2.0"
+  version: "2.2"
 
 include:
   - devices/boards.yaml      # relative to the directory of this file
@@ -222,13 +223,14 @@ containers:
 
 ### `containers[*]` fields
 
-| Field           | Type          | Description                                                    |
-|-----------------|---------------|----------------------------------------------------------------|
-| `image`         | string (opt.) | Docker image to use at runtime                                 |
-| `file`          | string (opt.) | Path to Dockerfile for `docker build`                          |
-| `args`          | list          | Docker build arguments (`name`/`value` pairs)                  |
-| `runtime_args`  | string (opt.) | Extra flags appended to the container engine `run` invocation. Forwarded to `kas-container` via `--runtime-args`. Useful for port-forwarding, device access (`--device`), or capability grants (`--cap-add`). |
-| `volumes`       | list (opt.)   | List of host-to-container directory mappings. Each entry is converted to a `-v host:container[:ro]` flag passed via `--runtime-args`. Host paths support `$ENV{VAR}` expansion. |
+| Field             | Type          | Description                                                    |
+|-------------------|---------------|----------------------------------------------------------------|
+| `image`           | string (opt.) | Docker image to use at runtime                                 |
+| `file`            | string (opt.) | Path to Dockerfile for `docker build`                          |
+| `args`            | list          | Docker build arguments (`name`/`value` pairs)                  |
+| `build_options`   | string (opt.) | Extra flags for the `docker build` command, parsed with shell quoting rules and appended before the build context (e.g. `--no-cache --network host`). Supports `$ENV{VAR}` expansion at build time (e.g. `$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}`). Can be overridden per-invocation with the CLI flag `--docker-build-options`. |
+| `runtime_args`    | string (opt.) | Extra flags appended to the container engine `run` invocation. Forwarded to `kas-container` via `--runtime-args`. Useful for port-forwarding, device access (`--device`), or capability grants (`--cap-add`). |
+| `volumes`         | list (opt.)   | List of host-to-container directory mappings. Each entry is converted to a `-v host:container[:ro]` flag passed via `--runtime-args`. Host paths support `$ENV{VAR}` expansion. |
 
 ### `containers[*].volumes[*]` fields
 
@@ -453,7 +455,7 @@ registry:
 | `local_conf` | list[str]            | Lines appended to `local.conf` for this device                              |
 | `copy`       | list[dict[str, str]] | Files to copy into the build environment before the build starts. Each entry is a single-key dict `{"source": "destination"}`. The source is resolved relative to the registry file's parent directory. The destination is resolved relative to the BSP's build directory, so `scripts/` means a `scripts/` subdirectory *inside* the BSP output folder (e.g. `build/my-bsp/scripts/`). If the destination ends with `/` or is an existing directory, the source filename is preserved. |
 
-> **Note on build output path and container:** In v2.0 the container and output path are **optional** preset-level overrides configured in the preset's `build:` block (see [`registry.bsp`](#registrybsp-optional-presets) below).  When `build:` is absent, or when individual fields are omitted, the container falls back to the release's named environment (or `"default"`), and the path is auto-composed as `build/<distro>-<device>-<release>`.  New registries should use the flat `includes`/`local_conf`/`copy` fields directly on the device instead of the legacy `device.build:` nested block.
+> **Note on build output path and container:** In v2.2 the container and output path are **optional** preset-level overrides configured in the preset's `build:` block (see [`registry.bsp`](#registrybsp-optional-presets) below).  When `build:` is absent, or when individual fields are omitted, the container falls back to the release's named environment (or `"default"`), and the path is auto-composed as `build/<distro>-<device>-<release>`.  New registries should use the flat `includes`/`local_conf`/`copy` fields directly on the device instead of the legacy `device.build:` nested block.
 
 ---
 
@@ -1346,7 +1348,7 @@ files.
 
 ```yaml
 specification:
-  version: "2.0"
+  version: "2.2"
 
 # Global environment: variables and file copies applied to every build
 environment:
@@ -1603,6 +1605,14 @@ deploy:
   # archive:
   #   name: "firmware-{device}-{release}-{date}"
   #   format: tar.gz
+
+  # Optional: upload Yocto DL_DIR / SSTATE_DIR caches (opt-in, disabled by default)
+  # yocto_cache:
+  #   enabled: true
+  #   downloads: true          # upload DL_DIR
+  #   sstate: true             # upload SSTATE_DIR
+  #   downloads_path: /mnt/yocto/downloads   # override DL_DIR location
+  #   sstate_path: /mnt/yocto/sstate         # override SSTATE_DIR location
 ```
 
 ### `deploy` fields
@@ -1620,6 +1630,7 @@ deploy:
 | `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [ArchiveConfig](#archiveconfig) below. |
 | `region`           | string (opt.) | —       | AWS region (boto3 default if omitted) |
 | `profile`          | string (opt.) | —       | AWS credentials profile name |
+| `yocto_cache`      | object (opt.) | —       | Upload / restore Yocto DL_DIR / SSTATE_DIR caches. See [YoctoCacheConfig](#yoctocacheconfig) below. |
 
 **Default `patterns`:**
 
@@ -1659,6 +1670,48 @@ deploy:
 | `format` | string | `"tar.gz"`                    | Compression format: `tar.gz`, `tar.bz2`, `tar.xz`, or `zip`. |
 
 The appropriate extension is appended automatically.
+
+### YoctoCacheConfig
+
+When a `yocto_cache:` block is present and `enabled: true`, the tool also packs
+the Yocto download cache (`DL_DIR`) and/or the shared-state cache (`SSTATE_DIR`)
+into `tar.gz` archives and uploads them under `{prefix}/cache/`:
+
+```
+{prefix}/cache/downloads.tar.gz
+{prefix}/cache/sstate.tar.gz
+```
+
+Cache metadata is stored in the `yocto_cache` section of `manifest.json` so
+`bsp gather --gather-cache` can locate the archives without guessing.
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  yocto_cache:
+    enabled: true          # required — disabled by default
+    downloads: true        # include DL_DIR (default: true)
+    sstate: true           # include SSTATE_DIR (default: true)
+    # Optionally hard-code paths instead of relying on DL_DIR / SSTATE_DIR env vars
+    # downloads_path: /mnt/yocto/downloads
+    # sstate_path: /mnt/yocto/sstate
+```
+
+| Field            | Type          | Default | Description |
+|------------------|---------------|---------|-------------|
+| `enabled`        | bool          | `false` | Master switch. Set to `true` to upload Yocto caches. |
+| `downloads`      | bool          | `true`  | Include the `DL_DIR` downloads cache in the upload / restore. |
+| `sstate`         | bool          | `true`  | Include the `SSTATE_DIR` shared-state cache in the upload / restore. |
+| `downloads_path` | string (opt.) | —       | Override the local `DL_DIR` path. Falls back to `DL_DIR`, then `<topdir>/downloads` (TOPDIR inferred from `artifact_dirs`) when omitted. |
+| `sstate_path`    | string (opt.) | —       | Override the local `SSTATE_DIR` path. Falls back to `SSTATE_DIR`, then `<topdir>/sstate-cache` (TOPDIR inferred from `artifact_dirs`) when omitted. |
+
+Cache upload is **opt-in** and backward-compatible: omitting the `yocto_cache:`
+block (or setting `enabled: false`) leaves the existing artifact deployment
+pipeline completely unchanged.
+
+CLI flags for cache upload/restore are documented in
+[`docs/artifact-deployment.md`](artifact-deployment.md#yocto-cache-upload).
 
 ### Preset-level `deploy` override
 
@@ -1741,6 +1794,89 @@ registry:
 
 ---
 
+## `flash` (optional)
+
+Top-level SD-card / block-device flashing configuration that applies to every
+build.  A `BspPreset` can also include a `flash:` block to **override** specific
+fields for that preset.
+
+Flashing is triggered explicitly via `bsp flash` or automatically after a
+successful build when `bsp build --flash /dev/sdX` is used.  `--dry-run` shows
+what would be flashed without requiring a real device or `bmaptool` to be
+installed. Non-dry-run flashing runs with superuser rights (`sudo` when not
+already root).
+
+```yaml
+flash:
+  tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
+  image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/{build_target}-*.wic.*" # expanded at runtime when --target is given (first priority)
+    - "**/*.wic.bz2"              # most-compressed variant tried first
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic"
+    - "**/*.sdimg"
+    - "**/*.rpi-sdimg"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  extra_args: null                # extra CLI args forwarded verbatim to the tool
+```
+
+### `flash` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (block-map-accelerated, verified), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
+| `image_patterns` | list[str] | See above | Glob patterns for image discovery, evaluated in order; first match wins. Patterns may contain `{build_target}` which is expanded to the BitBake target name when `--target` is provided; the exact target pattern `**/<target>.wic.*` is also prepended automatically as the highest-priority entry. See [docs/sd-card-flashing.md](sd-card-flashing.md) for a worked example. |
+| `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
+| `extra_args` | string (opt.) | `null` | Additional CLI arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
+
+### Preset-level `flash` override
+
+A `BspPreset` can include its own `flash:` block to override specific global
+flash settings for that preset.
+
+**Merge order** (later entries win):
+
+1. **Global `flash:`** — baseline defaults
+2. **Preset `flash:`** — only fields that differ from their `FlashConfig`
+   defaults are applied.  Omitting a field keeps the global value.
+3. **CLI flags** (`--tool`, `--image-pattern`, `--extra-args`, …) — highest priority.
+
+```yaml
+flash:                            # global: bmaptool
+  tool: bmaptool
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: imx8mp-adv-scarthgap
+      description: "Advantech i.MX8MP Scarthgap"
+      device: imx8mp-adv
+      release: scarthgap
+
+    # Skips block-map verification for this board.
+    - name: rpi4-scarthgap
+      description: "Raspberry Pi 4 Scarthgap"
+      device: rpi4
+      release: scarthgap
+      flash:
+        extra_args: "--nobmap"   # ← override: skip .bmap even when present
+
+    # Uses dd instead of bmaptool.
+    - name: legacy-board-scarthgap
+      description: "Legacy Board (no bmap-tools)"
+      device: legacy-board
+      release: scarthgap
+      flash:
+        tool: dd                 # ← override: switch to dd
+```
+
+> See [docs/sd-card-flashing.md](sd-card-flashing.md) for a complete walk-through
+> including image discovery details, bmap handling, and Python API examples.
+
+---
+
 ## CLI Examples
 
 ```bash
@@ -1809,6 +1945,18 @@ bsp deploy imx8mp-adv-scarthgap --provider aws --bucket my-s3-bucket --prefix "r
 
 # Deploy by components with a custom pattern
 bsp deploy --device qemuarm64 --release scarthgap --pattern "**/*.wic.gz"
+
+# Flash a built image to an SD card
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb
+
+# Build and flash in one step
+bsp build imx8mp-adv-scarthgap --flash /dev/sdb
+
+# Dry-run flash (no device required)
+bsp flash imx8mp-adv-scarthgap --dry-run
+
+# Flash by components
+bsp flash --device imx8mp-adv --release scarthgap --target /dev/sdb
 
 # Display registry hierarchy (default detail level)
 bsp tree
@@ -1980,4 +2128,3 @@ line when they are set on the preset:
 Available BSP presets:
 - adv-imx8-scarthgap: Advantech i.MX8 Scarthgap (device: adv-imx8, release: scarthgap, vendor_release: imx-6.6.53)
 ```
-

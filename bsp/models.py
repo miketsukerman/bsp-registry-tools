@@ -1,5 +1,5 @@
 """
-Configuration data classes for BSP registry definitions (schema v2.0).
+Configuration data classes for BSP registry definitions (schema v2.2).
 """
 
 from dataclasses import dataclass, field
@@ -79,6 +79,11 @@ class Docker:
                       ``run`` command (e.g. ``-p 2222:2222
                       --device=/dev/net/tun --cap-add=NET_ADMIN``).
                       Passed to kas-container via ``--runtime-args``.
+        build_options: Extra flags appended to the ``docker build`` command
+                       (e.g. ``--no-cache --network host``).  The value is
+                       split with shell quoting rules so flags with embedded
+                       spaces can be quoted.  CLI ``--docker-build-options``
+                       overrides this field when provided.
         privileged: Run container in privileged mode (enables --isar for kas-container)
         copy: List of ``{source: destination}`` file-copy entries executed
               before every build that uses this container.  Both paths are
@@ -96,6 +101,7 @@ class Docker:
     file: Optional[str]
     args: List[DockerArg] = field(default_factory=empty_list)
     runtime_args: Optional[str] = None
+    build_options: Optional[str] = None
     privileged: bool = False
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     volumes: List[DockerVolume] = field(default_factory=empty_list)
@@ -107,13 +113,15 @@ class Specification:
     Registry specification version.
 
     Attributes:
-        version: Specification version string (e.g., '2.0')
+        version: Specification version string (e.g., '2.0', '2.2').
+                 Schema follows semver; the tool accepts any version with the
+                 same major number and a minor number ≤ the supported version.
     """
     version: str
 
 
 # =============================================================================
-# v2.0 Data Classes
+# v2.2 Data Classes
 # =============================================================================
 
 @dataclass
@@ -625,6 +633,154 @@ class Feature:
 
 
 @dataclass
+class ScanConfig:
+    """
+    CRA (Cyber Resilience Act) image scanning configuration.
+
+    A ``ScanConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        tool: Scanner backend to use.  Supported values: ``"trivy"``
+              (default), ``"syft+grype"``, ``"emba"``.
+        severity: Minimum CVE severity to include in the report.
+                  Supported values (inclusive): ``"LOW"``, ``"MEDIUM"``,
+                  ``"HIGH"`` (default), ``"CRITICAL"``.
+        fail_on: Minimum severity that triggers a non-zero exit code.
+                 Supported values: ``"NONE"`` (never fail), ``"LOW"``,
+                 ``"MEDIUM"``, ``"HIGH"``, ``"CRITICAL"`` (default).
+        sbom_format: SBOM output format.  Supported values:
+                     ``"cyclonedx"`` (default), ``"spdx-json"``,
+                     ``"spdx-tag-value"``.
+        output_dir: Directory to write scan reports and SBOMs into.
+                    Defaults to ``"reports"`` relative to the build path
+                    when ``None``.
+        artifact_patterns: Glob patterns (relative to each artifact
+                           directory) that select image files to scan.
+                           Defaults to common Yocto image formats.
+        artifact_dirs: Subdirectories under the build output path to
+                       search for artifacts.  Mirrors
+                       :attr:`DeployConfig.artifact_dirs`.
+        upload: When ``True``, upload scan reports to the same cloud
+                storage as ``deploy`` (uses the active ``DeployConfig``).
+                Default: ``False``.
+        trivy_os_family: Override Trivy's OS-family detection.  Yocto
+                         images often lack the standard ``/etc/os-release``
+                         markers that Trivy uses to identify the
+                         distribution and activate OS-package analyzers
+                         (dpkg, rpm, apk).  Without this override, Trivy
+                         skips OS-package scanning and the SBOM is empty
+                         even when ``/var/lib/dpkg/status`` is present.
+                         The scanner auto-infers this value from the
+                         package database found in the rootfs (``"debian"``
+                         for dpkg, ``"alpine"`` for apk, ``"centos"`` for
+                         rpm); set it explicitly only to override the
+                         inferred value.  Example: ``"debian"``.
+        trivy_os_version: Override Trivy's OS-version detection.  Only
+                          needed together with ``trivy_os_family`` when
+                          Trivy's CVE-to-package mapping requires a specific
+                          distribution version.  Example: ``"12"``.
+        emba_path: Path to the EMBA installation directory (the directory
+                   containing the ``emba`` script).  Required when
+                   ``tool: emba``; EMBA is not available as a ``$PATH``
+                   tool.  Example: ``"/opt/emba"``.
+        emba_profile: Path to an EMBA scan profile file (``*.emba``).
+                      When ``None``, EMBA runs with its built-in defaults.
+                      Use EMBA's bundled profiles such as
+                      ``scan-profiles/default-scan.emba`` for a balanced
+                      run.  Example: ``"/opt/emba/scan-profiles/default-scan.emba"``.
+        emba_extra_args: Additional command-line arguments forwarded
+                         verbatim to EMBA (e.g. ``"-t"`` for multi-thread
+                         mode or ``"-Y vendor-name"``).  Arguments are
+                         split by whitespace.  Default: ``None``.
+        emba_timeout_minutes: Maximum number of minutes to wait for an
+                              EMBA scan to complete before aborting with
+                              an error.  EMBA full scans can take
+                              15–60+ minutes.  Default: ``120``.
+        emba_use_sudo: Run EMBA under ``sudo``.  Some EMBA modules
+                       (QEMU emulation, bind mounts) require root
+                       privileges.  Default: ``False``.
+        emba_no_docker: Pass the ``-D`` flag to EMBA, which disables
+                        EMBA's built-in Docker wrapper and runs all
+                        modules directly on the host.  Required in CI
+                        environments that cannot run nested Docker
+                        containers.  Default: ``False``.
+    """
+    tool: str = "trivy"
+    severity: str = "HIGH"
+    fail_on: str = "CRITICAL"
+    sbom_format: str = "cyclonedx"
+    output_dir: Optional[str] = None
+    artifact_patterns: List[str] = field(default_factory=lambda: [
+        "**/*.rootfs.tar.gz",
+        "**/*.rootfs.tar.bz2",
+        "**/*.tar.gz",
+        "**/*.tar.bz2",
+        "**/*.ext4",
+        "**/*.sdimg",
+        "**/*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+    ])
+    upload: bool = False
+    trivy_os_family: Optional[str] = None
+    trivy_os_version: Optional[str] = None
+    emba_path: Optional[str] = None
+    emba_profile: Optional[str] = None
+    emba_extra_args: Optional[str] = None
+    emba_timeout_minutes: int = 120
+    emba_use_sudo: bool = False
+    emba_no_docker: bool = False
+
+
+@dataclass
+class FlashConfig:
+    """
+    SD-card / block-device flashing configuration via bmap-tools, dd, or uuu.
+
+    A ``FlashConfig`` block can appear at the root level of the registry
+    (applies to every build) or on an individual ``BspPreset`` (overrides
+    the root-level config for that preset).
+
+    Attributes:
+        image_patterns: Glob patterns (relative to each artifact directory)
+                        used to discover flashable image files.  Patterns are
+                        evaluated in order; the first matching file is used.
+                        Defaults to common Yocto WIC / SD-card image formats,
+                        ordered from most- to least-preferred compressed
+                        variants.
+        artifact_dirs: Subdirectories under the build output path to search
+                       for flashable image files.  Mirrors
+                       :attr:`ScanConfig.artifact_dirs`.
+        tool: Flash tool to invoke.  Supported values: ``"bmaptool"``
+               (default) — uses ``bmaptool copy`` which automatically locates
+               and uses the accompanying ``.bmap`` block-map file for fast,
+               verified flashing.  Pass ``"dd"`` as an alternative for
+               environments where bmap-tools is not available (no block-map
+               acceleration), or ``"uuu"`` for NXP USB update flows.
+        extra_args: Additional command-line arguments forwarded verbatim to
+                    the flash tool (e.g. ``"--nobmap"`` to skip the block-map
+                    file even when one is present).  Arguments are split on
+                    whitespace.  Default: ``None``.
+    """
+    image_patterns: List[str] = field(default_factory=lambda: [
+        "**/*.wic.bz2",
+        "**/*.wic.gz",
+        "**/*.wic.xz",
+        "**/*.wic",
+        "**/*.sdimg",
+        "**/*.rpi-sdimg",
+    ])
+    artifact_dirs: List[str] = field(default_factory=lambda: [
+        "tmp/deploy/images",
+    ])
+    tool: str = "bmaptool"
+    extra_args: Optional[str] = None
+
+
+@dataclass
 class LavaServerConfig:
     """
     LAVA server connection settings (top-level ``lava:`` block in the registry).
@@ -820,12 +976,14 @@ class BspPreset:
     build: Optional[BspBuild] = None
     deploy: Optional["DeployConfig"] = None
     testing: Optional[TestingConfig] = None
+    scan: Optional["ScanConfig"] = None
+    flash: Optional["FlashConfig"] = None
 
 
 @dataclass
 class Registry:
     """
-    Main v2.0 registry containing devices, releases, features, distros, and presets.
+    Main v2.2 registry containing devices, releases, features, distros, and presets.
 
     Attributes:
         devices: List of hardware device definitions
@@ -846,6 +1004,45 @@ class Registry:
     frameworks: List[Framework] = field(default_factory=empty_list)
     distro: List[Distro] = field(default_factory=empty_list)
     vendors: List[Vendor] = field(default_factory=empty_list)
+
+
+@dataclass
+class YoctoCacheConfig:
+    """
+    Configuration for uploading and restoring Yocto build caches alongside
+    regular build artifacts.
+
+    Supported caches:
+
+    * **downloads** – Yocto source download cache (``DL_DIR``).
+    * **sstate** – Shared-state cache (``SSTATE_DIR``).
+
+    Each enabled cache directory is packed into a compressed ``tar.gz`` archive
+    and uploaded to ``{prefix}/cache/downloads.tar.gz`` or
+    ``{prefix}/cache/sstate.tar.gz`` respectively.  The ``bsp gather
+    --gather-cache`` command downloads and extracts those archives back to the
+    configured local directories.
+
+    Attributes:
+        enabled: Master switch.  When ``False`` (default) neither upload nor
+                 restore is attempted even when this block is present.
+        downloads: When ``True`` (default), include the ``DL_DIR`` download
+                   cache in the upload / restore.
+        sstate: When ``True`` (default), include the ``SSTATE_DIR`` shared-state
+                cache in the upload / restore.
+        downloads_path: Override the local ``DL_DIR`` path.  When ``None``
+                        (default) the path is taken from the ``DL_DIR``
+                        environment variable resolved by the
+                        :class:`~bsp.environment.EnvironmentManager`.
+        sstate_path: Override the local ``SSTATE_DIR`` path.  When ``None``
+                     (default) the path is taken from the ``SSTATE_DIR``
+                     environment variable.
+    """
+    enabled: bool = False
+    downloads: bool = True
+    sstate: bool = True
+    downloads_path: Optional[str] = None
+    sstate_path: Optional[str] = None
 
 
 @dataclass
@@ -914,6 +1111,10 @@ class DeployConfig:
                  individually.
         region: AWS region override (``"aws"`` provider only).
         profile: AWS credential profile name (``"aws"`` provider only).
+        yocto_cache: Optional configuration for uploading / restoring Yocto
+                     build caches (``DL_DIR`` / ``SSTATE_DIR``).  When
+                     ``None`` (default) or ``enabled: false`` cache handling
+                     is skipped entirely, preserving backward compatibility.
     """
     provider: str = "azure"
     container: Optional[str] = None
@@ -939,15 +1140,16 @@ class DeployConfig:
     archive: Optional["ArchiveConfig"] = None
     region: Optional[str] = None
     profile: Optional[str] = None
+    yocto_cache: Optional["YoctoCacheConfig"] = None
 
 
 @dataclass
 class RegistryRoot:
     """
-    Root container for the v2.0 registry configuration.
+    Root container for the v2.2 registry configuration.
 
     Attributes:
-        specification: Specification version information (must be '2.0')
+        specification: Specification version information (must be '2.0' – '2.2')
         registry: Main registry data containing devices, releases, features, and presets
         containers: Dictionary of Docker container definitions keyed by name
         environment: Global environment applied to every build.  Contains
@@ -963,6 +1165,8 @@ class RegistryRoot:
         lava: Optional top-level LAVA server connection settings shared across
               all presets in this registry.  Individual preset ``testing.lava``
               blocks inherit these settings and can override them on the CLI.
+        scan: Optional global CRA image scanning configuration.  Applied to
+              all builds unless overridden by a preset-level ``scan`` block.
     """
     specification: Specification
     registry: Registry
@@ -971,3 +1175,5 @@ class RegistryRoot:
     environments: Optional[Dict[str, NamedEnvironment]] = field(default_factory=empty_dict)
     deploy: Optional[DeployConfig] = None
     lava: Optional[LavaServerConfig] = None
+    scan: Optional[ScanConfig] = None
+    flash: Optional[FlashConfig] = None

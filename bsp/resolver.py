@@ -18,10 +18,12 @@ from .models import (
     Docker,
     EnvironmentVariable,
     Feature,
+    FlashConfig,
     Framework,
     NamedEnvironment,
     Release,
     RegistryRoot,
+    ScanConfig,
     SocVendorOverride,
     Vendor,
     VendorOverride,
@@ -58,6 +60,18 @@ class ResolvedConfig:
         targets: List of Bitbake build targets (images/recipes) to pass to
                  KAS.  Populated from ``BspPreset.targets`` during
                  ``resolve_preset()``; empty when resolving without a preset.
+        scan_config: Optional CRA image scanning configuration resolved for
+                     this build.  Populated from the preset's ``scan`` block
+                     (if present) during ``resolve_preset()``; ``None`` when
+                     resolving without a preset or when no ``scan`` block is
+                     configured.
+        resolved_vendor_release: Effective vendor-release slug selected by the
+                                 resolver (explicit or auto-selected). ``None``
+                                 when no vendor-release applies.
+        resolved_override: Effective vendor-override identifier selected by the
+                           resolver (explicit/auto-selected slug, or vendor
+                           name when the matching override has no slug).
+                           ``None`` when no override applies.
     """
     device: Device
     release: Release
@@ -70,6 +84,10 @@ class ResolvedConfig:
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     effective_distro: Optional[str] = None
     targets: List[str] = field(default_factory=empty_list)
+    scan_config: Optional[ScanConfig] = None
+    flash_config: Optional[FlashConfig] = None
+    resolved_vendor_release: Optional[str] = None
+    resolved_override: Optional[str] = None
 
 
 # =============================================================================
@@ -785,6 +803,12 @@ class V2Resolver:
         )
         merged_copy = global_copy + named_env_copy + container_copy + list(device_copy)
 
+        resolved_override_id = (
+            override_slug
+            if override_slug is not None
+            else (active_vendor_override.vendor if active_vendor_override else None)
+        )
+
         return ResolvedConfig(
             device=device,
             release=release,
@@ -796,6 +820,8 @@ class V2Resolver:
             env=env,
             copy=merged_copy,
             effective_distro=effective_distro_slug,
+            resolved_vendor_release=vendor_release_slug,
+            resolved_override=resolved_override_id,
         )
 
     def _compose_build_path(self, resolved: ResolvedConfig) -> str:
@@ -906,6 +932,8 @@ class V2Resolver:
                     build=expanded_build,
                     deploy=preset.deploy,
                     testing=preset.testing,
+                    scan=preset.scan,
+                    flash=preset.flash,
                 )
             )
         return expanded
@@ -929,6 +957,8 @@ class V2Resolver:
         self,
         preset_name: str,
         extra_feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug_override: Optional[str] = None,
+        override_slug_override: Optional[str] = None,
     ) -> Tuple[ResolvedConfig, BspPreset]:
         """
         Resolve a named BSP preset to a ResolvedConfig.
@@ -955,6 +985,10 @@ class V2Resolver:
             preset_name: Name of the preset in registry.bsp
             extra_feature_slugs: Additional feature slugs to enable on top of
                 those already listed in the preset definition.
+            vendor_release_slug_override: Optional vendor sub-release slug that,
+                when set, overrides the preset's ``vendor_release`` value.
+            override_slug_override: Optional vendor override slug that, when set,
+                overrides the preset's ``override`` value.
 
         Returns:
             Tuple of (ResolvedConfig, BspPreset)
@@ -985,8 +1019,16 @@ class V2Resolver:
 
         resolved = self.resolve(
             preset.device, preset.release, preset_features,
-            vendor_release_slug=preset.vendor_release,
-            override_slug=preset.override,
+            vendor_release_slug=(
+                vendor_release_slug_override
+                if vendor_release_slug_override is not None
+                else preset.vendor_release
+            ),
+            override_slug=(
+                override_slug_override
+                if override_slug_override is not None
+                else preset.override
+            ),
         )
 
         # Apply preset build overrides
@@ -1098,6 +1140,14 @@ class V2Resolver:
         # Apply preset-level targets.
         if preset.targets:
             resolved.targets = list(preset.targets)
+
+        # Apply preset-level scan config (preset overrides registry root).
+        # The merge follows the same pattern as `deploy`: preset fields that
+        # differ from their defaults override the root-level config.
+        resolved.scan_config = preset.scan if preset.scan is not None else getattr(self.model, "scan", None)
+
+        # Apply preset-level flash config (same pattern as scan_config).
+        resolved.flash_config = preset.flash if preset.flash is not None else getattr(self.model, "flash", None)
 
         return resolved, preset
 

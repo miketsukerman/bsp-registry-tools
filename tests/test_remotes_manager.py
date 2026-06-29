@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from bsp.remotes_manager import RemotesManager, RemoteEntry, DEFAULT_REMOTES_CONFIG
+from bsp.remotes_manager import RemotesManager, RemoteEntry
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +67,30 @@ class TestRemotesManagerLoad:
         entries = mgr.load()
         assert len(entries) == 1
         assert entries[0].name == "good"
+
+
+class TestRemotesManagerEnsureDefault:
+    def test_bootstraps_default_remote_when_empty(self, tmp_path):
+        from bsp.registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
+        from bsp.remotes_manager import DEFAULT_REMOTE_NAME
+
+        mgr = RemotesManager(config_path=tmp_path / "missing.yaml")
+        entries = mgr.ensure_default_remote()
+        assert len(entries) == 1
+        assert entries[0].name == DEFAULT_REMOTE_NAME
+        assert entries[0].url == DEFAULT_REMOTE_URL
+        assert entries[0].branch == DEFAULT_BRANCH
+
+    def test_bootstraps_default_remote_with_requested_branch(self, tmp_path):
+        from bsp.registry_fetcher import DEFAULT_REMOTE_URL
+        from bsp.remotes_manager import DEFAULT_REMOTE_NAME
+
+        mgr = RemotesManager(config_path=tmp_path / "missing.yaml")
+        entries = mgr.ensure_default_remote(branch="dev")
+        assert len(entries) == 1
+        assert entries[0].name == DEFAULT_REMOTE_NAME
+        assert entries[0].url == DEFAULT_REMOTE_URL
+        assert entries[0].branch == "dev"
 
 
 class TestRemotesManagerAdd:
@@ -208,14 +232,14 @@ class TestRemotesCliList:
         out = capsys.readouterr().out
         assert "https://example.com/r.git" in out
 
-    def test_list_empty_prints_help(self, remotes_config, capsys):
+    def test_list_empty_bootstraps_default_remote(self, remotes_config, capsys):
         import bsp
         with patch("sys.argv", ["bsp", "remotes"]):
             with patch.dict(os.environ, {"BSP_REMOTES_CONFIG": str(remotes_config)}):
                 exit_code = bsp.main()
         assert exit_code == 0
         out = capsys.readouterr().out
-        assert "no remotes" in out or "bsp remotes add" in out
+        assert "advantech-europe" in out
 
 
 class TestRemotesCliRemove:
@@ -268,8 +292,8 @@ class TestRemotesCliShow:
 class TestRemotesIntegrationWithRegistryLoad:
     """When no local registry and no --remote flag, stored remotes should be used."""
 
-    def test_stored_single_remote_is_fetched(self, tmp_path, remotes_config):
-        """A single stored remote is fetched via fetch_registry."""
+    def test_stored_single_remote_uses_fetch_multiple(self, tmp_path, remotes_config):
+        """A single stored remote is fetched via fetch_multiple (subdir layout parity)."""
         import bsp
         RemotesManager(config_path=remotes_config).add(
             "custom", "https://example.com/custom.git", branch="dev"
@@ -290,12 +314,12 @@ class TestRemotesIntegrationWithRegistryLoad:
 
                     # But we want registry is None (no --registry flag) so go to else branch
                     with patch(
-                        "bsp.registry_fetcher.RegistryFetcher.fetch_registry",
-                        return_value=fake_registry,
-                    ) as mock_fetch:
+                        "bsp.registry_fetcher.RegistryFetcher.fetch_multiple",
+                        return_value=[("custom", fake_registry)],
+                    ) as mock_fetch_multiple:
                         with patch("bsp.cli.RemotesManager") as MockRM:
                             from bsp.remotes_manager import RemoteEntry
-                            MockRM.return_value.load.return_value = [
+                            MockRM.return_value.ensure_default_remote.return_value = [
                                 RemoteEntry(
                                     name="custom",
                                     url="https://example.com/custom.git",
@@ -304,10 +328,11 @@ class TestRemotesIntegrationWithRegistryLoad:
                             ]
                             bsp.main()
 
-        mock_fetch.assert_called_once()
-        call_kwargs = mock_fetch.call_args[1]
-        assert call_kwargs["repo_url"] == "https://example.com/custom.git"
-        assert call_kwargs["branch"] == "dev"
+        mock_fetch_multiple.assert_called_once()
+        specs = mock_fetch_multiple.call_args[0][0]
+        assert len(specs) == 1
+        assert specs[0].url == "https://example.com/custom.git"
+        assert specs[0].branch == "dev"
 
     def test_stored_multiple_remotes_use_fetch_multiple(self, tmp_path, remotes_config):
         """Multiple stored remotes dispatch to fetch_multiple."""
@@ -325,7 +350,7 @@ class TestRemotesIntegrationWithRegistryLoad:
                     with patch("bsp.bsp_manager.BspManager.initialize"):
                         with patch("bsp.cli.RemotesManager") as MockRM:
                             from bsp.remotes_manager import RemoteEntry
-                            MockRM.return_value.load.return_value = [
+                            MockRM.return_value.ensure_default_remote.return_value = [
                                 RemoteEntry(name="a", url="https://example.com/a.git"),
                                 RemoteEntry(name="b", url="https://example.com/b.git"),
                             ]

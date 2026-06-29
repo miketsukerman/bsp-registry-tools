@@ -16,11 +16,14 @@ import yaml
 
 import bsp
 from bsp.completions import (
+    ContainerCompleter,
     DevicesCompleter,
     FeaturesCompleter,
+    OverrideCompleter,
     PresetsCompleter,
     ReleasesCompleter,
     RemotesCompleter,
+    VendorReleaseCompleter,
     _build_manager_for_completion,
 )
 from tests.conftest import (
@@ -84,6 +87,25 @@ class TestBuildManagerForCompletion:
         args = _parsed_args(registry=str(tmp_path / "not-there.yaml"))
         result = _build_manager_for_completion(args)
         assert result is None
+
+    def test_uses_fetch_multiple_for_configured_single_remote(self, tmp_path):
+        reg = _make_registry_file(tmp_path, MINIMAL_REGISTRY_YAML)
+        fetcher_mock = MagicMock()
+        fetcher_mock.fetch_multiple.return_value = [("advantech-europe", reg)]
+        with patch("bsp.completions.RegistryFetcher", return_value=fetcher_mock):
+            with patch("bsp.completions.RemotesManager") as MockRM:
+                from bsp.remotes_manager import RemoteEntry
+                MockRM.return_value.ensure_default_remote.return_value = [
+                    RemoteEntry(
+                        name="advantech-europe",
+                        url="https://github.com/Advantech-EECC/bsp-registry.git",
+                        branch="main",
+                    )
+                ]
+                args = _parsed_args(registry=None, remote=None, branch="main")
+                _build_manager_for_completion(args)
+        fetcher_mock.fetch_registry.assert_not_called()
+        fetcher_mock.fetch_multiple.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +175,43 @@ class TestDevicesCompleter:
 
 
 # ---------------------------------------------------------------------------
+# ContainerCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestContainerCompleter:
+    def test_returns_container_names(self, tmp_path):
+        reg = _make_registry_file(tmp_path, MINIMAL_REGISTRY_YAML)
+        args = _parsed_args(registry=str(reg))
+        completions = ContainerCompleter()("", args)
+        assert "ubuntu-22.04" in completions
+
+    def test_multi_registry_includes_qualified_names(self, tmp_path):
+        reg1 = tmp_path / "reg1.yaml"
+        reg2 = tmp_path / "reg2.yaml"
+        reg1.write_text(MINIMAL_REGISTRY_YAML)
+        reg2.write_text(MINIMAL_REGISTRY_YAML.replace("ubuntu-22.04", "other-container"))
+
+        from bsp.bsp_manager import BspManager
+        mgr = BspManager(config_paths=[("regA", str(reg1)), ("regB", str(reg2))])
+        mgr.initialize()
+
+        mock_args = _parsed_args(registry=str(reg1))
+        with patch("bsp.completions._build_manager_for_completion", return_value=mgr):
+            completions = ContainerCompleter()("", mock_args)
+
+        assert "ubuntu-22.04" in completions
+        assert "regA:ubuntu-22.04" in completions
+        assert "other-container" in completions
+        assert "regB:other-container" in completions
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert ContainerCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
 # ReleasesCompleter
 # ---------------------------------------------------------------------------
 
@@ -213,6 +272,90 @@ class TestFeaturesCompleter:
 
 
 # ---------------------------------------------------------------------------
+# VendorReleaseCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestVendorReleaseCompleter:
+    def test_returns_vendor_release_slugs(self, registry_with_vendor_overrides_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_overrides_file),
+            device="adv-imx8",
+            release="scarthgap",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert "imx-6.6.53" in completions
+        assert "imx-6.12.0" in completions
+
+    def test_filters_by_selected_device_vendor(self, registry_with_vendor_overrides_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_overrides_file),
+            device="qemu-arm64",
+            release="scarthgap",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert completions == []
+
+    def test_uses_bsp_name_to_filter_by_preset_soc_vendor(
+        self, registry_with_soc_vendor_overrides_file
+    ):
+        args = _parsed_args(
+            registry=str(registry_with_soc_vendor_overrides_file),
+            bsp_name="adv-imx8-scarthgap-imx6.6.53",
+        )
+        completions = VendorReleaseCompleter()("", args)
+        assert "imx-6.6.53" in completions
+        assert "imx-6.12.0" in completions
+        assert "mt8186-2.0" not in completions
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert VendorReleaseCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
+# OverrideCompleter
+# ---------------------------------------------------------------------------
+
+
+class TestOverrideCompleter:
+    def test_returns_override_slugs(self, registry_with_vendor_override_slug_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            release="scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert "imx-6.6.23-2.0.0" in completions
+        assert "imx-6.6.36-2.1.0" in completions
+        assert "imx-xwayland-6.6.52" in completions
+
+    def test_excludes_override_slugs_for_mismatched_device_vendor(self, registry_with_vendor_override_slug_file):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            device="adv-imx8",
+            release="scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert completions == []
+
+    def test_uses_bsp_name_to_filter_by_preset_vendor(
+        self, registry_with_vendor_override_slug_file
+    ):
+        args = _parsed_args(
+            registry=str(registry_with_vendor_override_slug_file),
+            bsp_name="adv-imx8-scarthgap",
+        )
+        completions = OverrideCompleter()("", args)
+        assert completions == []
+
+    def test_does_not_raise_on_exception(self):
+        args = _parsed_args(registry=None)
+        with patch("bsp.completions._build_manager_for_completion", side_effect=RuntimeError("boom")):
+            assert OverrideCompleter()("", args) == []
+
+
+# ---------------------------------------------------------------------------
 # RemotesCompleter
 # ---------------------------------------------------------------------------
 
@@ -231,10 +374,10 @@ class TestRemotesCompleter:
         assert "origin" in completions
         assert "upstream" in completions
 
-    def test_returns_empty_when_no_remotes_file(self, tmp_path):
+    def test_bootstraps_default_when_no_remotes_file(self, tmp_path):
         with patch.dict(os.environ, {"BSP_REMOTES_CONFIG": str(tmp_path / "missing.yaml")}):
             completions = RemotesCompleter()("", SimpleNamespace())
-        assert completions == []
+        assert "advantech-europe" in completions
 
     def test_does_not_raise_on_exception(self):
         with patch("bsp.completions.RemotesManager", side_effect=RuntimeError("boom")):

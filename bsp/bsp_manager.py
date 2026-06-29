@@ -4,24 +4,37 @@ Main BSP management class coordinating registry, builds, and exports.
 
 import logging
 import os
+import json
+import platform
+import re
+import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
+from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
-from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable
+from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, YoctoCacheConfig, FlashConfig, ScanConfig
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
+from .scanner import ImageScanner, ScanResult
 from .storage import create_backend
-from .utils import get_registry_from_yaml_file, build_docker
+from .utils import (
+    get_registry_from_yaml_file,
+    build_docker,
+    expand_build_options_env,
+    get_installed_package_version,
+)
 
 if COLORAMA_AVAILABLE:
     from colorama import Fore, Style
@@ -38,6 +51,12 @@ def _expand_env(value: str) -> str:
         var = m.group(1)
         return os.environ.get(var, m.group(0))
     return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
+
+
+_RPI_SOC_FAMILY_MAP = {
+    "rpi4": "bcm2711",
+    "rpi5": "bcm2712",
+}
 
 # =============================================================================
 # Main BSP Management Class with v2.0 Support
@@ -201,15 +220,22 @@ class BspManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
-        """Split a ``registry:preset`` string into ``(registry_name, preset_name)``.
+    def _parse_qualified_name(value: str) -> Tuple[Optional[str], str]:
+        """Split a registry-qualified value into ``(registry_name, item_name)``.
 
         If *value* contains no colon the returned registry_name is ``None``.
+        Supports both preset selectors (``registry:preset``) and container
+        selectors (``registry:container``).
         """
         if ":" in value:
-            registry_name, preset_name = value.split(":", 1)
-            return registry_name.strip(), preset_name.strip()
+            registry_name, item_name = value.split(":", 1)
+            return registry_name.strip(), item_name.strip()
         return None, value
+
+    @staticmethod
+    def _parse_registry_preset(value: str) -> Tuple[Optional[str], str]:
+        """Backward-compatible wrapper for parsing ``registry:preset`` values."""
+        return BspManager._parse_qualified_name(value)
 
     def _iter_registries(self) -> Iterator[Tuple[str, object, V2Resolver, Path]]:
         """Iterate over (name, model, resolver, config_path) tuples for all registries."""
@@ -269,7 +295,11 @@ class BspManager:
             self.config_path = old_config_path
 
     def _resolve_preset_multi(
-        self, bsp_name: str, extra_feature_slugs: Optional[List[str]] = None
+        self,
+        bsp_name: str,
+        extra_feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
     ) -> Tuple[ResolvedConfig, BspPreset, str, object, V2Resolver, Path]:
         """Resolve a BSP preset across all loaded registries.
 
@@ -287,14 +317,17 @@ class BspManager:
         Raises:
             SystemExit: If the registry or preset is not found.
         """
-        registry_hint, preset_name = self._parse_registry_preset(bsp_name)
+        registry_hint, preset_name = self._parse_qualified_name(bsp_name)
 
         if registry_hint is not None:
             # Look only in the named registry
             for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
                 if reg_name == registry_hint:
                     resolved, preset = reg_resolver.resolve_preset(
-                        preset_name, extra_feature_slugs=extra_feature_slugs
+                        preset_name,
+                        extra_feature_slugs=extra_feature_slugs,
+                        vendor_release_slug_override=vendor_release_slug,
+                        override_slug_override=override_slug,
                     )
                     return resolved, preset, reg_name, reg_model, reg_resolver, reg_path
             logging.error(
@@ -335,7 +368,10 @@ class BspManager:
 
         reg_name, reg_model, reg_resolver, reg_path = found_in[0]
         resolved, preset = reg_resolver.resolve_preset(
-            preset_name, extra_feature_slugs=extra_feature_slugs
+            preset_name,
+            extra_feature_slugs=extra_feature_slugs,
+            vendor_release_slug_override=vendor_release_slug,
+            override_slug_override=override_slug,
         )
         return resolved, preset, reg_name, reg_model, reg_resolver, reg_path
 
@@ -1039,6 +1075,192 @@ class BspManager:
         _, preset, _, _, _, _ = self._resolve_preset_multi(bsp_name)
         return preset
 
+    def _resolve_container_multi(
+        self, container_name: str
+    ) -> Tuple[Docker, str, object, V2Resolver, Path]:
+        """Resolve a named container across all loaded registries."""
+        registry_hint, plain_name = self._parse_qualified_name(container_name)
+        matches: List[Tuple[Docker, str, object, V2Resolver, Path]] = []
+
+        if registry_hint is not None:
+            known = [name for name, _, _, _ in self._iter_registries()]
+            if registry_hint not in known:
+                logging.error(
+                    "Registry '%s' not found. Available registries: %s",
+                    registry_hint,
+                    ", ".join(known) if known else "(none)",
+                )
+                sys.exit(1)
+
+        for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
+            if registry_hint is not None and reg_name != registry_hint:
+                continue
+            reg_containers = reg_model.containers or {} if reg_model else {}
+            if plain_name in reg_containers:
+                matches.append(
+                    (reg_containers[plain_name], reg_name, reg_model, reg_resolver, reg_path)
+                )
+
+        if not matches:
+            if registry_hint is not None:
+                logging.error(
+                    "Container '%s' not found in registry '%s'.",
+                    plain_name,
+                    registry_hint,
+                )
+            else:
+                logging.error("Container '%s' not found in any loaded registry.", plain_name)
+            sys.exit(1)
+
+        if len(matches) > 1 and registry_hint is None:
+            found_in = [reg_name for _, reg_name, _, _, _ in matches]
+            logging.warning(
+                "Container '%s' found in multiple registries: %s. "
+                "Using first match from '%s'.",
+                plain_name,
+                ", ".join(found_in),
+                found_in[0],
+            )
+
+        return matches[0]
+
+    @staticmethod
+    def _compose_docker_build_options(
+        base_options: Optional[str],
+        use_cache: Optional[bool] = None,
+    ) -> Optional[str]:
+        """Apply cache policy on top of an optional docker-build options string.
+
+        ``$ENV{VAR}`` placeholders in *base_options* are expanded before any
+        token manipulation so that patterns like
+        ``$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}`` are resolved correctly
+        (e.g. when determining whether ``--no-cache`` is already present).
+        """
+        expanded = expand_build_options_env(base_options) if base_options else None
+        tokens = shlex.split(expanded) if expanded else []
+        if use_cache is True:
+            tokens = [token for token in tokens if token != "--no-cache"]
+        elif use_cache is False and "--no-cache" not in tokens:
+            tokens.append("--no-cache")
+        return shlex.join(tokens) if tokens else None
+
+    def _build_container_image(
+        self,
+        container: Docker,
+        *,
+        label: str = "",
+        docker_build_options: Optional[str] = None,
+        use_cache: Optional[bool] = None,
+        require_definition: bool = False,
+    ) -> bool:
+        """Build a Docker image from a container definition."""
+        if not container.file or not container.image:
+            if require_definition:
+                logging.error(
+                    "Container '%s' must define both 'file' and 'image' to be built locally.",
+                    label or "(unnamed)",
+                )
+                sys.exit(1)
+            return False
+
+        build_opts = docker_build_options if docker_build_options is not None else container.build_options
+        build_docker(
+            str(self.config_path.parent),
+            container.file,
+            container.image,
+            container.args,
+            verbose=self.verbose,
+            build_options=self._compose_docker_build_options(build_opts, use_cache=use_cache),
+        )
+        return True
+
+    def build_container(
+        self,
+        container_name: str,
+        *,
+        use_cache: Optional[bool] = None,
+    ) -> None:
+        """Build a named container from the registry."""
+        logging.info("Building container: %s", container_name)
+        container, _, reg_model, reg_resolver, reg_path = self._resolve_container_multi(container_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            self._build_container_image(
+                container,
+                label=container_name,
+                use_cache=use_cache,
+                require_definition=True,
+            )
+
+    def build_containers(
+        self,
+        container_name: Optional[str] = None,
+        *,
+        no_cache: bool = False,
+    ) -> None:
+        """Build container images from the registry.
+
+        When *container_name* is provided, only that container is built
+        (equivalent to ``build_container`` but using ``no_cache``).  When
+        omitted, every container across all loaded registries that has both
+        ``file`` and ``image`` set is built.
+
+        Containers that declare an ``image`` but no ``file`` (pre-built images
+        pulled from a registry) are skipped with a warning.  Containers with
+        neither ``file`` nor ``image`` are silently skipped.
+
+        Args:
+            container_name: Optional name of a single container to build;
+                            supports ``registry:container`` syntax in
+                            multi-registry mode.
+            no_cache: When ``True``, pass ``--no-cache`` to every ``docker
+                      build`` invocation.
+
+        Raises:
+            SystemExit: If a named container is not found, or if any build
+                        fails.
+        """
+        # use_cache=False tells _compose_docker_build_options to add --no-cache;
+        # use_cache=None means "defer to registry build_options" (no override).
+        use_cache: Optional[bool] = False if no_cache else None
+
+        if container_name is not None:
+            self.build_container(container_name, use_cache=use_cache)
+            return
+
+        built = 0
+        skipped = 0
+        for reg_name, reg_model, reg_resolver, reg_path in self._iter_registries():
+            reg_containers = reg_model.containers or {} if reg_model else {}
+            with self._use_registry_context(reg_model, reg_resolver, reg_path):
+                for cname, container in reg_containers.items():
+                    if not container.file or not container.image:
+                        if container.image and not container.file:
+                            logging.warning(
+                                "Container '%s' has an image but no Dockerfile ('file'); "
+                                "skipping build.",
+                                cname,
+                            )
+                        else:
+                            logging.debug(
+                                "Container '%s' has no image or file; skipping.", cname
+                            )
+                        skipped += 1
+                        continue
+                    logging.info(
+                        "Building container '%s' from registry '%s'", cname, reg_name
+                    )
+                    self._build_container_image(
+                        container,
+                        label=cname,
+                        use_cache=use_cache,
+                    )
+                    built += 1
+
+        if built == 0 and skipped == 0:
+            logging.info("No containers found in registry.")
+        else:
+            logging.info("Built %d container(s), skipped %d.", built, skipped)
+
     # ------------------------------------------------------------------
     # Build directory helpers
     # ------------------------------------------------------------------
@@ -1279,6 +1501,12 @@ class BspManager:
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1294,21 +1522,25 @@ class BspManager:
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
         """
         action = "Checking out" if checkout_only else "Building"
         logging.info(f"{action} {label or resolved.device.slug}")
 
         # Build Docker image if needed (skip in checkout mode)
         if not checkout_only and resolved.container:
-            container = resolved.container
-            if container.file and container.image:
-                build_docker(
-                    str(self.config_path.parent),
-                    container.file,
-                    container.image,
-                    container.args,
-                    verbose=self.verbose,
-                )
+            self._build_container_image(
+                resolved.container,
+                label=label or resolved.device.slug,
+                docker_build_options=docker_build_options,
+            )
         else:
             if checkout_only:
                 logging.info("Skipping Docker build in checkout mode")
@@ -1327,8 +1559,22 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            self._log_config_dump(config_output)
+            runtime_args_value = kas_mgr.get_runtime_args()
+            manifest_runtime_args = (
+                runtime_args_value if isinstance(runtime_args_value, str) else None
+            )
+            self._write_build_manifest(
+                resolved=resolved,
+                build_path=build_path,
+                checkout_only=checkout_only,
+                preset=preset,
+                target=target,
+                task=task,
+                config_output=config_output,
+                docker_build_options=docker_build_options,
+                resolved_runtime_args=manifest_runtime_args,
+            )
 
             if checkout_only:
                 logging.info("Performing checkout and validation (no build)...")
@@ -1344,6 +1590,350 @@ class BspManager:
                         deploy_overrides=deploy_overrides or {},
                         build_path_override=build_path_override,
                     )
+                if scan_after_build:
+                    self._scan_resolved(
+                        resolved,
+                        preset=preset,
+                        scan_overrides=scan_overrides or {},
+                        build_path_override=build_path_override,
+                    )
+                if flash_after_build and flash_target:
+                    self._flash_resolved(
+                        resolved,
+                        target_device=flash_target,
+                        preset=preset,
+                        build_target=target,
+                        flash_overrides=flash_overrides or {},
+                        build_path_override=build_path_override,
+                    )
+        finally:
+            self._cleanup_temp_kas_file()
+
+    @staticmethod
+    def _extract_targets_from_kas_config(config_output: Optional[Any]) -> List[str]:
+        """Return normalized targets from ``kas dump`` YAML output."""
+        import yaml
+
+        if not config_output or not isinstance(config_output, str):
+            return []
+        try:
+            config = yaml.safe_load(config_output) or {}
+        except yaml.YAMLError as exc:
+            logging.debug(f"Unable to parse KAS dump for targets: {exc}")
+            return []
+        if not isinstance(config, dict):
+            return []
+        targets = config.get("target")
+        if isinstance(targets, str):
+            return [targets]
+        if isinstance(targets, list):
+            return [str(target) for target in targets if target]
+        return []
+
+    @staticmethod
+    def _log_config_dump(config_output: Optional[Any]) -> None:
+        """Log KAS dump output only when it is a non-empty string."""
+        if isinstance(config_output, str) and config_output:
+            logging.debug("Configuration dump:\n" + config_output)
+
+    @staticmethod
+    def _resolve_manifest_soc_family(
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset],
+    ) -> Optional[str]:
+        """Resolve a best-effort SoC family value for build-manifest output."""
+        if resolved.device.soc_family:
+            return resolved.device.soc_family
+
+        family_patterns = (
+            (r"(?:i\.?mx|imx)[\s-]?([0-9][a-z0-9]*)", lambda m: f"imx{m.group(1).lower()}"),
+            (r"\b(rk[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b((?:qcs|sa|sm|sc)[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(bcm[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(rpi[0-9]+)\b", lambda m: m.group(1).lower()),
+            (r"\bras(?:pberry)?\s*pi\s*([0-9]+)\b", lambda m: f"rpi{m.group(1).lower()}"),
+            (r"\b(am[0-9]{2}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(j[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+        )
+        soc_vendor = (resolved.device.soc_vendor or "").lower().replace("-", "").replace(" ", "")
+
+        for source in (
+            resolved.device.description,
+            preset.description if preset else None,
+            resolved.device.slug,
+        ):
+            if not source:
+                continue
+            for pattern, formatter in family_patterns:
+                match = re.search(pattern, source, re.IGNORECASE)
+                if not match:
+                    continue
+                family = formatter(match)
+                if soc_vendor in {"broadcom", "raspberrypi"} and family in _RPI_SOC_FAMILY_MAP:
+                    return _RPI_SOC_FAMILY_MAP[family]
+                return family
+        return None
+
+    @staticmethod
+    def _resolve_manifest_container_build_options(
+        resolved: ResolvedConfig,
+        docker_build_options: Optional[str],
+    ) -> Optional[str]:
+        """Resolve effective docker build options for manifest output."""
+        if not resolved.container:
+            return None
+        base_options = (
+            docker_build_options
+            if docker_build_options is not None
+            else resolved.container.build_options
+        )
+        return BspManager._compose_docker_build_options(base_options, use_cache=None)
+
+    @staticmethod
+    def _resolve_manifest_registry_git_provenance(config_path: Path) -> Dict[str, Optional[Any]]:
+        """Resolve git commit and dirty status for the registry repository."""
+        registry_dir = config_path.parent if config_path.is_file() else config_path
+        try:
+            rev_parse = subprocess.run(
+                ["git", "-C", str(registry_dir), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            status = subprocess.run(
+                ["git", "-C", str(registry_dir), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return {
+                "commit_sha": None,
+                "is_dirty": None,
+            }
+        return {
+            "commit_sha": rev_parse.stdout.strip() or None,
+            "is_dirty": bool(status.stdout.strip()),
+        }
+
+    def _generate_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[Any],
+        docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build a JSON-serializable manifest with resolved build components."""
+        effective_distro = resolved.effective_distro or resolved.release.distro or ""
+        distro_obj = None
+        if effective_distro:
+            distro_obj = next(
+                (d for d in self.model.registry.distro if d.slug == effective_distro),
+                None,
+            )
+
+        selected_targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+        manifest_soc_family = self._resolve_manifest_soc_family(resolved, preset)
+        manifest_container_build_options = self._resolve_manifest_container_build_options(
+            resolved, docker_build_options
+        )
+        registry_git_provenance = self._resolve_manifest_registry_git_provenance(self.config_path)
+
+        container_name = None
+        if resolved.container:
+            for name, definition in self.containers.items():
+                if definition is resolved.container:
+                    container_name = name
+                    break
+
+        return {
+            "schema_version": "1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "registry": {
+                "path": str(self.config_path),
+            },
+            "provenance": {
+                "tool": {
+                    "name": "bsp-registry-tools",
+                    "version": get_installed_package_version("bsp-registry-tools"),
+                },
+                "cli": {
+                    "argv": list(sys.argv),
+                    "command": shlex.join(sys.argv),
+                },
+                "python": {
+                    "version": platform.python_version(),
+                },
+                "registry_git": registry_git_provenance,
+            },
+            "preset": (
+                {
+                    "name": preset.name,
+                    "description": preset.description,
+                    "vendor_release": (
+                        resolved.resolved_vendor_release
+                        if resolved.resolved_vendor_release is not None
+                        else preset.vendor_release
+                    ),
+                    "override": (
+                        resolved.resolved_override
+                        if resolved.resolved_override is not None
+                        else preset.override
+                    ),
+                }
+                if preset
+                else None
+            ),
+            "build": {
+                "path": build_path,
+                "checkout_only": checkout_only,
+                "target": target,
+                "task": task,
+                "docker_build_options": docker_build_options,
+                "resolved_targets": selected_targets,
+            },
+            "components": {
+                "device": {
+                    "slug": resolved.device.slug,
+                    "vendor": resolved.device.vendor,
+                    "soc_vendor": resolved.device.soc_vendor,
+                    "soc_family": manifest_soc_family,
+                    "architecture": resolved.device.architecture,
+                },
+                "release": {
+                    "slug": resolved.release.slug,
+                    "yocto_version": resolved.release.yocto_version,
+                    "isar_version": resolved.release.isar_version,
+                },
+                "distro": {
+                    "slug": effective_distro,
+                    "framework": getattr(distro_obj, "framework", None) if distro_obj else None,
+                },
+                "features": [
+                    {"slug": feature.slug, "description": feature.description}
+                    for feature in resolved.features
+                ],
+                "container": (
+                    {
+                        "name": container_name,
+                        "image": resolved.container.image,
+                        "file": resolved.container.file,
+                        "runtime_args": resolved_runtime_args,
+                        "build_options": manifest_container_build_options,
+                        "privileged": resolved.container.privileged,
+                        "args": [
+                            {"name": arg.name, "value": arg.value}
+                            for arg in resolved.container.args
+                        ],
+                    }
+                    if resolved.container
+                    else None
+                ),
+            },
+            "inputs": {
+                "kas_files": list(resolved.kas_files),
+                "local_conf": list(resolved.local_conf),
+                "environment_variables": [
+                    {"name": env_var.name, "value": env_var.value}
+                    for env_var in resolved.env
+                ],
+                "copy": list(resolved.copy),
+            },
+        }
+
+    def _write_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[Any],
+        docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
+    ) -> Path:
+        """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
+        if build_path and str(build_path).strip():
+            effective_build_path = build_path
+        else:
+            effective_build_path = resolved.build_path or "build"
+        manifest_path = Path(effective_build_path) / "build-manifest.json"
+        manifest = self._generate_build_manifest(
+            resolved=resolved,
+            build_path=effective_build_path,
+            checkout_only=checkout_only,
+            preset=preset,
+            target=target,
+            task=task,
+            config_output=config_output,
+            docker_build_options=docker_build_options,
+            resolved_runtime_args=resolved_runtime_args,
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        logging.info("Build manifest generated: %s", manifest_path)
+        return manifest_path
+
+    def _fetch_resolved(
+        self,
+        resolved: ResolvedConfig,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+        label: str = "",
+    ) -> None:
+        """
+        Fetch all sources required for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+            label: Descriptive label for log messages
+        """
+        logging.info(f"Fetching sources for {label or resolved.device.slug}")
+
+        if resolved.container:
+            container = resolved.container
+            if container.file and container.image:
+                build_docker(
+                    str(self.config_path.parent),
+                    container.file,
+                    container.image,
+                    container.args,
+                    verbose=self.verbose,
+                )
+
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
+
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved,
+            use_container=True,
+            build_path_override=build_path_override,
+        )
+
+        try:
+            config_output = kas_mgr.dump_config(show_output=False)
+            self._log_config_dump(config_output)
+
+            targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+            if not targets:
+                logging.error(
+                    "No BitBake targets found for source fetch. "
+                    "Provide --target or configure targets in the KAS configuration."
+                )
+                sys.exit(1)
+
+            kas_mgr.fetch_project(targets=targets)
         finally:
             self._cleanup_temp_kas_file()
 
@@ -1357,6 +1947,14 @@ class BspManager:
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
         feature_slugs: Optional[List[str]] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -1370,13 +1968,26 @@ class BspManager:
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
             feature_slugs: Additional feature slugs to enable on top of those in the preset
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
+            vendor_release_slug: Optional vendor sub-release slug to override preset/default selection
+            override_slug: Optional vendor override slug to force a specific vendor override
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
 
         Raises:
             SystemExit: If preset not found or build fails
         """
         logging.info(f"{'Checking out' if checkout_only else 'Building'} BSP preset: {bsp_name}")
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(
-            bsp_name, extra_feature_slugs=feature_slugs
+            bsp_name,
+            extra_feature_slugs=feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
         )
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._build_resolved(
@@ -1389,6 +2000,47 @@ class BspManager:
                 target=target,
                 task=task,
                 build_path_override=build_path_override,
+                scan_after_build=scan_after_build,
+                scan_overrides=scan_overrides,
+                flash_after_build=flash_after_build,
+                flash_target=flash_target,
+                flash_overrides=flash_overrides,
+                docker_build_options=docker_build_options,
+            )
+
+    def fetch_bsp(
+        self,
+        bsp_name: str,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+        feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
+    ) -> None:
+        """
+        Fetch all sources for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset to fetch
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+            feature_slugs: Additional feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug to override preset/default selection
+            override_slug: Optional vendor override slug to force a specific vendor override
+        """
+        logging.info(f"Fetching BSP preset: {bsp_name}")
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(
+            bsp_name,
+            extra_feature_slugs=feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
+        )
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            self._fetch_resolved(
+                resolved,
+                target=target,
+                build_path_override=build_path_override,
+                label=f"{preset.name} - {preset.description}",
             )
 
     def build_by_components(
@@ -1396,12 +2048,20 @@ class BspManager:
         device_slug: str,
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
         checkout_only: bool = False,
         deploy_after_build: bool = False,
         deploy_overrides: Optional[Dict] = None,
         target: Optional[str] = None,
         task: Optional[str] = None,
         build_path_override: Optional[str] = None,
+        scan_after_build: bool = False,
+        scan_overrides: Optional[Dict] = None,
+        flash_after_build: bool = False,
+        flash_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
+        docker_build_options: Optional[str] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -1410,12 +2070,22 @@ class BspManager:
             device_slug: Device slug
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug
+            override_slug: Optional vendor override slug
             checkout_only: If True, only checkout and validate without building
             deploy_after_build: If True, deploy artifacts after a successful build
             deploy_overrides: CLI-level overrides for the deploy configuration
             target: Optional Bitbake build target to override registry targets
             task: Optional Bitbake task to run (e.g. compile, configure)
             build_path_override: If provided, overrides the build output path from the registry
+            scan_after_build: If True, scan artifacts for CVEs after a successful build
+            scan_overrides: CLI-level overrides for the scan configuration
+            flash_after_build: If True, flash artifacts to *flash_target* after a successful build
+            flash_target: Block device path used when *flash_after_build* is True
+            flash_overrides: CLI-level overrides for the flash configuration
+            docker_build_options: Extra flags for ``docker build`` (e.g. ``--no-cache``).
+                                  Overrides ``build_options`` from the registry container
+                                  definition when provided.
 
         Raises:
             SystemExit: If any component is not found, incompatible, or build fails
@@ -1425,7 +2095,13 @@ class BspManager:
             f"device={device_slug} release={release_slug} "
             f"features={feature_slugs or []}"
         )
-        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        resolved = self.resolver.resolve(
+            device_slug,
+            release_slug,
+            feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
+        )
         self._build_resolved(
             resolved,
             checkout_only=checkout_only,
@@ -1435,6 +2111,52 @@ class BspManager:
             target=target,
             task=task,
             build_path_override=build_path_override,
+            scan_after_build=scan_after_build,
+            scan_overrides=scan_overrides,
+            flash_after_build=flash_after_build,
+            flash_target=flash_target,
+            flash_overrides=flash_overrides,
+            docker_build_options=docker_build_options,
+        )
+
+    def fetch_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug: Optional[str] = None,
+        override_slug: Optional[str] = None,
+        target: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+    ) -> None:
+        """
+        Fetch all sources by specifying device, release, and optional features.
+
+        Args:
+            device_slug: Device slug
+            release_slug: Release slug
+            feature_slugs: Optional list of feature slugs to enable
+            vendor_release_slug: Optional vendor sub-release slug
+            override_slug: Optional vendor override slug
+            target: Optional BitBake target to fetch instead of configured targets
+            build_path_override: If provided, overrides the build output path
+        """
+        logging.info(
+            f"Fetching sources for device={device_slug} release={release_slug} "
+            f"features={feature_slugs or []}"
+        )
+        resolved = self.resolver.resolve(
+            device_slug,
+            release_slug,
+            feature_slugs,
+            vendor_release_slug=vendor_release_slug,
+            override_slug=override_slug,
+        )
+        self._fetch_resolved(
+            resolved,
+            target=target,
+            build_path_override=build_path_override,
+            label=f"{device_slug}/{release_slug}",
         )
 
     # ------------------------------------------------------------------
@@ -1446,6 +2168,7 @@ class BspManager:
         resolved: ResolvedConfig,
         command: Optional[str] = None,
         label: str = "",
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Start a KAS shell session for the given ResolvedConfig.
@@ -1454,6 +2177,7 @@ class BspManager:
             resolved: Resolved build configuration
             command: Optional command to run in the shell
             label: Descriptive label for log messages
+            build_path_override: If provided, overrides the build output path from the registry
         """
         logging.info(f"Starting shell for {label or resolved.device.slug}")
 
@@ -1461,12 +2185,20 @@ class BspManager:
             container = resolved.container
             if container.file and container.image:
                 logging.info("Building Docker image for shell environment...")
-                build_docker(str(self.config_path.parent), container.file, container.image, container.args)
+                self._build_container_image(
+                    container,
+                    label=label or resolved.device.slug,
+                )
 
-        self.prepare_build_directory(resolved.build_path)
-        self._copy_files(resolved)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
 
-        kas_mgr = self._get_kas_manager_for_resolved(resolved, use_container=True)
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved, use_container=True, build_path_override=build_path_override
+        )
 
         try:
             if command:
@@ -1478,13 +2210,19 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
-    def shell_into_bsp(self, bsp_name: str, command: Optional[str] = None) -> None:
+    def shell_into_bsp(
+        self,
+        bsp_name: str,
+        command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+    ) -> None:
         """
         Enter interactive shell for a BSP preset.
 
         Args:
             bsp_name: Name of the BSP preset
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or shell fails
@@ -1493,7 +2231,10 @@ class BspManager:
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._shell_resolved(
-                resolved, command=command, label=f"{preset.name} - {preset.description}"
+                resolved,
+                command=command,
+                label=f"{preset.name} - {preset.description}",
+                build_path_override=build_path_override,
             )
 
     def shell_by_components(
@@ -1502,6 +2243,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Enter interactive shell by specifying device, release, and features directly.
@@ -1511,6 +2253,7 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found or shell fails
@@ -1521,7 +2264,10 @@ class BspManager:
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
         self._shell_resolved(
-            resolved, command=command, label=f"{device_slug}/{release_slug}"
+            resolved,
+            command=command,
+            label=f"{device_slug}/{release_slug}",
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------
@@ -1824,6 +2570,8 @@ class BspManager:
         resolved: ResolvedConfig,
         output_file: Optional[str] = None,
         label: str = "",
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -1833,7 +2581,8 @@ class BspManager:
             output_file: Optional file path to save the configuration
             label: Descriptive label for log messages
         """
-        logging.info(f"Exporting KAS configuration for {label or resolved.device.slug}")
+        export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
+        logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
 
         downloads = None
         sstate = None
@@ -1876,22 +2625,35 @@ class BspManager:
                     search_paths=[str(self.config_path.parent)],
                     env_manager=self.env_manager,
                 )
-                config_yaml = kas_mgr.export_kas_config(output_file)
+                if repo_manifest:
+                    exported_content = kas_mgr.export_repo_manifest_xml(output_file)
+                else:
+                    exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
         if not output_file:
+            target_label = label or resolved.device.slug
+            title = (
+                f"Android Repo Manifest for {target_label}"
+                if repo_manifest
+                else f"KAS Configuration for {target_label}"
+            )
             print("\n" + "=" * 60)
-            print(f"KAS Configuration for {label or resolved.device.slug}")
+            print(title)
             print("=" * 60)
-            print(config_yaml)
+            print(exported_content)
             print("=" * 60)
 
         logging.info("Configuration exported successfully!")
 
     def export_bsp_config(
-        self, bsp_name: str, output_file: Optional[str] = None
+        self,
+        bsp_name: str,
+        output_file: Optional[str] = None,
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -1910,6 +2672,8 @@ class BspManager:
                 resolved,
                 output_file=output_file,
                 label=f"{preset.name} - {preset.description}",
+                repo_manifest=repo_manifest,
+                lock=lock,
             )
 
     def export_by_components(
@@ -1918,6 +2682,8 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         output_file: Optional[str] = None,
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -1940,6 +2706,8 @@ class BspManager:
             resolved,
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
+            repo_manifest=repo_manifest,
+            lock=lock,
         )
 
     # ------------------------------------------------------------------
@@ -1999,6 +2767,168 @@ class BspManager:
             base = replace(base, **{k: v for k, v in deploy_overrides.items() if v is not None})
 
         return base
+
+    @staticmethod
+    def _normalize_cache_path(path: str) -> str:
+        """Normalize a cache path to an absolute string."""
+        return str(Path(path).expanduser().resolve())
+
+    @staticmethod
+    def _infer_yocto_topdir(build_path: str, artifact_dirs: List[str]) -> str:
+        """
+        Infer the Yocto TOPDIR from *build_path* and *artifact_dirs*.
+
+        Yocto's ``DL_DIR`` and ``SSTATE_DIR`` default to subdirectories of
+        ``TOPDIR`` (the directory passed to ``oe-init-build-env``).  The
+        ``artifact_dirs`` in :class:`~bsp.models.DeployConfig` are relative
+        to *build_path* and typically contain a ``tmp/`` segment, e.g.
+        ``build/tmp/deploy/images``.  The prefix before the ``tmp/`` segment
+        is the path from *build_path* to TOPDIR.
+
+        Examples::
+
+            artifact_dirs = ["tmp/deploy/images"]
+            # tmp/ is at index 0 → no prefix → TOPDIR = build_path
+
+            artifact_dirs = ["build/tmp/deploy/images"]
+            # tmp/ is at index 1 → prefix = "build" → TOPDIR = build_path/build
+
+        Args:
+            build_path: Absolute or relative path to the BSP build directory.
+            artifact_dirs: List of artifact directory paths relative to
+                           *build_path*, as configured in
+                           :attr:`~bsp.models.DeployConfig.artifact_dirs`.
+
+        Returns:
+            Inferred Yocto TOPDIR path string.  Falls back to *build_path*
+            when no ``tmp/`` segment can be found in any artifact dir.
+        """
+        for adir in artifact_dirs:
+            parts = Path(adir).parts
+            if "tmp" in parts:
+                tmp_idx = parts.index("tmp")
+                if tmp_idx == 0:
+                    return build_path
+                prefix = Path(*parts[:tmp_idx])
+                return str(Path(build_path) / prefix)
+        return build_path
+
+    def _resolve_cache_paths(
+        self,
+        deploy_cfg: "DeployConfig",
+        build_path: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Return ``(downloads_path, sstate_path)`` for cache upload.
+
+        Priority order:
+        1. Explicit paths set in ``deploy_cfg.yocto_cache`` (from registry /
+           CLI overrides).
+        2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
+           :class:`~bsp.environment.EnvironmentManager`.
+        3. Yocto defaults under the inferred TOPDIR
+           (``<topdir>/downloads`` and ``<topdir>/sstate-cache``) where
+           TOPDIR is derived from *build_path* and
+           ``deploy_cfg.artifact_dirs``.
+        4. ``None`` (cache upload skipped for that directory).
+
+        Args:
+            deploy_cfg: Effective deploy configuration.
+            build_path: Effective build path used for Yocto default fallbacks.
+
+        Returns:
+            Tuple of (downloads_path, sstate_path); each may be ``None``.
+        """
+        cache_cfg = deploy_cfg.yocto_cache
+        if not cache_cfg or not cache_cfg.enabled:
+            return None, None
+
+        downloads_path: Optional[str] = cache_cfg.downloads_path
+        sstate_path: Optional[str] = cache_cfg.sstate_path
+
+        if cache_cfg.downloads and not downloads_path and self.env_manager:
+            downloads_path = self.env_manager.get_value("DL_DIR")
+        if cache_cfg.sstate and not sstate_path and self.env_manager:
+            sstate_path = self.env_manager.get_value("SSTATE_DIR")
+
+        if build_path:
+            yocto_topdir = Path(
+                self._infer_yocto_topdir(build_path, deploy_cfg.artifact_dirs)
+            )
+            if cache_cfg.downloads and not downloads_path:
+                downloads_path = str(yocto_topdir / "downloads")
+            if cache_cfg.sstate and not sstate_path:
+                sstate_path = str(yocto_topdir / "sstate-cache")
+
+        if downloads_path:
+            downloads_path = self._normalize_cache_path(downloads_path)
+        if sstate_path:
+            sstate_path = self._normalize_cache_path(sstate_path)
+
+        return downloads_path, sstate_path
+
+    def _resolve_cache_restore_paths(
+        self,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
+        base_dir: Optional[str] = None,
+        artifact_dirs: Optional[List[str]] = None,
+        create_dirs: bool = False,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Return ``(downloads_dest, sstate_dest)`` for cache restore.
+
+        Priority order:
+        1. Explicit CLI/API overrides (*cache_downloads_dest* / *cache_sstate_dest*).
+        2. ``DL_DIR`` / ``SSTATE_DIR`` from the active
+           :class:`~bsp.environment.EnvironmentManager`.
+        3. Yocto defaults under the inferred TOPDIR
+           (``<topdir>/downloads`` and ``<topdir>/sstate-cache``) where
+           TOPDIR is derived from *base_dir* and *artifact_dirs* via
+           :meth:`_infer_yocto_topdir`.
+        4. ``None`` (gatherer uses its own fallback behavior).
+
+        Args:
+            cache_downloads_dest: Explicit downloads destination or ``None``.
+            cache_sstate_dest: Explicit sstate destination or ``None``.
+            base_dir: Base directory for Yocto default fallbacks.
+            artifact_dirs: Artifact directory list used to infer the Yocto
+                           TOPDIR relative to *base_dir*.  Defaults to the
+                           standard ``["tmp/deploy/images"]`` pattern when
+                           ``None``.
+            create_dirs: When ``True``, create resolved directories.
+
+        Returns:
+            Tuple of (downloads_dest, sstate_dest); each may be ``None``.
+        """
+        downloads_dest = cache_downloads_dest
+        sstate_dest = cache_sstate_dest
+
+        if not downloads_dest and self.env_manager:
+            downloads_dest = self.env_manager.get_value("DL_DIR")
+        if not sstate_dest and self.env_manager:
+            sstate_dest = self.env_manager.get_value("SSTATE_DIR")
+
+        if base_dir:
+            effective_artifact_dirs = artifact_dirs or ["tmp/deploy/images"]
+            yocto_topdir = Path(
+                self._infer_yocto_topdir(base_dir, effective_artifact_dirs)
+            )
+            if not downloads_dest:
+                downloads_dest = str(yocto_topdir / "downloads")
+            if not sstate_dest:
+                sstate_dest = str(yocto_topdir / "sstate-cache")
+
+        if downloads_dest:
+            downloads_dest = self._normalize_cache_path(downloads_dest)
+            if create_dirs:
+                Path(downloads_dest).mkdir(parents=True, exist_ok=True)
+        if sstate_dest:
+            sstate_dest = self._normalize_cache_path(sstate_dest)
+            if create_dirs:
+                Path(sstate_dest).mkdir(parents=True, exist_ok=True)
+
+        return downloads_dest, sstate_dest
 
     def _deploy_resolved(
         self,
@@ -2062,16 +2992,24 @@ class BspManager:
             logging.error("Failed to initialize storage backend: %s", exc)
             sys.exit(1)
 
-        deployer = ArtifactDeployer(deploy_cfg, backend)
         effective_build_path = (
             build_path_override if build_path_override is not None else resolved.build_path
         )
+        # Resolve Yocto cache paths from config/env/default Yocto locations.
+        downloads_path, sstate_path = self._resolve_cache_paths(
+            deploy_cfg,
+            build_path=effective_build_path,
+        )
+
+        deployer = ArtifactDeployer(deploy_cfg, backend)
         result = deployer.deploy(
             build_path=effective_build_path,
             device=resolved.device.slug,
             release=resolved.release.slug,
             distro=resolved.effective_distro or "",
             vendor=resolved.device.vendor,
+            downloads_path=downloads_path,
+            sstate_path=sstate_path,
         )
 
         # Print summary
@@ -2084,6 +3022,12 @@ class BspManager:
                 print(f"  manifest.json → {result.manifest_url}")
         else:
             print("No artifacts found to deploy.")
+
+        if result.cache_uploads:
+            cache_action = "[dry-run] Would upload" if dry_run else "Uploaded"
+            print(f"\n{cache_action} {len(result.cache_uploads)} Yocto cache archive(s):")
+            for cu in result.cache_uploads:
+                print(f"  {cu.cache_type}: {cu.local_archive.name} → {cu.remote_url}")
 
         return result
 
@@ -2155,6 +3099,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download build artifacts for the given :class:`~bsp.resolver.ResolvedConfig`.
@@ -2175,6 +3122,14 @@ class BspManager:
                      actually downloading anything.
             date_override: Override for the ``{date}`` placeholder in the
                            prefix template (``YYYY-MM-DD``).
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives from cloud storage.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+                                  Falls back to the env ``DL_DIR`` or a default
+                                  sub-directory when ``None``.
+            cache_sstate_dest: Local path to restore the sstate cache into.
+                                Falls back to the env ``SSTATE_DIR`` or a
+                                default sub-directory when ``None``.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with the local paths of every
@@ -2218,6 +3173,15 @@ class BspManager:
 
         effective_dest = dest_dir if dest_dir is not None else resolved.build_path
 
+        # Resolve cache destination directories (CLI overrides > env > Yocto defaults)
+        effective_downloads_dest, effective_sstate_dest = self._resolve_cache_restore_paths(
+            cache_downloads_dest=cache_downloads_dest,
+            cache_sstate_dest=cache_sstate_dest,
+            base_dir=effective_dest,
+            artifact_dirs=deploy_cfg.artifact_dirs,
+            create_dirs=(gather_cache and not dry_run),
+        )
+
         gatherer = ArtifactGatherer(deploy_cfg, backend)
         result = gatherer.gather(
             dest_dir=effective_dest,
@@ -2226,6 +3190,9 @@ class BspManager:
             distro=resolved.effective_distro or "",
             vendor=resolved.device.vendor,
             date_override=date_override,
+            gather_cache=gather_cache,
+            downloads_dest=effective_downloads_dest,
+            sstate_dest=effective_sstate_dest,
         )
 
         # Print summary
@@ -2237,6 +3204,12 @@ class BspManager:
         else:
             print(f"No artifacts found to gather from '{provider}' storage.")
 
+        if result.cache_artifacts:
+            cache_action = "[dry-run] Would restore" if dry_run else "Restored"
+            print(f"\n{cache_action} {len(result.cache_artifacts)} Yocto cache(s):")
+            for cp in result.cache_artifacts:
+                print(f"  {cp}")
+
         return result
 
     def gather_bsp(
@@ -2246,6 +3219,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download artifacts for a BSP preset from cloud storage.
@@ -2258,6 +3234,10 @@ class BspManager:
             dry_run: When ``True`` log what would be downloaded without
                      actually downloading anything.
             date_override: Override for the ``{date}`` prefix placeholder.
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives alongside the regular artifacts.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+            cache_sstate_dest: Local path to restore the sstate cache into.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with download metadata.
@@ -2272,6 +3252,9 @@ class BspManager:
                 deploy_overrides=deploy_overrides,
                 dry_run=dry_run,
                 date_override=date_override,
+                gather_cache=gather_cache,
+                cache_downloads_dest=cache_downloads_dest,
+                cache_sstate_dest=cache_sstate_dest,
             )
 
     def gather_by_components(
@@ -2283,6 +3266,9 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        cache_downloads_dest: Optional[str] = None,
+        cache_sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download artifacts by specifying device, release, and features directly.
@@ -2297,6 +3283,10 @@ class BspManager:
             dry_run: When ``True`` log what would be downloaded without
                      actually downloading anything.
             date_override: Override for the ``{date}`` prefix placeholder.
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives alongside the regular artifacts.
+            cache_downloads_dest: Local path to restore the downloads cache into.
+            cache_sstate_dest: Local path to restore the sstate cache into.
 
         Returns:
             :class:`~bsp.gatherer.GatherResult` with download metadata.
@@ -2312,6 +3302,403 @@ class BspManager:
             deploy_overrides=deploy_overrides,
             dry_run=dry_run,
             date_override=date_override,
+            gather_cache=gather_cache,
+            cache_downloads_dest=cache_downloads_dest,
+            cache_sstate_dest=cache_sstate_dest,
+        )
+
+    # ------------------------------------------------------------------
+    # Scan (CRA image vulnerability scanning)
+    # ------------------------------------------------------------------
+
+    def _resolve_scan_config(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        scan_overrides: Optional[Dict] = None,
+    ) -> ScanConfig:
+        """
+        Resolve the effective ``ScanConfig`` for a build.
+
+        Merge order (later entries override earlier ones):
+        1. Root-level ``scan`` from the registry (global defaults)
+        2. ``ResolvedConfig.scan_config`` (preset-level ``scan`` block, if any)
+        3. CLI-supplied *scan_overrides* dict
+
+        If no scan config is defined anywhere a default ``ScanConfig`` is
+        returned.
+
+        Args:
+            resolved: Resolved build configuration (may carry scan_config from preset).
+            preset: Unused (reserved for future preset-level merge if needed).
+            scan_overrides: Dict of field overrides from the CLI.
+
+        Returns:
+            Effective ``ScanConfig`` instance.
+        """
+        # Start with global registry scan config or defaults
+        base = self.model.scan if self.model and self.model.scan else ScanConfig()
+
+        # Apply preset-level scan config from ResolvedConfig (set by resolver.resolve_preset)
+        if resolved.scan_config is not None:
+            preset_scan = resolved.scan_config
+            defaults = ScanConfig()
+            preset_overrides = {
+                f.name: preset_val
+                for f in dataclass_fields(preset_scan)
+                if (preset_val := getattr(preset_scan, f.name)) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
+        # Apply CLI overrides
+        if scan_overrides:
+            base = replace(base, **{k: v for k, v in scan_overrides.items() if v is not None})
+
+        return base
+
+    def _scan_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan build artifacts for CVEs and generate SBOMs.
+
+        Args:
+            resolved: Resolved build configuration.
+            preset: Optional BSP preset (for scan config merge).
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True, discover and list artifacts without scanning.
+            build_path_override: Optional build path override for artifact lookup.
+            image_paths: Explicit list of image file paths to scan (overrides
+                         auto-discovery when provided).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+        """
+        scan_cfg = self._resolve_scan_config(resolved, preset=preset, scan_overrides=scan_overrides)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
+
+        scanner = ImageScanner(scan_cfg, effective_build_path)
+
+        if dry_run:
+            artifacts = [Path(p) for p in image_paths] if image_paths else scanner._find_artifacts()
+            logging.info("[dry-run] Would scan %d artifact(s):", len(artifacts))
+            for art in artifacts:
+                logging.info("  %s", art)
+            result = ScanResult(fail_on=scan_cfg.fail_on, dry_run=True)
+            result.scanned_artifacts = artifacts
+            return result
+
+        # Run the actual scan
+        artifact_path_objs = [Path(p) for p in image_paths] if image_paths else None
+        result = scanner.scan(artifact_paths=artifact_path_objs)
+
+        # Print summary
+        print(f"\nScan completed: {result.total_count} finding(s) across {len(result.scanned_artifacts)} artifact(s)")
+        if result.total_count:
+            sev_counts = [
+                f"CRITICAL={result.critical_count}",
+                f"HIGH={result.high_count}",
+                f"MEDIUM={result.medium_count}",
+                f"LOW={result.low_count}",
+            ]
+            print("  Severity breakdown: " + "  ".join(sev_counts))
+        if result.sboms:
+            print(f"  SBOM(s) generated:")
+            for sbom in result.sboms:
+                print(f"    {sbom.path} ({sbom.component_count} components, format: {sbom.sbom_format})")
+        if result.report_files:
+            print(f"  Report(s):")
+            for rpt in result.report_files:
+                print(f"    {rpt}")
+        if not result.passed:
+            logging.error(
+                "Scan FAILED: findings at or above '%s' severity found.",
+                scan_cfg.fail_on,
+            )
+        else:
+            logging.info("Scan passed (no findings at or above '%s' severity).", scan_cfg.fail_on)
+
+        return result
+
+    def scan_bsp(
+        self,
+        bsp_name: str,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan built artifacts for a BSP preset for CVEs and generate SBOMs.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True list what would be scanned without scanning.
+            image_paths: Explicit artifact paths to scan (overrides auto-discovery).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+
+        Raises:
+            SystemExit: If preset not found or scanner is not installed.
+        """
+        logging.info("Scanning artifacts for BSP preset: %s", bsp_name)
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            result = self._scan_resolved(
+                resolved,
+                preset=preset,
+                scan_overrides=scan_overrides,
+                dry_run=dry_run,
+                image_paths=image_paths,
+            )
+        if not result.passed and not dry_run:
+            sys.exit(1)
+        return result
+
+    def scan_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        scan_overrides: Optional[Dict] = None,
+        dry_run: bool = False,
+        image_paths: Optional[List[str]] = None,
+    ) -> ScanResult:
+        """
+        Scan built artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            scan_overrides: CLI-level overrides for the scan configuration.
+            dry_run: When True list what would be scanned without scanning.
+            image_paths: Explicit artifact paths to scan (overrides auto-discovery).
+
+        Returns:
+            :class:`~bsp.scanner.ScanResult` with findings and SBOM metadata.
+
+        Raises:
+            SystemExit: If any component is not found or scanner is not installed.
+        """
+        logging.info(
+            "Scanning artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        result = self._scan_resolved(
+            resolved,
+            scan_overrides=scan_overrides,
+            dry_run=dry_run,
+            image_paths=image_paths,
+        )
+        if not result.passed and not dry_run:
+            sys.exit(1)
+        return result
+
+    # ------------------------------------------------------------------
+    # Flash (SD-card / block-device flashing via bmap-tools)
+    # ------------------------------------------------------------------
+
+    def _resolve_flash_config(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        flash_overrides: Optional[Dict] = None,
+    ) -> FlashConfig:
+        """
+        Resolve the effective ``FlashConfig`` for a build.
+
+        Merge order (later entries override earlier ones):
+        1. Root-level ``flash`` from the registry (global defaults)
+        2. ``ResolvedConfig.flash_config`` (preset-level ``flash`` block, if any)
+        3. CLI-supplied *flash_overrides* dict
+
+        If no flash config is defined anywhere a default ``FlashConfig`` is
+        returned.
+
+        Args:
+            resolved: Resolved build configuration (may carry flash_config from preset).
+            preset: Unused (reserved for future preset-level merge if needed).
+            flash_overrides: Dict of field overrides from the CLI.
+
+        Returns:
+            Effective ``FlashConfig`` instance.
+        """
+        # Start with global registry flash config or defaults
+        base = self.model.flash if self.model and self.model.flash else FlashConfig()
+
+        # Apply preset-level flash config from ResolvedConfig
+        if resolved.flash_config is not None:
+            preset_flash = resolved.flash_config
+            defaults = FlashConfig()
+            preset_overrides = {
+                f.name: preset_val
+                for f in dataclass_fields(preset_flash)
+                if (preset_val := getattr(preset_flash, f.name)) != getattr(defaults, f.name)
+            }
+            if preset_overrides:
+                base = replace(base, **preset_overrides)
+
+        # Apply CLI overrides
+        if flash_overrides:
+            base = replace(base, **{k: v for k, v in flash_overrides.items() if v is not None})
+
+        return base
+
+    def _flash_resolved(
+        self,
+        resolved: ResolvedConfig,
+        target_device: str,
+        preset: Optional[BspPreset] = None,
+        build_target: Optional[str] = None,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash build artifacts for the given ResolvedConfig.
+
+        Args:
+            resolved: Resolved build configuration.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            preset: Optional BSP preset (for flash config merge).
+            build_target: Optional BitBake target used by ``bsp build --target``.
+                          When provided, an additional high-priority image pattern
+                          ``**/{build_target}.wic.*`` is prepended for
+                          auto-discovery and any ``{build_target}`` placeholders
+                          in configured image patterns are expanded.
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.  Overrides
+                        auto-discovery when provided.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: Optional build path override for artifact lookup.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+        """
+        flash_cfg = self._resolve_flash_config(resolved, preset=preset, flash_overrides=flash_overrides)
+        patterns = list(flash_cfg.image_patterns or [])
+        if build_target:
+            patterns = [
+                p.replace("{build_target}", build_target) if "{build_target}" in p else p
+                for p in patterns
+            ]
+            target_pattern = f"**/{build_target}.wic.*"
+            patterns = [p for p in patterns if p != target_pattern]
+            patterns.insert(0, target_pattern)
+        flash_cfg = replace(flash_cfg, image_patterns=patterns)
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
+
+        flasher = ImageFlasher(flash_cfg)
+        result = flasher.flash(
+            build_path=effective_build_path,
+            target_device=target_device,
+            image_path=image_path,
+            dry_run=dry_run,
+        )
+
+        if not result.success and not dry_run:
+            sys.exit(1)
+
+        return result
+
+    def flash_bsp(
+        self,
+        bsp_name: str,
+        target_device: str,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash built artifacts for a BSP preset to a block device.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: If provided, overrides the build output path
+                                 from the registry.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+
+        Raises:
+            SystemExit: If preset not found or flash tool is not installed.
+        """
+        logging.info("Flashing artifacts for BSP preset: %s", bsp_name)
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            return self._flash_resolved(
+                resolved,
+                target_device=target_device,
+                preset=preset,
+                flash_overrides=flash_overrides,
+                image_path=image_path,
+                dry_run=dry_run,
+                build_path_override=build_path_override,
+            )
+
+    def flash_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        target_device: str,
+        feature_slugs: Optional[List[str]] = None,
+        flash_overrides: Optional[Dict] = None,
+        image_path: Optional[str] = None,
+        dry_run: bool = False,
+        build_path_override: Optional[str] = None,
+    ) -> FlashResult:
+        """
+        Flash built artifacts by specifying device, release, and features directly.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            target_device: Block device path (e.g. ``/dev/sdb``).
+            feature_slugs: Optional list of feature slugs.
+            flash_overrides: CLI-level overrides for the flash configuration.
+            image_path: Explicit path to the image file to flash.
+            dry_run: When True, print what would be flashed without flashing.
+            build_path_override: If provided, overrides the build output path
+                                 from the registry.
+
+        Returns:
+            :class:`~bsp.flasher.FlashResult` with the outcome of the operation.
+
+        Raises:
+            SystemExit: If any component is not found or flash tool is not installed.
+        """
+        logging.info(
+            "Flashing artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._flash_resolved(
+            resolved,
+            target_device=target_device,
+            flash_overrides=flash_overrides,
+            image_path=image_path,
+            dry_run=dry_run,
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------
