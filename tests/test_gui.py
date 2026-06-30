@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import sys
 import shlex
 import subprocess
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -58,37 +59,40 @@ class TestLaunchGuiWithoutTextual:
 
     def test_bsp_launcher_app_reports_textual_dependency_when_unavailable(self):
         """Importing and constructing BspLauncherApp should fail with a clear dependency hint."""
+        probe_script = textwrap.dedent(
+            """
+            import builtins
+            import importlib
+            import sys
+
+            real_import = builtins.__import__
+
+            def fake_import(name, *args, **kwargs):
+                if name == "textual" or name.startswith("textual."):
+                    raise ImportError("textual intentionally unavailable")
+                return real_import(name, *args, **kwargs)
+
+            builtins.__import__ = fake_import
+            try:
+                sys.modules.pop("bsp.gui", None)
+                gui = importlib.import_module("bsp.gui")
+                assert gui.TEXTUAL_AVAILABLE is False
+                try:
+                    gui.BspLauncherApp()
+                except ImportError as exc:
+                    message = str(exc)
+                    assert "bsp-registry-tools[gui]" in message
+                else:
+                    raise AssertionError("Expected ImportError for missing textual")
+            finally:
+                builtins.__import__ = real_import
+            """
+        )
         result = subprocess.run(
             [
                 sys.executable,
                 "-c",
-                """
-import builtins
-import importlib
-import sys
-
-real_import = builtins.__import__
-
-def fake_import(name, *args, **kwargs):
-    if name == "textual" or name.startswith("textual."):
-        raise ImportError("textual intentionally unavailable")
-    return real_import(name, *args, **kwargs)
-
-builtins.__import__ = fake_import
-try:
-    sys.modules.pop("bsp.gui", None)
-    gui = importlib.import_module("bsp.gui")
-    assert gui.TEXTUAL_AVAILABLE is False
-    try:
-        gui.BspLauncherApp()
-    except ImportError as exc:
-        message = str(exc)
-        assert "bsp-registry-tools[gui]" in message
-    else:
-        raise AssertionError("Expected ImportError for missing textual")
-finally:
-    builtins.__import__ = real_import
-""",
+                probe_script,
             ],
             capture_output=True,
             text=True,
