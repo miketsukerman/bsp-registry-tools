@@ -45,6 +45,16 @@ try:
 except ImportError:
     TEXTUAL_AVAILABLE = False
 
+_TEXTUAL_MISSING_MESSAGE = (
+    "The 'textual' package is required for the GUI.\n"
+    "Install it with:  pip install 'bsp-registry-tools[gui]'"
+)
+
+
+def _raise_textual_missing_import_error() -> None:
+    """Raise a consistent ImportError when textual-backed GUI classes are used."""
+    raise ImportError(_TEXTUAL_MISSING_MESSAGE)
+
 
 # =============================================================================
 # BitBake / KAS output parsing helpers
@@ -180,8 +190,7 @@ def launch_gui(
     """
     if not TEXTUAL_AVAILABLE:
         print(
-            "Error: The 'textual' package is required for the GUI.\n"
-            "Install it with:  pip install 'bsp-registry-tools[gui]'",
+            f"Error: {_TEXTUAL_MISSING_MESSAGE}",
             file=sys.stderr,
         )
         return 1
@@ -2114,3 +2123,24 @@ if TEXTUAL_AVAILABLE:
             """Update the status bar with *message*."""
             status = self.query_one("#status-bar", Static)
             status.update(message)
+else:
+    class _MissingTextualGUIComponent:
+        """Placeholder class used when textual is not installed."""
+
+        def __init__(self, *args, **kwargs) -> None:  # pragma: no cover - trivial
+            _raise_textual_missing_import_error()
+
+    class ConfirmScreen(_MissingTextualGUIComponent):
+        pass
+
+    class FlashScreen(_MissingTextualGUIComponent):
+        pass
+
+    class BuildTargetScreen(_MissingTextualGUIComponent):
+        pass
+
+    class CopyableTextArea(_MissingTextualGUIComponent):
+        pass
+
+    class BspLauncherApp(_MissingTextualGUIComponent):
+        pass
