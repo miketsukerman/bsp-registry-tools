@@ -2130,8 +2130,8 @@ else:
         def __call__(cls, *args, **kwargs):  # pragma: no cover - dependency fallback
             _raise_textual_missing_import_error()
 
-    class _MissingTextualGUIComponent:
-        """Placeholder class used when textual is not installed."""
+    class _MissingTextualGUIComponent(metaclass=_MissingTextualMeta):
+        """Base class for GUI-related fallback components when textual is unavailable."""
 
     class ConfirmScreen(_MissingTextualGUIComponent):
         pass
@@ -2145,8 +2145,12 @@ else:
     class CopyableTextArea(_MissingTextualGUIComponent):
         pass
 
-    class BspLauncherApp(_MissingTextualGUIComponent, metaclass=_MissingTextualMeta):
-        """Non-textual fallback exposing logic methods used by tests."""
+    class BspLauncherApp(_MissingTextualGUIComponent):
+        """Non-textual fallback for logic helpers used in non-UI test paths.
+
+        Supports registry loading and command argument construction helpers.
+        GUI-streaming behavior remains unavailable and raises NotImplementedError.
+        """
 
         def __init__(
             self,
@@ -2299,16 +2303,20 @@ else:
             show_details = getattr(self, "_show_bsp_details", None)
             if callable(show_details):
                 show_details(bsp_name)
-            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
-                try:
-                    self.query_one(btn_id, None).disabled = False
-                except Exception:
-                    pass
-            try:
-                has_artifacts = bool(self._scan_build_artifacts(bsp_name))
-                self.query_one("#btn-deploy", None).disabled = not has_artifacts
-            except Exception:
-                pass
+            query_one = getattr(self, "query_one", None)
+            if callable(query_one):
+                for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
+                    try:
+                        query_one(btn_id).disabled = False
+                    except Exception:
+                        pass
+                scan_artifacts = getattr(self, "_scan_build_artifacts", None)
+                if callable(scan_artifacts):
+                    try:
+                        has_artifacts = bool(scan_artifacts(bsp_name))
+                        query_one("#btn-deploy").disabled = not has_artifacts
+                    except Exception:
+                        pass
 
         def action_export_config(self) -> None:
             if not self._selected_bsp_name:
@@ -2383,4 +2391,6 @@ else:
             thread.start()
 
         def _stream_command(self, cmd: list, log_file: Optional[str] = None, show_progress: bool = False) -> None:
-            raise RuntimeError("textual GUI components are unavailable without textual")
+            raise NotImplementedError(
+                "Cannot execute streamed GUI command output without textual installed"
+            )
