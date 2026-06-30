@@ -10,7 +10,9 @@ These tests cover:
 
 from unittest.mock import MagicMock, patch
 import sys
+import shlex
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,6 +94,19 @@ class TestLaunchGuiWithTextual:
 
         _, kwargs = mock_app.call_args
         assert kwargs.get("remote") == "https://example.com/registry.git"
+
+    def test_launch_gui_passes_remotes(self):
+        mock_app = MagicMock()
+        mock_app.return_value = MagicMock()
+
+        with patch("bsp.gui.BspLauncherApp", mock_app):
+            launch_gui(remotes=["https://example.com/a.git@main", "https://example.com/b.git@dev"])
+
+        _, kwargs = mock_app.call_args
+        assert kwargs.get("remotes") == [
+            "https://example.com/a.git@main",
+            "https://example.com/b.git@dev",
+        ]
 
     def test_launch_gui_passes_no_update(self):
         mock_app = MagicMock()
@@ -345,6 +360,36 @@ class TestBspTreeFilter:
         count = app._render_tree("Acme")
         assert count == 1
 
+    def test_multi_registry_leaf_data_is_registry_qualified(self):
+        from bsp.gui import BspLauncherApp
+        from textual.widgets import Tree
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._tree_data = {
+            "vendor_names": {"v": "Vendor"},
+            "device_display": lambda slug: slug,
+            "release_labels": {"r": "Release"},
+            "per_registry_data": [
+                ("reg-a", {"v": {"d": {"r": ["same-preset"]}}}, {}),
+                ("reg-b", {"v": {"d": {"r": ["same-preset"]}}}, {}),
+            ],
+            "is_multi": True,
+        }
+        tree = Tree("root")
+        app.query_one = lambda selector, widget_type=None: tree
+        app._render_tree("")
+
+        leaf_values = {
+            node.data
+            for reg_node in tree.root.children
+            for vendor_node in reg_node.children
+            for device_node in vendor_node.children
+            for rel_node in device_node.children
+            for node in rel_node.children
+        }
+        assert "reg-a:same-preset" in leaf_values
+        assert "reg-b:same-preset" in leaf_values
+
 
 # =============================================================================
 # Multiple remotes support in TUI
@@ -359,10 +404,12 @@ class TestMultipleRemotesSupport:
 
         app = BspLauncherApp.__new__(BspLauncherApp)
         app._remote = None
+        app._remotes = []
         app._branch = None
         app._no_update = False
         app._registry_path = None
         app._stored_remotes = None
+        app._active_remote_specs = []
         app._running_process = None
 
         def fake_call_from_thread(fn, *a, **kw):
@@ -383,12 +430,18 @@ class TestMultipleRemotesSupport:
         app = BspLauncherApp.__new__(BspLauncherApp)
         app._registry_path = None
         app._remote = None
+        app._remotes = []
         app._branch = None
         app._no_update = False
         app._running_process = None
+        app._active_remote_specs = []
         app._stored_remotes = [
             RemoteEntry(name="reg-a", url="https://example.com/reg-a.git", branch="main"),
             RemoteEntry(name="reg-b", url="https://example.com/reg-b.git", branch="develop"),
+        ]
+        app._active_remote_specs = [
+            SimpleNamespace(name="reg-a", url="https://example.com/reg-a.git", branch="main"),
+            SimpleNamespace(name="reg-b", url="https://example.com/reg-b.git", branch="develop"),
         ]
 
         captured_cmd = []
@@ -442,7 +495,7 @@ class TestMultipleRemotesSupport:
 
         populate_calls = []
 
-        with patch("bsp.remotes_manager.RemotesManager.load", return_value=stored_remotes):
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=stored_remotes):
             with patch("bsp.registry_fetcher.RegistryFetcher.fetch_multiple", return_value=[
                 ("reg-a", tmp_path / "reg-a-registry.yaml"),
                 ("reg-b", tmp_path / "reg-b-registry.yaml"),
@@ -460,6 +513,55 @@ class TestMultipleRemotesSupport:
         assert call_kwargs is not None
         assert "config_paths" in call_kwargs.kwargs
         assert app._stored_remotes == stored_remotes
+
+
+# =============================================================================
+# Qualified preset behavior in multi-registry mode
+# =============================================================================
+
+class TestQualifiedPresetSelection:
+    def test_action_export_uses_qualified_selected_preset(self):
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._selected_bsp_name = "reg-b:shared-preset"
+        captured = []
+        app._run_bsp_command = lambda *args, **kwargs: captured.append(args)
+        app._log = lambda *a, **k: None
+
+        app.action_export_config()
+        assert captured == [("export", "reg-b:shared-preset")]
+
+    def test_resolve_build_path_uses_multi_registry_resolution(self):
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._bsp_manager = MagicMock()
+        app._bsp_manager._resolve_preset_multi.return_value = (
+            SimpleNamespace(build_path="/tmp/build-reg-b"),
+            object(),
+            "reg-b",
+            object(),
+            object(),
+            Path("/tmp/reg-b.yaml"),
+        )
+
+        build_path = app._resolve_build_path("reg-b:shared-preset")
+        assert build_path == "/tmp/build-reg-b"
+        app._bsp_manager._resolve_preset_multi.assert_called_once_with("reg-b:shared-preset")
+
+    def test_on_bsp_selected_keeps_selected_registry_identity(self):
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._show_bsp_details = lambda *_: None
+        app._scan_build_artifacts = lambda *_: []
+        app.query_one = lambda selector, widget_type=None: SimpleNamespace(disabled=True)
+
+        event = SimpleNamespace(node=SimpleNamespace(data="reg-b:shared-preset"))
+        app.on_bsp_selected(event)
+
+        assert app._selected_bsp_name == "reg-b:shared-preset"
 
 
 # =============================================================================
@@ -732,6 +834,26 @@ class TestCliGuiRouting:
         _, kwargs = mock_gui.call_args
         assert kwargs.get("registry_path") == str(registry_file)
 
+    def test_bsp_gui_with_repeated_remote_passes_remotes(self):
+        with patch(
+            "sys.argv",
+            [
+                "bsp",
+                "--gui",
+                "--remote", "https://example.com/reg-a.git@main@name=reg-a",
+                "--remote", "https://example.com/reg-b.git@dev@name=reg-b",
+                "list",
+            ],
+        ):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                rc = bsp.main()
+        assert rc == 0
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("remotes") == [
+            "https://example.com/reg-a.git@main@name=reg-a",
+            "https://example.com/reg-b.git@dev@name=reg-b",
+        ]
+
 
 # =============================================================================
 # cli_runner module
@@ -787,7 +909,7 @@ class TestBspLauncherMain:
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args
-        assert kwargs.get("remote") is None
+        assert kwargs.get("remotes") is None
 
     def test_main_custom_remote(self):
         """Custom --remote is forwarded to launch_gui."""
@@ -797,10 +919,58 @@ class TestBspLauncherMain:
             with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
                 gui_main()
         _, kwargs = mock_gui.call_args
-        assert kwargs.get("remote") == "https://example.com/reg.git"
+        assert kwargs.get("remotes") == ["https://example.com/reg.git"]
+
+    def test_main_repeated_remote(self):
+        """Repeated --remote values are forwarded to launch_gui."""
+        from bsp.gui import main as gui_main
+
+        with patch(
+            "sys.argv",
+            [
+                "bsp-explorer",
+                "--remote", "https://example.com/reg-a.git@main@name=reg-a",
+                "--remote", "https://example.com/reg-b.git@dev@name=reg-b",
+            ],
+        ):
+            with patch("bsp.gui.launch_gui", return_value=0) as mock_gui:
+                gui_main()
+        _, kwargs = mock_gui.call_args
+        assert kwargs.get("remotes") == [
+            "https://example.com/reg-a.git@main@name=reg-a",
+            "https://example.com/reg-b.git@dev@name=reg-b",
+        ]
+
+
+class TestBspLauncherMainWeb:
+    def test_main_web_forwards_repeated_remotes(self):
+        from bsp.gui import main_web
+
+        captured = {}
+
+        def _fake_execvp(_prog, argv):
+            captured["argv"] = argv
+            raise SystemExit(0)
+
+        with patch(
+            "sys.argv",
+            [
+                "bsp-explorer-web",
+                "--remote", "https://example.com/reg-a.git@main@name=reg-a",
+                "--remote", "https://example.com/reg-b.git@dev@name=reg-b",
+                "--no-update",
+            ],
+        ):
+            with patch("os.execvp", side_effect=_fake_execvp):
+                with pytest.raises(SystemExit):
+                    main_web()
+
+        bsp_cmd = shlex.split(captured["argv"][2])
+        assert bsp_cmd.count("--remote") == 2
+        assert "https://example.com/reg-a.git@main@name=reg-a" in bsp_cmd
+        assert "https://example.com/reg-b.git@dev@name=reg-b" in bsp_cmd
 
 
 # =============================================================================
 # _list_removable_drives utility
 # =============================================================================
-

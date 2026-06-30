@@ -1411,7 +1411,7 @@ def main() -> int:
             from .gui import launch_gui
             return launch_gui(
                 registry_path=args.registry,
-                remote=args.remote if args.remote != DEFAULT_REMOTE_URL else None,
+                remotes=args.remote,
                 branch=args.branch if args.branch != DEFAULT_BRANCH else None,
                 no_update=not args.update,
             )

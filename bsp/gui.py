@@ -160,6 +160,7 @@ def _list_removable_drives() -> List[Tuple[str, str]]:
 def launch_gui(
     registry_path: Optional[str] = None,
     remote: Optional[str] = None,
+    remotes: Optional[List[str]] = None,
     branch: Optional[str] = None,
     no_update: bool = False,
 ) -> int:
@@ -169,6 +170,8 @@ def launch_gui(
     Args:
         registry_path: Optional path to a local BSP registry file.
         remote: Optional remote git URL for the registry.
+        remotes: Optional list of remote registry specs
+            (``URL[@BRANCH][@name=NAME]``).
         branch: Optional branch for the remote registry.
         no_update: If True, skip updating the cached remote registry.
 
@@ -186,6 +189,7 @@ def launch_gui(
     app = BspLauncherApp(
         registry_path=registry_path,
         remote=remote,
+        remotes=remotes,
         branch=branch,
         no_update=no_update,
     )
@@ -198,19 +202,13 @@ def launch_gui(
         cmd = [sys.executable, "-m", "bsp.cli_runner"]
         if registry_path:
             cmd += ["--registry", registry_path]
-        elif app._stored_remotes and len(app._stored_remotes) > 1:
-            # Multi-registry mode: forward each stored remote
-            for r in app._stored_remotes:
-                cmd += ["--remote", f"{r.url}@{r.branch}@name={r.name}"]
-        elif app._stored_remotes and len(app._stored_remotes) == 1:
-            r = app._stored_remotes[0]
-            cmd += ["--remote", r.url]
-            if r.branch:
-                cmd += ["--branch", r.branch]
+        elif app._active_remote_specs:
+            for spec in app._active_remote_specs:
+                cmd += ["--remote", app._format_remote_spec(spec)]
         elif remote:
-            cmd += ["--remote", remote]
-            if branch:
-                cmd += ["--branch", branch]
+            from .registry_fetcher import DEFAULT_BRANCH, RemoteRegistrySpec
+            spec = RemoteRegistrySpec.parse(remote, default_branch=branch or DEFAULT_BRANCH)
+            cmd += ["--remote", app._format_remote_spec(spec)]
         if no_update:
             cmd.append("--no-update")
         cmd += ["shell", bsp_name]
@@ -228,7 +226,7 @@ def main() -> int:
     Returns:
         Exit code (0 for success, non-zero for errors).
     """
-    from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
+    from .registry_fetcher import DEFAULT_BRANCH
 
     parser = argparse.ArgumentParser(
         prog="bsp-explorer",
@@ -242,15 +240,21 @@ def main() -> int:
     )
     parser.add_argument(
         "--remote",
-        default=DEFAULT_REMOTE_URL,
-        metavar="URL",
-        help="Remote registry git URL (default: %(default)s)",
+        action="append",
+        dest="remote",
+        metavar="URL[@BRANCH][@name=NAME]",
+        default=None,
+        help=(
+            "Remote registry git URL. May be specified multiple times for "
+            "multi-registry mode. Each value may embed a branch and optional "
+            "name as URL@BRANCH@name=NAME."
+        ),
     )
     parser.add_argument(
         "--branch",
         default=DEFAULT_BRANCH,
         metavar="BRANCH",
-        help="Remote registry branch (default: %(default)s)",
+        help="Remote registry branch for a single --remote (default: %(default)s)",
     )
     parser.add_argument(
         "--no-update",
@@ -263,7 +267,7 @@ def main() -> int:
 
     return launch_gui(
         registry_path=args.registry,
-        remote=args.remote if args.remote != DEFAULT_REMOTE_URL else None,
+        remotes=args.remote,
         branch=args.branch if args.branch != DEFAULT_BRANCH else None,
         no_update=args.no_update,
     )
@@ -293,7 +297,7 @@ def main_web() -> int:
     """
     import shlex
     import socket
-    from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
+    from .registry_fetcher import DEFAULT_BRANCH
 
     parser = argparse.ArgumentParser(
         prog="bsp-explorer-web",
@@ -310,15 +314,21 @@ def main_web() -> int:
     )
     parser.add_argument(
         "--remote",
-        default=DEFAULT_REMOTE_URL,
-        metavar="URL",
-        help="Remote registry git URL (default: %(default)s)",
+        action="append",
+        dest="remote",
+        metavar="URL[@BRANCH][@name=NAME]",
+        default=None,
+        help=(
+            "Remote registry git URL. May be specified multiple times for "
+            "multi-registry mode. Each value may embed a branch and optional "
+            "name as URL@BRANCH@name=NAME."
+        ),
     )
     parser.add_argument(
         "--branch",
         default=DEFAULT_BRANCH,
         metavar="BRANCH",
-        help="Remote registry branch (default: %(default)s)",
+        help="Remote registry branch for a single --remote (default: %(default)s)",
     )
     parser.add_argument(
         "--no-update",
@@ -360,8 +370,9 @@ def main_web() -> int:
     bsp_cmd: list[str] = ["bsp-explorer"]
     if args.registry:
         bsp_cmd += ["--registry", args.registry]
-    if args.remote != DEFAULT_REMOTE_URL:
-        bsp_cmd += ["--remote", args.remote]
+    if args.remote:
+        for remote in args.remote:
+            bsp_cmd += ["--remote", remote]
     if args.branch != DEFAULT_BRANCH:
         bsp_cmd += ["--branch", args.branch]
     if args.no_update:
@@ -876,12 +887,14 @@ if TEXTUAL_AVAILABLE:
             self,
             registry_path: Optional[str] = None,
             remote: Optional[str] = None,
+            remotes: Optional[List[str]] = None,
             branch: Optional[str] = None,
             no_update: bool = False,
         ) -> None:
             super().__init__()
             self._registry_path = registry_path
             self._remote = remote
+            self._remotes = remotes[:] if remotes else ([] if remote is None else [remote])
             self._branch = branch
             self._no_update = no_update
             self._bsp_manager = None
@@ -897,6 +910,8 @@ if TEXTUAL_AVAILABLE:
             # Stored remotes used when multiple remotes are loaded from RemotesManager.
             # Each entry is a RemoteEntry with .url, .branch, .name attributes.
             self._stored_remotes: Optional[list] = None
+            self._active_remote_specs: List = []
+            self._registry_source: str = "unknown"
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -995,66 +1010,75 @@ if TEXTUAL_AVAILABLE:
                 from .remotes_manager import RemotesManager
 
                 registry_path = self._registry_path
+                self._stored_remotes = None
+                self._active_remote_specs = []
+                self._registry_source = "unknown"
 
-                if registry_path is None:
+                if registry_path is not None:
+                    self._registry_source = "registry"
+                    bsp_manager = BspManager(registry_path)
+                elif self._remotes:
+                    fetcher = RegistryFetcher()
+                    specs = [
+                        RemoteRegistrySpec.parse(r, default_branch=self._branch or DEFAULT_BRANCH)
+                        for r in self._remotes
+                    ]
+                    self._active_remote_specs = specs
+                    self._registry_source = "explicit-remotes"
+                    if len(specs) == 1:
+                        spec = specs[0]
+                        registry_path = str(
+                            fetcher.fetch_registry(
+                                repo_url=spec.url,
+                                branch=spec.branch,
+                                update=not self._no_update,
+                            )
+                        )
+                        bsp_manager = BspManager(registry_path)
+                    else:
+                        registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                        config_paths = [(name, str(path)) for name, path in registry_pairs]
+                        bsp_manager = BspManager(config_paths=config_paths)
+                        registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
+                else:
                     local_defaults = ["bsp-registry.yaml", "bsp-registry.yml"]
                     local_registry = next(
                         (name for name in local_defaults if Path(name).is_file()), None
                     )
                     if local_registry is not None:
                         registry_path = local_registry
-                    elif self._remote:
-                        # Explicit single remote — legacy single-registry path
-                        fetcher = RegistryFetcher()
-                        registry_path = str(
-                            fetcher.fetch_registry(
-                                repo_url=self._remote,
-                                branch=self._branch or DEFAULT_BRANCH,
-                                update=not self._no_update,
-                            )
-                        )
+                        self._registry_source = "local-auto"
+                        bsp_manager = BspManager(registry_path)
                     else:
-                        # No local registry, no explicit remote — check RemotesManager
                         fetcher = RegistryFetcher()
-                        stored_remotes = RemotesManager().load()
-                        if len(stored_remotes) > 1:
-                            # Multi-registry mode: fetch all stored remotes
-                            specs = [
-                                RemoteRegistrySpec(url=r.url, branch=r.branch, name=r.name)
-                                for r in stored_remotes
-                            ]
+                        stored_remotes = RemotesManager().ensure_default_remote(
+                            branch=self._branch or DEFAULT_BRANCH
+                        )
+                        specs = [
+                            RemoteRegistrySpec(url=r.url, branch=r.branch, name=r.name)
+                            for r in stored_remotes
+                        ]
+                        self._active_remote_specs = specs
+                        self._stored_remotes = stored_remotes
+                        self._registry_source = (
+                            "stored-remotes" if len(stored_remotes) > 1 else "default-remote"
+                        )
+                        if len(specs) == 1:
+                            spec = specs[0]
+                            registry_path = str(
+                                fetcher.fetch_registry(
+                                    repo_url=spec.url,
+                                    branch=spec.branch,
+                                    update=not self._no_update,
+                                )
+                            )
+                            bsp_manager = BspManager(registry_path)
+                        else:
                             registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
                             config_paths = [(name, str(path)) for name, path in registry_pairs]
                             bsp_manager = BspManager(config_paths=config_paths)
-                            bsp_manager.initialize()
-                            self._bsp_manager = bsp_manager
-                            self._stored_remotes = stored_remotes
-                            # Provide first path for the label; subtitle shows all remote names
-                            first_path = str(registry_pairs[0][1]) if registry_pairs else ""
-                            self.call_from_thread(self._populate_bsp_tree, first_path)
-                            return
-                        elif len(stored_remotes) == 1:
-                            # Single stored remote — use single-registry path
-                            r = stored_remotes[0]
-                            registry_path = str(
-                                fetcher.fetch_registry(
-                                    repo_url=r.url,
-                                    branch=r.branch,
-                                    update=not self._no_update,
-                                )
-                            )
-                            self._stored_remotes = stored_remotes
-                        else:
-                            # No configured remotes — use default URL
-                            registry_path = str(
-                                fetcher.fetch_registry(
-                                    repo_url=DEFAULT_REMOTE_URL,
-                                    branch=DEFAULT_BRANCH,
-                                    update=not self._no_update,
-                                )
-                            )
+                            registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
 
-                bsp_manager = BspManager(registry_path)
                 bsp_manager.initialize()
 
                 self._bsp_manager = bsp_manager
@@ -1088,21 +1112,30 @@ if TEXTUAL_AVAILABLE:
 
             # Build registry label and subtitle
             is_multi = self._bsp_manager and len(self._bsp_manager.registries) > 1
-            if self._registry_path:
+            if self._registry_source in {"registry", "local-auto"}:
                 subtitle = registry_path
-            elif self._stored_remotes and len(self._stored_remotes) > 1:
+                source_label = "local file"
+            elif self._registry_source == "explicit-remotes":
                 subtitle = " | ".join(
-                    f"{r.name} ({r.url})" for r in self._stored_remotes
+                    f"{spec.resolved_name()} ({spec.url} @ {spec.branch})"
+                    for spec in self._active_remote_specs
+                ) or f"{DEFAULT_REMOTE_URL} @ {DEFAULT_BRANCH}"
+                source_label = "explicit remote(s)"
+            elif self._registry_source in {"stored-remotes", "default-remote"}:
+                subtitle = " | ".join(
+                    f"{spec.resolved_name()} ({spec.url} @ {spec.branch})"
+                    for spec in self._active_remote_specs
+                ) or f"{DEFAULT_REMOTE_URL} @ {DEFAULT_BRANCH}"
+                source_label = (
+                    "configured remotes"
+                    if self._registry_source == "stored-remotes"
+                    else "default configured remote"
                 )
-            elif self._stored_remotes and len(self._stored_remotes) == 1:
-                r = self._stored_remotes[0]
-                subtitle = f"{r.url} @ {r.branch}"
-            elif self._remote:
-                subtitle = f"{self._remote} @ {self._branch or DEFAULT_BRANCH}"
             else:
                 subtitle = f"{DEFAULT_REMOTE_URL} @ {DEFAULT_BRANCH}"
+                source_label = "remote"
 
-            registry_label_text = f"Registry: {registry_path}"
+            registry_label_text = f"Registry: {registry_path} ({source_label})"
             label = self.query_one("#registry-label", Label)
             label.update(registry_label_text)
             self.sub_title = subtitle
@@ -1219,7 +1252,8 @@ if TEXTUAL_AVAILABLE:
 
             def _add_device_subtree(parent_node, vendor_label: str,
                                     device_slug: str,
-                                    release_map: dict[str, list]) -> int:
+                                    release_map: dict[str, list],
+                                    registry_name: Optional[str] = None) -> int:
                 """Add a device sub-tree, skipping releases that don't match.
 
                 Returns the number of preset leaves added.
@@ -1239,14 +1273,19 @@ if TEXTUAL_AVAILABLE:
                         f"[italic cyan]{rel_label}[/italic cyan]", expand=True
                     )
                     for preset_name in sorted(names):
+                        leaf_name = (
+                            f"{registry_name}:{preset_name}"
+                            if registry_name and is_multi
+                            else preset_name
+                        )
                         rel_node.add_leaf(
                             f"[dim white]{preset_name}[/dim white]",
-                            data=preset_name,
+                            data=leaf_name,
                         )
                         added += 1
                 return added
 
-            def _add_vendor_subtrees(parent_node, vendor_device_release: dict, no_vendor_presets: dict) -> int:
+            def _add_vendor_subtrees(parent_node, vendor_device_release: dict, no_vendor_presets: dict, registry_name: Optional[str] = None) -> int:
                 """Add Vendor → Device → Release → Preset sub-trees under *parent_node*.
 
                 Returns the total number of preset leaves added.
@@ -1268,7 +1307,7 @@ if TEXTUAL_AVAILABLE:
                     )
                     for device_slug, release_map in sorted(device_map.items()):
                         added += _add_device_subtree(
-                            vendor_node, display_name, device_slug, release_map
+                            vendor_node, display_name, device_slug, release_map, registry_name
                         )
 
                 # Devices that had no matching vendor go under "Other"
@@ -1284,7 +1323,7 @@ if TEXTUAL_AVAILABLE:
                     )
                     for device_slug, release_map in sorted(no_vendor_presets.items()):
                         added += _add_device_subtree(
-                            other_node, other_label, device_slug, release_map
+                            other_node, other_label, device_slug, release_map, registry_name
                         )
                 return added
 
@@ -1294,7 +1333,12 @@ if TEXTUAL_AVAILABLE:
                     reg_node = tree.root.add(
                         f"[bold magenta]{reg_name}[/bold magenta]", expand=True
                     )
-                    reg_count = _add_vendor_subtrees(reg_node, vendor_device_release, no_vendor_presets)
+                    reg_count = _add_vendor_subtrees(
+                        reg_node,
+                        vendor_device_release,
+                        no_vendor_presets,
+                        reg_name,
+                    )
                     if reg_count == 0:
                         reg_node.remove()
                     else:
@@ -1380,22 +1424,11 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return
 
-            # Search raw registry first (single-release presets).
-            # For expanded multi-release names (e.g. poky-qemuarm64-scarthgap)
-            # fall back to the resolver's expanded list.
-            bsp = next(
-                (b for b in (self._bsp_manager.model.registry.bsp or [])
-                 if b.name == bsp_name),
-                None,
-            )
-            if bsp is None and self._bsp_manager.resolver:
-                bsp = next(
-                    (p for p in self._bsp_manager.resolver.list_presets()
-                     if p.name == bsp_name),
-                    None,
+            try:
+                resolved, bsp, _reg_name, reg_model, reg_resolver, _reg_path = (
+                    self._bsp_manager._resolve_preset_multi(bsp_name)
                 )
-
-            if bsp is None:
+            except Exception:
                 return
 
             # ── Top pane: BSP details ──────────────────────────────
@@ -1404,7 +1437,7 @@ if TEXTUAL_AVAILABLE:
                 f"[bold cyan]Description:[/bold cyan] {bsp.description}",
             ]
 
-            lines.append(f"[bold cyan]Build Path:[/bold cyan]  {bsp.build.path}")
+            lines.append(f"[bold cyan]Build Path:[/bold cyan]  {resolved.build_path}")
 
             # Bitbake targets
             if bsp.targets:
@@ -1416,7 +1449,7 @@ if TEXTUAL_AVAILABLE:
             env_lines: list[str] = []
 
             # Shared helpers for this BSP
-            registry = self._bsp_manager.model.registry
+            registry = reg_model.registry
             release_slug = bsp.release or (bsp.releases[0] if bsp.releases else None)
             release_obj = next(
                 (r for r in (registry.releases or []) if r.slug == release_slug),
@@ -1429,7 +1462,7 @@ if TEXTUAL_AVAILABLE:
                 container_name = bsp.build.container
             elif release_obj:
                 try:
-                    named_env = self._bsp_manager.resolver.get_named_environment(
+                    named_env = reg_resolver.get_named_environment(
                         release_obj
                     )
                     if named_env and named_env.container:
@@ -1440,7 +1473,7 @@ if TEXTUAL_AVAILABLE:
             # Resolve the container entry to get the image name
             if container_name:
                 try:
-                    containers = getattr(self._bsp_manager.model, "containers", None) or {}
+                    containers = getattr(reg_model, "containers", None) or {}
                     container_cfg = containers.get(container_name)
                     if container_cfg and getattr(container_cfg, "image", None):
                         env_lines.append(
@@ -1460,20 +1493,20 @@ if TEXTUAL_AVAILABLE:
             named_env = None
             if release_obj:
                 try:
-                    named_env = self._bsp_manager.resolver.get_named_environment(
+                    named_env = reg_resolver.get_named_environment(
                         release_obj
                     )
-                    if named_env:
-                        env_name = release_obj.environment or "default"
-                        env_lines.append(
-                            f"[bold cyan]Environment:[/bold cyan] {env_name}"
-                        )
                 except Exception:
                     pass
+                if named_env:
+                    env_name = release_obj.environment or "default"
+                    env_lines.append(
+                        f"[bold cyan]Environment:[/bold cyan] {env_name}"
+                    )
             else:
                 # No matched release — try to show "default" environment directly
                 try:
-                    envs = getattr(self._bsp_manager.model, "environments", None) or {}
+                    envs = getattr(reg_model, "environments", None) or {}
                     if envs:
                         env_name = "default"
                         named_env = envs.get(env_name)
@@ -1500,7 +1533,7 @@ if TEXTUAL_AVAILABLE:
 
             # Global environment variables
             try:
-                global_env = getattr(self._bsp_manager.model, "environment", None)
+                global_env = getattr(reg_model, "environment", None)
                 if global_env and getattr(global_env, "variables", None):
                     env_lines.append("[bold cyan]Global Vars:[/bold cyan]")
                     from .environment import EnvironmentManager
@@ -1534,7 +1567,8 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return []
             try:
-                deploy_dir = self._bsp_manager._get_deploy_dir(bsp_name)
+                resolved, _, _, _, _, _ = self._bsp_manager._resolve_preset_multi(bsp_name)
+                deploy_dir = Path(resolved.build_path) / "build" / "tmp" / "deploy" / "images"
             except Exception:
                 return []
 
@@ -1676,6 +1710,7 @@ if TEXTUAL_AVAILABLE:
             self._bsp_manager = None
             self._selected_bsp_name = None
             self._stored_remotes = None
+            self._active_remote_specs = []
             for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash", "#btn-deploy", "#btn-cancel"):
                 self.query_one(btn_id, Button).disabled = True
             self.query_one("#detail-view", Static).update("Select a BSP from the list.")
@@ -1744,11 +1779,16 @@ if TEXTUAL_AVAILABLE:
 
             # Enumerate available images from the deploy directory
             images: List[Path] = []
-            if self._bsp_manager:
-                try:
-                    images = self._bsp_manager.list_flash_images(self._selected_bsp_name)
-                except Exception as exc:
-                    self._log(f"[yellow]Could not enumerate flash images: {exc}[/yellow]")
+            try:
+                images = [
+                    p for p in self._scan_build_artifacts(self._selected_bsp_name)
+                    if any(
+                        p.name.endswith(s)
+                        for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")
+                    )
+                ]
+            except Exception as exc:
+                self._log(f"[yellow]Could not enumerate flash images: {exc}[/yellow]")
 
             def _on_result(result: Optional[tuple]) -> None:
                 if result:
@@ -1807,23 +1847,20 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return ""
             try:
-                # Try the raw registry entry first
-                bsp = next(
-                    (b for b in (self._bsp_manager.model.registry.bsp or [])
-                     if b.name == bsp_name),
-                    None,
-                )
-                if bsp is None and self._bsp_manager.resolver:
-                    bsp = next(
-                        (p for p in self._bsp_manager.resolver.list_presets()
-                         if p.name == bsp_name),
-                        None,
-                    )
-                if bsp and bsp.build and bsp.build.path:
-                    return bsp.build.path
+                resolved, _, _, _, _, _ = self._bsp_manager._resolve_preset_multi(bsp_name)
+                if resolved.build_path:
+                    return str(resolved.build_path)
             except Exception:
                 pass
             return ""
+
+        @staticmethod
+        def _format_remote_spec(spec) -> str:
+            value = f"{spec.url}@{spec.branch}" if getattr(spec, "branch", None) else spec.url
+            name = getattr(spec, "name", None)
+            if name:
+                value += f"@name={name}"
+            return value
 
         def _run_bsp_command(self, *args: str, log_file: Optional[str] = None, show_progress: bool = False) -> None:
             """
@@ -1847,15 +1884,14 @@ if TEXTUAL_AVAILABLE:
             cmd = [sys.executable, "-u", "-m", "bsp.cli_runner"]
             if self._registry_path:
                 cmd += ["--registry", self._registry_path]
-            elif self._stored_remotes and len(self._stored_remotes) > 1:
-                # Multi-registry mode: pass each stored remote as --remote URL@BRANCH@name=NAME
-                for r in self._stored_remotes:
-                    cmd += ["--remote", f"{r.url}@{r.branch}@name={r.name}"]
-            elif self._stored_remotes and len(self._stored_remotes) == 1:
-                r = self._stored_remotes[0]
-                cmd += ["--remote", r.url]
-                if r.branch:
-                    cmd += ["--branch", r.branch]
+            elif self._active_remote_specs:
+                for spec in self._active_remote_specs:
+                    cmd += ["--remote", self._format_remote_spec(spec)]
+            elif self._remotes:
+                for remote in self._remotes:
+                    cmd += ["--remote", remote]
+                if self._branch:
+                    cmd += ["--branch", self._branch]
             elif self._remote:
                 cmd += ["--remote", self._remote]
                 if self._branch:

@@ -358,6 +358,11 @@ bsp --gui
 
 # Serve the TUI in a browser (Textual web server)
 bsp-explorer-web
+
+# Load multiple remote registries in one GUI session
+bsp-explorer \
+  --remote https://github.com/my-org/bsp-registry.git@main@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@release@name=partner
 ```
 
 **Terminal** (`bsp-explorer`):
@@ -417,11 +422,21 @@ bsp-explorer --registry ./bsp-registry.yaml
 # Use a custom remote registry
 bsp-explorer --remote https://github.com/my-org/bsp-registry.git --branch dev
 
+# Use multiple remotes (same format as the main CLI)
+bsp-explorer \
+  --remote https://github.com/my-org/bsp-registry.git@dev@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@main@name=partner
+
 # Skip the remote update (faster, offline)
 bsp-explorer --no-update
 
 # Serve the TUI in a web browser (requires Textual's web extra)
 bsp-explorer-web
+
+# Web mode supports multiple remotes too
+bsp-explorer-web \
+  --remote https://github.com/my-org/bsp-registry.git@dev@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@main@name=partner
 ```
 
 **TUI in terminal** (`bsp-explorer`):
