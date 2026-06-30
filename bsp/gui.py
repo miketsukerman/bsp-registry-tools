@@ -894,7 +894,12 @@ if TEXTUAL_AVAILABLE:
             super().__init__()
             self._registry_path = registry_path
             self._remote = remote
-            self._remotes = remotes[:] if remotes else ([] if remote is None else [remote])
+            if remotes is not None:
+                self._remotes = remotes[:]
+            elif remote is not None:
+                self._remotes = [remote]
+            else:
+                self._remotes = []
             self._branch = branch
             self._no_update = no_update
             self._bsp_manager = None
@@ -1428,7 +1433,8 @@ if TEXTUAL_AVAILABLE:
                 resolved, bsp, _reg_name, reg_model, reg_resolver, _reg_path = (
                     self._bsp_manager._resolve_preset_multi(bsp_name)
                 )
-            except Exception:
+            except Exception as exc:
+                self._log(f"[yellow]Could not resolve preset details for {bsp_name}: {exc}[/yellow]")
                 return
 
             # ── Top pane: BSP details ──────────────────────────────
@@ -1465,10 +1471,11 @@ if TEXTUAL_AVAILABLE:
                     named_env = reg_resolver.get_named_environment(
                         release_obj
                     )
+                except Exception as exc:
+                    self._log(f"[yellow]Could not resolve named environment: {exc}[/yellow]")
+                else:
                     if named_env and named_env.container:
                         container_name = named_env.container
-                except Exception:
-                    pass
 
             # Resolve the container entry to get the image name
             if container_name:
@@ -1496,13 +1503,14 @@ if TEXTUAL_AVAILABLE:
                     named_env = reg_resolver.get_named_environment(
                         release_obj
                     )
-                except Exception:
-                    pass
-                if named_env:
-                    env_name = release_obj.environment or "default"
-                    env_lines.append(
-                        f"[bold cyan]Environment:[/bold cyan] {env_name}"
-                    )
+                except Exception as exc:
+                    self._log(f"[yellow]Could not load environment details: {exc}[/yellow]")
+                else:
+                    if named_env:
+                        env_name = release_obj.environment or "default"
+                        env_lines.append(
+                            f"[bold cyan]Environment:[/bold cyan] {env_name}"
+                        )
             else:
                 # No matched release — try to show "default" environment directly
                 try:
@@ -1567,7 +1575,9 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return []
             try:
-                resolved, _, _, _, _, _ = self._bsp_manager._resolve_preset_multi(bsp_name)
+                resolved, _preset, _registry_name, _model, _resolver, _path = (
+                    self._bsp_manager._resolve_preset_multi(bsp_name)
+                )
                 deploy_dir = Path(resolved.build_path) / "build" / "tmp" / "deploy" / "images"
             except Exception:
                 return []
@@ -1787,7 +1797,7 @@ if TEXTUAL_AVAILABLE:
                         for s in (".wic", ".wic.gz", ".wic.bz2", ".wic.xz", ".wic.zst", ".img")
                     )
                 ]
-            except Exception as exc:
+            except (FileNotFoundError, PermissionError, OSError) as exc:
                 self._log(f"[yellow]Could not enumerate flash images: {exc}[/yellow]")
 
             def _on_result(result: Optional[tuple]) -> None:
@@ -1847,7 +1857,9 @@ if TEXTUAL_AVAILABLE:
             if not self._bsp_manager:
                 return ""
             try:
-                resolved, _, _, _, _, _ = self._bsp_manager._resolve_preset_multi(bsp_name)
+                resolved, _preset, _registry_name, _model, _resolver, _path = (
+                    self._bsp_manager._resolve_preset_multi(bsp_name)
+                )
                 if resolved.build_path:
                     return str(resolved.build_path)
             except Exception:

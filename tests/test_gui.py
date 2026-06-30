@@ -379,14 +379,13 @@ class TestBspTreeFilter:
         app.query_one = lambda selector, widget_type=None: tree
         app._render_tree("")
 
-        leaf_values = {
-            node.data
-            for reg_node in tree.root.children
-            for vendor_node in reg_node.children
-            for device_node in vendor_node.children
-            for rel_node in device_node.children
-            for node in rel_node.children
-        }
+        leaf_values = set()
+        for reg_node in tree.root.children:
+            for vendor_node in reg_node.children:
+                for device_node in vendor_node.children:
+                    for rel_node in device_node.children:
+                        for node in rel_node.children:
+                            leaf_values.add(node.data)
         assert "reg-a:same-preset" in leaf_values
         assert "reg-b:same-preset" in leaf_values
 
@@ -485,7 +484,7 @@ class TestMultipleRemotesSupport:
 
         app = self._make_minimal_app()
 
-        stored_remotes = [
+        default_remotes = [
             RemoteEntry(name="reg-a", url="https://example.com/reg-a.git", branch="main"),
             RemoteEntry(name="reg-b", url="https://example.com/reg-b.git", branch="main"),
         ]
@@ -495,7 +494,7 @@ class TestMultipleRemotesSupport:
 
         populate_calls = []
 
-        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=stored_remotes):
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=default_remotes):
             with patch("bsp.registry_fetcher.RegistryFetcher.fetch_multiple", return_value=[
                 ("reg-a", tmp_path / "reg-a-registry.yaml"),
                 ("reg-b", tmp_path / "reg-b-registry.yaml"),
@@ -512,7 +511,7 @@ class TestMultipleRemotesSupport:
         call_kwargs = MockBspManager.call_args
         assert call_kwargs is not None
         assert "config_paths" in call_kwargs.kwargs
-        assert app._stored_remotes == stored_remotes
+        assert app._stored_remotes == default_remotes
 
 
 # =============================================================================
