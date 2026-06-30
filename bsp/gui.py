@@ -2127,7 +2127,7 @@ else:
     class _MissingTextualGUIComponent:
         """Placeholder class used when textual is not installed."""
 
-        def __init__(self, *args, **kwargs) -> None:  # pragma: no cover - trivial
+        def __init__(self, *args, **kwargs) -> None:  # pragma: no cover - dependency fallback
             _raise_textual_missing_import_error()
 
     class ConfirmScreen(_MissingTextualGUIComponent):
