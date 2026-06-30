@@ -2124,11 +2124,14 @@ if TEXTUAL_AVAILABLE:
             status = self.query_one("#status-bar", Static)
             status.update(message)
 else:
+    class _MissingTextualMeta(type):
+        """Prevent direct construction of textual-backed components."""
+
+        def __call__(cls, *args, **kwargs):  # pragma: no cover - dependency fallback
+            _raise_textual_missing_import_error()
+
     class _MissingTextualGUIComponent:
         """Placeholder class used when textual is not installed."""
-
-        def __init__(self, *args, **kwargs) -> None:  # pragma: no cover - dependency fallback
-            _raise_textual_missing_import_error()
 
     class ConfirmScreen(_MissingTextualGUIComponent):
         pass
@@ -2142,5 +2145,242 @@ else:
     class CopyableTextArea(_MissingTextualGUIComponent):
         pass
 
-    class BspLauncherApp(_MissingTextualGUIComponent):
-        pass
+    class BspLauncherApp(_MissingTextualGUIComponent, metaclass=_MissingTextualMeta):
+        """Non-textual fallback exposing logic methods used by tests."""
+
+        def __init__(
+            self,
+            registry_path: Optional[str] = None,
+            remote: Optional[str] = None,
+            remotes: Optional[List[str]] = None,
+            branch: Optional[str] = None,
+            no_update: bool = False,
+        ) -> None:
+            self._registry_path = registry_path
+            self._remote = remote
+            if remotes is not None:
+                self._remotes = remotes[:]
+            elif remote is not None:
+                self._remotes = [remote]
+            else:
+                self._remotes = []
+            self._branch = branch
+            self._no_update = no_update
+            self._bsp_manager = None
+            self._selected_bsp_name = None
+            self._running_process = None
+            self._is_loading = False
+            self._load_lock = threading.Lock()
+            self._stored_remotes = None
+            self._active_remote_specs = []
+            self._registry_source = "unknown"
+
+        def _call_from_thread(self, fn, *args, **kwargs) -> None:
+            call_from_thread = getattr(self, "call_from_thread", None)
+            if callable(call_from_thread):
+                call_from_thread(fn, *args, **kwargs)
+            else:
+                fn(*args, **kwargs)
+
+        @staticmethod
+        def _format_remote_spec(spec) -> str:
+            value = f"{spec.url}@{spec.branch}" if getattr(spec, "branch", None) else spec.url
+            name = getattr(spec, "name", None)
+            if name:
+                value += f"@name={name}"
+            return value
+
+        def _load_registry(self) -> None:
+            try:
+                from .bsp_manager import BspManager
+                from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher, RemoteRegistrySpec
+                from .remotes_manager import RemotesManager
+
+                registry_path = self._registry_path
+                self._stored_remotes = None
+                self._active_remote_specs = []
+                self._registry_source = "unknown"
+
+                if registry_path is not None:
+                    self._registry_source = "registry"
+                    bsp_manager = BspManager(registry_path)
+                elif self._remotes:
+                    fetcher = RegistryFetcher()
+                    specs = [
+                        RemoteRegistrySpec.parse(r, default_branch=self._branch or DEFAULT_BRANCH)
+                        for r in self._remotes
+                    ]
+                    self._active_remote_specs = specs
+                    self._registry_source = "explicit-remotes"
+                    if len(specs) == 1:
+                        spec = specs[0]
+                        registry_path = str(
+                            fetcher.fetch_registry(
+                                repo_url=spec.url,
+                                branch=spec.branch,
+                                update=not self._no_update,
+                            )
+                        )
+                        bsp_manager = BspManager(registry_path)
+                    else:
+                        registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                        config_paths = [(name, str(path)) for name, path in registry_pairs]
+                        bsp_manager = BspManager(config_paths=config_paths)
+                        registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
+                else:
+                    local_defaults = ["bsp-registry.yaml", "bsp-registry.yml"]
+                    local_registry = next(
+                        (name for name in local_defaults if Path(name).is_file()), None
+                    )
+                    if local_registry is not None:
+                        registry_path = local_registry
+                        self._registry_source = "local-auto"
+                        bsp_manager = BspManager(registry_path)
+                    else:
+                        fetcher = RegistryFetcher()
+                        stored_remotes = RemotesManager().ensure_default_remote(
+                            branch=self._branch or DEFAULT_BRANCH
+                        )
+                        specs = [
+                            RemoteRegistrySpec(url=r.url, branch=r.branch, name=r.name)
+                            for r in stored_remotes
+                        ]
+                        self._active_remote_specs = specs
+                        self._stored_remotes = stored_remotes
+                        self._registry_source = (
+                            "stored-remotes" if len(stored_remotes) > 1 else "default-remote"
+                        )
+                        if len(specs) == 1:
+                            spec = specs[0]
+                            registry_path = str(
+                                fetcher.fetch_registry(
+                                    repo_url=spec.url,
+                                    branch=spec.branch,
+                                    update=not self._no_update,
+                                )
+                            )
+                            bsp_manager = BspManager(registry_path)
+                        else:
+                            registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                            config_paths = [(name, str(path)) for name, path in registry_pairs]
+                            bsp_manager = BspManager(config_paths=config_paths)
+                            registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
+
+                bsp_manager.initialize()
+                self._bsp_manager = bsp_manager
+                populate = getattr(self, "_populate_bsp_tree", None)
+                if callable(populate):
+                    self._call_from_thread(populate, registry_path)
+            except SystemExit:
+                log = getattr(self, "_log", None)
+                if callable(log):
+                    self._call_from_thread(
+                        log, "[red]Failed to load registry (see logs for details)[/red]"
+                    )
+                status = getattr(self, "_set_status", None)
+                if callable(status):
+                    self._call_from_thread(status, "Error: registry load failed")
+            except Exception as exc:
+                log = getattr(self, "_log", None)
+                if callable(log):
+                    self._call_from_thread(log, f"[red]Error loading registry: {exc}[/red]")
+                status = getattr(self, "_set_status", None)
+                if callable(status):
+                    self._call_from_thread(status, f"Error: {exc}")
+            finally:
+                with self._load_lock:
+                    self._is_loading = False
+
+        def on_bsp_selected(self, event) -> None:
+            bsp_name = event.node.data
+            if bsp_name is None:
+                return
+            self._selected_bsp_name = bsp_name
+            show_details = getattr(self, "_show_bsp_details", None)
+            if callable(show_details):
+                show_details(bsp_name)
+            for btn_id in ("#btn-build", "#btn-shell", "#btn-export", "#btn-flash"):
+                try:
+                    self.query_one(btn_id, None).disabled = False
+                except Exception:
+                    pass
+            try:
+                has_artifacts = bool(self._scan_build_artifacts(bsp_name))
+                self.query_one("#btn-deploy", None).disabled = not has_artifacts
+            except Exception:
+                pass
+
+        def action_export_config(self) -> None:
+            if not self._selected_bsp_name:
+                log = getattr(self, "_log", None)
+                if callable(log):
+                    log("[yellow]No BSP selected[/yellow]")
+                return
+            self._run_bsp_command("export", self._selected_bsp_name)
+
+        def _resolve_build_path(self, bsp_name: str) -> str:
+            if not self._bsp_manager:
+                return ""
+            try:
+                resolved, _preset, _registry_name, _model, _resolver, _path = (
+                    self._bsp_manager._resolve_preset_multi(bsp_name)
+                )
+                if resolved.build_path:
+                    return str(resolved.build_path)
+            except Exception:
+                pass
+            return ""
+
+        def _run_bsp_command(
+            self,
+            *args: str,
+            log_file: Optional[str] = None,
+            show_progress: bool = False,
+        ) -> None:
+            if self._running_process is not None:
+                log = getattr(self, "_log", None)
+                if callable(log):
+                    log("[yellow]A command is already running — please wait[/yellow]")
+                return
+
+            cmd = [sys.executable, "-u", "-m", "bsp.cli_runner"]
+            if self._registry_path:
+                cmd += ["--registry", self._registry_path]
+            elif self._active_remote_specs:
+                for spec in self._active_remote_specs:
+                    cmd += ["--remote", self._format_remote_spec(spec)]
+            elif self._remotes:
+                for remote in self._remotes:
+                    cmd += ["--remote", remote]
+                if self._branch:
+                    cmd += ["--branch", self._branch]
+            elif self._remote:
+                cmd += ["--remote", self._remote]
+                if self._branch:
+                    cmd += ["--branch", self._branch]
+            if self._no_update:
+                cmd.append("--no-update")
+            cmd += list(args)
+
+            clear_log = getattr(self, "_clear_log", None)
+            if callable(clear_log):
+                clear_log()
+            log = getattr(self, "_log", None)
+            if callable(log):
+                log(f"[bold]$ bsp {' '.join(args)}[/bold]")
+                if log_file:
+                    log(f"[dim]Log file: {log_file}[/dim]")
+            set_status = getattr(self, "_set_status", None)
+            if callable(set_status):
+                set_status(f"Running: bsp {' '.join(args)}")
+            set_cancel = getattr(self, "_set_cancel_button", None)
+            if callable(set_cancel):
+                set_cancel(disabled=False)
+
+            thread = threading.Thread(
+                target=self._stream_command, args=(cmd, log_file, show_progress), daemon=True
+            )
+            thread.start()
+
+        def _stream_command(self, cmd: list, log_file: Optional[str] = None, show_progress: bool = False) -> None:
+            raise RuntimeError("textual GUI components are unavailable without textual")
