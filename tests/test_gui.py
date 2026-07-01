@@ -557,6 +557,97 @@ class TestMultipleRemotesSupport:
         assert "config_paths" in call_kwargs.kwargs
         assert app._stored_remotes == default_remotes
 
+    def test_load_registry_empty_specs_shows_no_registry_message(self):
+        """_load_registry shows a helpful message instead of erroring when ensure_default_remote returns []."""
+        app = self._make_minimal_app()
+
+        log_msgs = []
+        populate_calls = []
+        app._log = lambda msg: log_msgs.append(msg)
+        app._populate_bsp_tree = lambda path: populate_calls.append(path)
+        app._is_loading = False
+        app._load_lock = __import__("threading").Lock()
+
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=[]):
+            app._load_registry()
+
+        assert populate_calls == [""], "tree should be reset with empty path"
+        assert any("No registry configured" in m for m in log_msgs), (
+            f"expected helpful no-registry message, got: {log_msgs}"
+        )
+        # Must NOT have loaded a BSP manager
+        assert getattr(app, "_bsp_manager", None) is None
+
+    def test_load_registry_network_failure_no_cache_shows_helpful_message(self):
+        """_load_registry shows a helpful message when remote fetch fails and no cache exists."""
+        from bsp.remotes_manager import RemoteEntry
+
+        app = self._make_minimal_app()
+
+        log_msgs = []
+        populate_calls = []
+        app._log = lambda msg: log_msgs.append(msg)
+        app._populate_bsp_tree = lambda path: populate_calls.append(path)
+        app._is_loading = False
+        app._load_lock = __import__("threading").Lock()
+
+        default_remote = RemoteEntry(
+            name="advantech-europe",
+            url="https://github.com/test.git",
+            branch="main",
+        )
+
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=[default_remote]):
+            with patch("bsp.registry_fetcher.RegistryFetcher.fetch_registry", side_effect=SystemExit(1)):
+                with patch("bsp.registry_fetcher.RegistryFetcher._is_cloned", return_value=False):
+                    app._load_registry()
+
+        assert populate_calls == [""], "tree should be reset when no registry is available"
+        assert any("Could not fetch" in m or "network" in m.lower() for m in log_msgs), (
+            f"expected network-error hint, got: {log_msgs}"
+        )
+        assert getattr(app, "_bsp_manager", None) is None
+
+    def test_load_registry_network_failure_uses_cache_when_available(self, tmp_path):
+        """_load_registry falls back to the cached clone when update fails due to network issues."""
+        from bsp.remotes_manager import RemoteEntry
+
+        app = self._make_minimal_app()
+
+        log_msgs = []
+        populate_calls = []
+        app._log = lambda msg: log_msgs.append(msg)
+        app._populate_bsp_tree = lambda path: populate_calls.append(path)
+        app._is_loading = False
+        app._load_lock = __import__("threading").Lock()
+
+        default_remote = RemoteEntry(
+            name="advantech-europe",
+            url="https://github.com/test.git",
+            branch="main",
+        )
+        cached_yaml = tmp_path / "bsp-registry.yaml"
+        cached_yaml.write_text("version: '2.0'\nbsps: []\n")
+
+        def fake_fetch(repo_url, branch, update):
+            if update:
+                raise SystemExit(1)
+            return cached_yaml
+
+        fake_bsp_manager = MagicMock()
+        fake_bsp_manager.registries = []
+
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=[default_remote]):
+            with patch("bsp.registry_fetcher.RegistryFetcher.fetch_registry", side_effect=fake_fetch):
+                with patch("bsp.registry_fetcher.RegistryFetcher._is_cloned", return_value=True):
+                    with patch("bsp.bsp_manager.BspManager", return_value=fake_bsp_manager):
+                        app._load_registry()
+
+        assert populate_calls == [str(cached_yaml)], "tree should be populated from cached registry"
+        assert any("cached" in m.lower() for m in log_msgs), (
+            f"expected cached-copy warning, got: {log_msgs}"
+        )
+
 
 # =============================================================================
 # Qualified preset behavior in multi-registry mode

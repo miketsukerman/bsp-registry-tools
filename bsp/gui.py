@@ -1077,21 +1077,92 @@ if TEXTUAL_AVAILABLE:
                         self._registry_source = (
                             "stored-remotes" if len(stored_remotes) > 1 else "default-remote"
                         )
-                        if len(specs) == 1:
-                            spec = specs[0]
-                            registry_path = str(
-                                fetcher.fetch_registry(
-                                    repo_url=spec.url,
-                                    branch=spec.branch,
-                                    update=not self._no_update,
-                                )
+                        if not specs:
+                            self.call_from_thread(
+                                self._log,
+                                "[yellow]No registry configured — pass --registry for a "
+                                "local file or run `bsp remote add` to add a remote.[/yellow]",
                             )
+                            self.call_from_thread(self._populate_bsp_tree, "")
+                            return
+                        elif len(specs) == 1:
+                            spec = specs[0]
+                            try:
+                                registry_path = str(
+                                    fetcher.fetch_registry(
+                                        repo_url=spec.url,
+                                        branch=spec.branch,
+                                        update=not self._no_update,
+                                    )
+                                )
+                            except SystemExit:
+                                if not self._no_update and fetcher._is_cloned():
+                                    # Network update failed — fall back to the cached clone.
+                                    registry_path = str(
+                                        fetcher.fetch_registry(
+                                            repo_url=spec.url,
+                                            branch=spec.branch,
+                                            update=False,
+                                        )
+                                    )
+                                    self.call_from_thread(
+                                        self._log,
+                                        "[yellow]Registry update failed (network "
+                                        "unavailable?) — using cached copy.[/yellow]",
+                                    )
+                                else:
+                                    self.call_from_thread(
+                                        self._log,
+                                        "[yellow]Could not fetch remote registry — check "
+                                        "your network connection or pass --registry for a "
+                                        "local file.[/yellow]",
+                                    )
+                                    self.call_from_thread(self._populate_bsp_tree, "")
+                                    return
                             bsp_manager = BspManager(registry_path)
                         else:
-                            registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                            try:
+                                registry_pairs = fetcher.fetch_multiple(
+                                    specs, update=not self._no_update
+                                )
+                            except SystemExit:
+                                if not self._no_update:
+                                    try:
+                                        registry_pairs = fetcher.fetch_multiple(
+                                            specs, update=False
+                                        )
+                                        self.call_from_thread(
+                                            self._log,
+                                            "[yellow]Registry update failed (network "
+                                            "unavailable?) — using cached copies.[/yellow]",
+                                        )
+                                    except SystemExit:
+                                        self.call_from_thread(
+                                            self._log,
+                                            "[yellow]Could not fetch remote registries — "
+                                            "check your network connection or pass "
+                                            "--registry for a local file.[/yellow]",
+                                        )
+                                        self.call_from_thread(self._populate_bsp_tree, "")
+                                        return
+                                else:
+                                    self.call_from_thread(
+                                        self._log,
+                                        "[yellow]Could not fetch remote registries.[/yellow]",
+                                    )
+                                    self.call_from_thread(self._populate_bsp_tree, "")
+                                    return
+                            if not registry_pairs:
+                                self.call_from_thread(
+                                    self._log,
+                                    "[yellow]No registries available — pass --registry "
+                                    "for a local file or configure remotes.[/yellow]",
+                                )
+                                self.call_from_thread(self._populate_bsp_tree, "")
+                                return
                             config_paths = [(name, str(path)) for name, path in registry_pairs]
                             bsp_manager = BspManager(config_paths=config_paths)
-                            registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
+                            registry_path = str(registry_pairs[0][1])
 
                 bsp_manager.initialize()
 
@@ -1099,11 +1170,13 @@ if TEXTUAL_AVAILABLE:
                 self.call_from_thread(self._populate_bsp_tree, registry_path)
 
             except SystemExit:
+                self.call_from_thread(self._populate_bsp_tree, "")
                 self.call_from_thread(
                     self._log, "[red]Failed to load registry (see logs for details)[/red]"
                 )
                 self.call_from_thread(self._set_status, "Error: registry load failed")
             except Exception as exc:
+                self.call_from_thread(self._populate_bsp_tree, "")
                 self.call_from_thread(
                     self._log, f"[red]Error loading registry: {exc}[/red]"
                 )
@@ -2254,21 +2327,106 @@ else:
                         self._registry_source = (
                             "stored-remotes" if len(stored_remotes) > 1 else "default-remote"
                         )
-                        if len(specs) == 1:
-                            spec = specs[0]
-                            registry_path = str(
-                                fetcher.fetch_registry(
-                                    repo_url=spec.url,
-                                    branch=spec.branch,
-                                    update=not self._no_update,
+                        _log = getattr(self, "_log", None)
+                        _populate = getattr(self, "_populate_bsp_tree", None)
+                        if not specs:
+                            if callable(_log):
+                                self._call_from_thread(
+                                    _log,
+                                    "[yellow]No registry configured — pass --registry for a "
+                                    "local file or run `bsp remote add` to add a remote.[/yellow]",
                                 )
-                            )
+                            if callable(_populate):
+                                self._call_from_thread(_populate, "")
+                            return
+                        elif len(specs) == 1:
+                            spec = specs[0]
+                            try:
+                                registry_path = str(
+                                    fetcher.fetch_registry(
+                                        repo_url=spec.url,
+                                        branch=spec.branch,
+                                        update=not self._no_update,
+                                    )
+                                )
+                            except SystemExit:
+                                if not self._no_update and fetcher._is_cloned():
+                                    # Network update failed — fall back to the cached clone.
+                                    registry_path = str(
+                                        fetcher.fetch_registry(
+                                            repo_url=spec.url,
+                                            branch=spec.branch,
+                                            update=False,
+                                        )
+                                    )
+                                    if callable(_log):
+                                        self._call_from_thread(
+                                            _log,
+                                            "[yellow]Registry update failed (network "
+                                            "unavailable?) — using cached copy.[/yellow]",
+                                        )
+                                else:
+                                    if callable(_log):
+                                        self._call_from_thread(
+                                            _log,
+                                            "[yellow]Could not fetch remote registry — check "
+                                            "your network connection or pass --registry for a "
+                                            "local file.[/yellow]",
+                                        )
+                                    if callable(_populate):
+                                        self._call_from_thread(_populate, "")
+                                    return
                             bsp_manager = BspManager(registry_path)
                         else:
-                            registry_pairs = fetcher.fetch_multiple(specs, update=not self._no_update)
+                            try:
+                                registry_pairs = fetcher.fetch_multiple(
+                                    specs, update=not self._no_update
+                                )
+                            except SystemExit:
+                                if not self._no_update:
+                                    try:
+                                        registry_pairs = fetcher.fetch_multiple(
+                                            specs, update=False
+                                        )
+                                        if callable(_log):
+                                            self._call_from_thread(
+                                                _log,
+                                                "[yellow]Registry update failed (network "
+                                                "unavailable?) — using cached copies.[/yellow]",
+                                            )
+                                    except SystemExit:
+                                        if callable(_log):
+                                            self._call_from_thread(
+                                                _log,
+                                                "[yellow]Could not fetch remote registries — "
+                                                "check your network connection or pass "
+                                                "--registry for a local file.[/yellow]",
+                                            )
+                                        if callable(_populate):
+                                            self._call_from_thread(_populate, "")
+                                        return
+                                else:
+                                    if callable(_log):
+                                        self._call_from_thread(
+                                            _log,
+                                            "[yellow]Could not fetch remote registries.[/yellow]",
+                                        )
+                                    if callable(_populate):
+                                        self._call_from_thread(_populate, "")
+                                    return
+                            if not registry_pairs:
+                                if callable(_log):
+                                    self._call_from_thread(
+                                        _log,
+                                        "[yellow]No registries available — pass --registry "
+                                        "for a local file or configure remotes.[/yellow]",
+                                    )
+                                if callable(_populate):
+                                    self._call_from_thread(_populate, "")
+                                return
                             config_paths = [(name, str(path)) for name, path in registry_pairs]
                             bsp_manager = BspManager(config_paths=config_paths)
-                            registry_path = str(registry_pairs[0][1]) if registry_pairs else ""
+                            registry_path = str(registry_pairs[0][1])
 
                 bsp_manager.initialize()
                 self._bsp_manager = bsp_manager
@@ -2276,6 +2434,9 @@ else:
                 if callable(populate):
                     self._call_from_thread(populate, registry_path)
             except SystemExit:
+                populate = getattr(self, "_populate_bsp_tree", None)
+                if callable(populate):
+                    self._call_from_thread(populate, "")
                 log = getattr(self, "_log", None)
                 if callable(log):
                     self._call_from_thread(
@@ -2285,6 +2446,9 @@ else:
                 if callable(status):
                     self._call_from_thread(status, "Error: registry load failed")
             except Exception as exc:
+                populate = getattr(self, "_populate_bsp_tree", None)
+                if callable(populate):
+                    self._call_from_thread(populate, "")
                 log = getattr(self, "_log", None)
                 if callable(log):
                     self._call_from_thread(log, f"[red]Error loading registry: {exc}[/red]")
