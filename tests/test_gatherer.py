@@ -315,6 +315,88 @@ class TestArtifactGathererGather:
 
 
 # =============================================================================
+# ArtifactGatherer progress output tests
+# =============================================================================
+
+
+class TestGatherProgressOutput:
+    """Verify that gather() emits progress messages to stdout without --verbose."""
+
+    def _make_gatherer_with_artifacts(self, tmp_path):
+        backend = _FakeBackend()
+        prefix = "vendor/mydev/myrel/2024-01-15"
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic_data"
+        backend.blobs[f"{prefix}/image.tar.gz"] = b"tar_data"
+        manifest = {
+            "schema_version": "1",
+            "artifacts": [
+                {"name": "image.wic.gz"},
+                {"name": "image.tar.gz"},
+            ],
+        }
+        backend.blobs[f"{prefix}/manifest.json"] = json.dumps(manifest).encode()
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        return ArtifactGatherer(cfg, backend)
+
+    def test_gather_banner_printed(self, tmp_path, capsys):
+        gatherer = self._make_gatherer_with_artifacts(tmp_path)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "Gathering artifacts" in out
+        assert "mydev" in out
+        assert "myrel" in out
+
+    def test_per_file_download_printed(self, tmp_path, capsys):
+        gatherer = self._make_gatherer_with_artifacts(tmp_path)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "Downloading image.wic.gz" in out
+        assert "Downloading image.tar.gz" in out
+
+    def test_dry_run_banner_printed(self, tmp_path, capsys):
+        backend = _FakeBackend(dry_run=True)
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        gatherer = ArtifactGatherer(cfg, backend)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+        )
+        out = capsys.readouterr().out
+        assert "[dry-run]" in out
+        assert "Would download" in out
+
+    def test_gather_cache_dry_run_message_printed(self, tmp_path, capsys):
+        backend = _FakeBackend(dry_run=True)
+        cfg = DeployConfig(prefix="{vendor}/{device}/{release}/{date}")
+        gatherer = ArtifactGatherer(cfg, backend)
+        gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="mydev",
+            release="myrel",
+            vendor="vendor",
+            date_override="2024-01-15",
+            gather_cache=True,
+        )
+        out = capsys.readouterr().out
+        assert "Would restore Yocto caches" in out
+
+
+# =============================================================================
 # AzureStorageBackend.download_file tests
 # =============================================================================
 
@@ -526,7 +608,7 @@ class TestCliGatherArguments:
 
 GATHER_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -629,3 +711,308 @@ class TestBspManagerGather:
                 result = mgr.gather_bsp("rpi5-scarthgap", dry_run=True)
 
         assert isinstance(result, GatherResult)
+
+
+# =============================================================================
+# GatherResult cache_artifacts field tests
+# =============================================================================
+
+
+class TestGatherResultCacheArtifacts:
+    def test_defaults_empty(self):
+        result = GatherResult()
+        assert result.cache_artifacts == []
+
+    def test_total_count_excludes_cache_artifacts(self, tmp_path):
+        art = tmp_path / "img.wic.gz"
+        cache = tmp_path / "downloads"
+        result = GatherResult(artifacts=[art], cache_artifacts=[cache])
+        assert result.total_count == 1  # only artifacts, not cache
+
+
+# =============================================================================
+# ArtifactGatherer cache restore tests
+# =============================================================================
+
+
+class TestArtifactGathererCacheRestore:
+    """Test Yocto cache restore logic in ArtifactGatherer."""
+
+    def _make_gatherer(self, backend=None):
+        cfg = DeployConfig(
+            provider="azure",
+            container="bsp-artifacts",
+            prefix="{device}/{release}/{date}",
+        )
+        if backend is None:
+            backend = _FakeBackend()
+        return ArtifactGatherer(cfg, backend)
+
+    def _make_cache_archive(self, tmp_path, name="downloads") -> bytes:
+        """Create a minimal tar.gz archive for testing extraction."""
+        import io
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            content = f"cache file for {name}".encode()
+            info = tarfile.TarInfo(name=f"{name}/cached.file")
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+        return buf.getvalue()
+
+    def test_gather_cache_downloads_restored(self, tmp_path):
+        backend = _FakeBackend()
+        prefix = "mydev/rel/2025-01-01"
+        # Put an artifact so gather() has something to download
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic"
+        # Put a downloads cache archive
+        backend.blobs[f"{prefix}/cache/downloads.tar.gz"] = self._make_cache_archive(tmp_path)
+
+        gatherer = self._make_gatherer(backend=backend)
+        downloads_dest = str(tmp_path / "dl_restore")
+        result = gatherer.gather(
+            dest_dir=str(tmp_path / "artifacts"),
+            device="mydev",
+            release="rel",
+            date_override="2025-01-01",
+            gather_cache=True,
+            downloads_dest=downloads_dest,
+        )
+
+        assert len(result.cache_artifacts) == 1
+        assert str(tmp_path / "dl_restore") in [str(p) for p in result.cache_artifacts]
+
+    def test_gather_cache_sstate_restored(self, tmp_path):
+        backend = _FakeBackend()
+        prefix = "dev/rel/2025-01-01"
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic"
+        backend.blobs[f"{prefix}/cache/sstate.tar.gz"] = self._make_cache_archive(tmp_path, "sstate")
+
+        gatherer = self._make_gatherer(backend=backend)
+        sstate_dest = str(tmp_path / "ss_restore")
+        result = gatherer.gather(
+            dest_dir=str(tmp_path / "arts"),
+            device="dev",
+            release="rel",
+            date_override="2025-01-01",
+            gather_cache=True,
+            sstate_dest=sstate_dest,
+        )
+
+        assert len(result.cache_artifacts) == 1
+        assert str(tmp_path / "ss_restore") in [str(p) for p in result.cache_artifacts]
+
+    def test_gather_cache_soft_skip_when_missing(self, tmp_path):
+        """Missing cache archive must not cause failure — just log info."""
+        backend = _FakeBackend()
+        prefix = "dev/rel/2025-01-01"
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic"
+        # No cache archive stored
+
+        gatherer = self._make_gatherer(backend=backend)
+        # Should not raise
+        result = gatherer.gather(
+            dest_dir=str(tmp_path / "arts"),
+            device="dev",
+            release="rel",
+            date_override="2025-01-01",
+            gather_cache=True,
+            downloads_dest=str(tmp_path / "dl"),
+        )
+
+        assert result.cache_artifacts == []
+        assert len(result.artifacts) == 1  # regular artifact still downloaded
+
+    def test_gather_without_cache_flag_no_restore(self, tmp_path):
+        """Without gather_cache=True no cache restore is attempted."""
+        backend = _FakeBackend()
+        prefix = "dev/rel/2025-01-01"
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic"
+        backend.blobs[f"{prefix}/cache/downloads.tar.gz"] = self._make_cache_archive(tmp_path)
+
+        gatherer = self._make_gatherer(backend=backend)
+        result = gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="dev", release="rel", date_override="2025-01-01",
+            gather_cache=False,
+        )
+
+        assert result.cache_artifacts == []
+
+    def test_gather_cache_dry_run_no_download(self, tmp_path):
+        backend = _FakeBackend(dry_run=True)
+        gatherer = self._make_gatherer(backend=backend)
+        result = gatherer.gather(
+            dest_dir=str(tmp_path),
+            device="dev", release="rel", date_override="2025-01-01",
+            gather_cache=True,
+            downloads_dest=str(tmp_path / "dl"),
+        )
+
+        # dry_run exits early — no artifacts, no cache
+        assert result.cache_artifacts == []
+        assert result.dry_run is True
+
+    def test_gather_cache_from_manifest(self, tmp_path):
+        """When manifest has yocto_cache section the cache archive is located correctly."""
+        backend = _FakeBackend()
+        prefix = "dev/rel/2025-01-01"
+        manifest = {
+            "schema_version": "1",
+            "artifacts": [{"name": "image.wic.gz", "sha256": "x"}],
+            "yocto_cache": {
+                "downloads": {
+                    "name": "downloads.tar.gz",
+                    "remote_url": f"fake://{prefix}/cache/downloads.tar.gz",
+                    "sha256": "y",
+                }
+            },
+        }
+        backend.blobs[f"{prefix}/manifest.json"] = json.dumps(manifest).encode()
+        backend.blobs[f"{prefix}/image.wic.gz"] = b"wic"
+        backend.blobs[f"{prefix}/cache/downloads.tar.gz"] = self._make_cache_archive(tmp_path)
+
+        gatherer = self._make_gatherer(backend=backend)
+        result = gatherer.gather(
+            dest_dir=str(tmp_path / "arts"),
+            device="dev", release="rel", date_override="2025-01-01",
+            gather_cache=True,
+            downloads_dest=str(tmp_path / "dl"),
+        )
+
+        assert len(result.cache_artifacts) == 1
+
+
+# =============================================================================
+# BspManager gather cache path resolution tests
+# =============================================================================
+
+
+class TestBspManagerGatherCachePaths:
+    """Verify that BspManager wires cache flags through to ArtifactGatherer."""
+
+    @pytest.fixture()
+    def gather_registry_file2(self, tmp_path):
+        yaml_content = """
+specification:
+  version: "2.0"
+registry:
+  devices:
+    - slug: rpi5
+      description: "Raspberry Pi 5"
+      vendor: rpi
+      soc_vendor: bcm
+      includes:
+        - kas/rpi5.yaml
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap"
+      includes:
+        - kas/scarthgap.yaml
+  features: []
+  bsp:
+    - name: rpi5-scarthgap
+      description: "RPi5 Scarthgap"
+      device: rpi5
+      release: scarthgap
+deploy:
+  provider: azure
+  container: bsp-artifacts
+"""
+        reg_file = tmp_path / "bsp-registry.yaml"
+        reg_file.write_text(yaml_content)
+        return reg_file
+
+    def test_gather_bsp_passes_gather_cache_to_gatherer(self, tmp_path, gather_registry_file2):
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+
+        with patch("bsp.bsp_manager.ArtifactGatherer") as MockGatherer:
+            mock_instance = MockGatherer.return_value
+            mock_instance.gather.return_value = GatherResult(dest_dir=tmp_path)
+            with patch("bsp.bsp_manager.create_backend") as mock_factory:
+                mock_factory.return_value = MagicMock()
+                mgr.gather_bsp(
+                    "rpi5-scarthgap",
+                    dry_run=True,
+                    gather_cache=True,
+                    cache_downloads_dest="/mnt/dl",
+                    cache_sstate_dest="/mnt/ss",
+                )
+
+        call_kwargs = mock_instance.gather.call_args.kwargs
+        assert call_kwargs.get("gather_cache") is True
+        assert call_kwargs.get("downloads_dest") == "/mnt/dl"
+        assert call_kwargs.get("sstate_dest") == "/mnt/ss"
+
+    def test_resolve_cache_restore_paths_uses_env_manager(self, tmp_path, gather_registry_file2):
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+
+        mock_env = MagicMock()
+        mock_env.get_value.side_effect = lambda k: "/env/dl" if k == "DL_DIR" else "/env/ss"
+        mgr.env_manager = mock_env
+
+        dl, ss = mgr._resolve_cache_restore_paths()
+        assert dl == "/env/dl"
+        assert ss == "/env/ss"
+
+    def test_resolve_cache_restore_paths_cli_override_wins(self, tmp_path, gather_registry_file2):
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+
+        mock_env = MagicMock()
+        mock_env.get_value.side_effect = lambda k: "/env/dl"
+        mgr.env_manager = mock_env
+
+        dl, ss = mgr._resolve_cache_restore_paths(cache_downloads_dest="/cli/dl")
+        assert dl == "/cli/dl"  # CLI wins
+
+    def test_resolve_cache_restore_paths_falls_back_to_yocto_defaults(
+        self, tmp_path, gather_registry_file2
+    ):
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        base_dir = tmp_path / "build"
+        dl, ss = mgr._resolve_cache_restore_paths(
+            base_dir=str(base_dir),
+            create_dirs=True,
+        )
+        assert dl == str(base_dir / "downloads")
+        assert ss == str(base_dir / "sstate-cache")
+        assert (base_dir / "downloads").is_dir()
+        assert (base_dir / "sstate-cache").is_dir()
+
+    def test_resolve_cache_restore_paths_nested_artifact_dirs(
+        self, tmp_path, gather_registry_file2
+    ):
+        """build/ prefix in artifact_dirs → restore defaults under base_dir/build/."""
+        from bsp.bsp_manager import BspManager
+
+        mgr = BspManager(config_path=str(gather_registry_file2))
+        mgr.initialize()
+        mgr.env_manager = MagicMock()
+        mgr.env_manager.get_value.return_value = None
+
+        base_dir = tmp_path / "bsp-build"
+        dl, ss = mgr._resolve_cache_restore_paths(
+            base_dir=str(base_dir),
+            artifact_dirs=["build/tmp/deploy/images", "build/tmp/deploy/sdk"],
+            create_dirs=True,
+        )
+        assert dl == str(base_dir / "build" / "downloads")
+        assert ss == str(base_dir / "build" / "sstate-cache")
+        assert (base_dir / "build" / "downloads").is_dir()
+        assert (base_dir / "build" / "sstate-cache").is_dir()

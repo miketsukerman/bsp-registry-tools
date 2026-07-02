@@ -4,21 +4,63 @@ YAML parsing utilities and Docker build helper for BSP registry tools.
 
 import logging
 import os
+import re
+import shlex
 import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 
 import dacite
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
 
-from .models import Docker, DockerArg, RegistryRoot
+from .models import Docker, DockerArg, DockerVolume, RegistryRoot
+
+
+def get_installed_package_version(package_name: str) -> str:
+    """Return installed package version or ``unknown`` when unavailable."""
+    try:
+        return pkg_version(package_name)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def expand_build_options_env(value: str) -> str:
+    """Expand ``$ENV{VAR}`` placeholders in *value* with OS environment values.
+
+    Unrecognised placeholders (variable not set) are left unchanged.
+    This is the same ``$ENV{}`` convention used everywhere else in the registry.
+    """
+    def _replace(m: re.Match) -> str:
+        return os.environ.get(m.group(1), m.group(0))
+    return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
+
+
+def normalize_build_option_tokens(tokens: List[str]) -> List[str]:
+    """Normalize docker build-option tokens for compatibility across engines.
+
+    Currently this rewrites ``--network=<mode>`` to ``--network <mode>``.
+    """
+    normalized: List[str] = []
+    for token in tokens:
+        if token.startswith("--network="):
+            network_mode = token.split("=", 1)[1]
+            normalized.extend(["--network", network_mode])
+        else:
+            normalized.append(token)
+    return normalized
 
 # =============================================================================
 # YAML Configuration Parser with Container Support
 # =============================================================================
 
-SUPPORTED_REGISTRY_VERSION = "2.0"
+SUPPORTED_REGISTRY_VERSION = "2.2"
+
+# Registry schema follows semantic versioning (https://semver.org/).
+# Minor-version increments are backward compatible: a tool supporting version
+# MAJOR.MINOR accepts any registry that declares MAJOR.x where x <= MINOR.
+_SUPPORTED_MAJOR, _SUPPORTED_MINOR = (int(p) for p in SUPPORTED_REGISTRY_VERSION.split("."))
 
 
 def read_yaml_file(filename: Path) -> str:
@@ -92,6 +134,17 @@ def convert_containers_list_to_dict(containers_list: List[Dict[str, Any]]) -> Di
     for container_item in containers_list:
         for container_name, container_config in container_item.items():
             if isinstance(container_config, dict):
+                # Parse volumes list (each entry is a dict with host/container/read_only)
+                raw_volumes = container_config.get('volumes', [])
+                volumes = [
+                    DockerVolume(
+                        host=v['host'],
+                        container=v['container'],
+                        read_only=v.get('read_only', False),
+                    )
+                    for v in raw_volumes
+                    if isinstance(v, dict) and 'host' in v and 'container' in v
+                ]
                 # Convert to Docker dataclass
                 containers_dict[container_name] = Docker(
                     image=container_config.get('image'),
@@ -99,8 +152,10 @@ def convert_containers_list_to_dict(containers_list: List[Dict[str, Any]]) -> Di
                     args=[DockerArg(name=arg['name'], value=arg['value'])
                           for arg in container_config.get('args', [])],
                     runtime_args=container_config.get('runtime_args'),
+                    build_options=container_config.get('build_options'),
                     privileged=container_config.get('privileged', False),
                     copy=container_config.get('copy', []),
+                    volumes=volumes,
                 )
             else:
                 logging.warning(f"Invalid container configuration for {container_name}, skipping")
@@ -234,13 +289,22 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     """
     yaml_dict = _load_and_merge_includes(filename)
 
-    # Fail fast if the registry version is not supported
+    # Fail fast if the registry version is not supported.
+    # Schema follows semver: accept any MAJOR.x where x <= supported MINOR.
     spec = yaml_dict.get('specification') or {}
     version = spec.get('version') if isinstance(spec, dict) else None
-    if version != SUPPORTED_REGISTRY_VERSION:
+    _version_ok = False
+    if isinstance(version, str) and version.count(".") == 1:
+        try:
+            v_major, v_minor = (int(p) for p in version.split("."))
+            _version_ok = (v_major == _SUPPORTED_MAJOR and v_minor <= _SUPPORTED_MINOR)
+        except ValueError:
+            pass
+    if not _version_ok:
         logging.error(
             f"Unsupported registry version '{version}' in {filename}. "
-            f"This tool requires version '{SUPPORTED_REGISTRY_VERSION}'. "
+            f"This tool supports schema versions "
+            f"{_SUPPORTED_MAJOR}.0 – {SUPPORTED_REGISTRY_VERSION}. "
             f"See docs/migration-v1-to-v2.md in the bsp-registry-tools repository "
             f"for upgrade instructions."
         )
@@ -254,7 +318,11 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
     try:
         # Use dacite to convert dictionary to strongly-typed dataclass
         # strict=False allows forward compatibility with new fields
-        cfg = dacite.Config(strict=False)
+        # The DockerVolume type hook converts raw dicts to DockerVolume objects.
+        cfg = dacite.Config(
+            strict=False,
+            type_hooks={DockerVolume: lambda d: DockerVolume(**d) if isinstance(d, dict) else d},
+        )
         ast = dacite.from_dict(data_class=RegistryRoot, data=yaml_dict, config=cfg)
         return ast
     except dacite.UnexpectedDataError as e:
@@ -274,7 +342,8 @@ def get_registry_from_yaml_file(filename: Path) -> RegistryRoot:
 
 def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
                  build_args: Optional[List[DockerArg]] = None,
-                 verbose: bool = False) -> None:
+                 verbose: bool = False,
+                 build_options: Optional[str] = None) -> None:
     """
     Build Docker image from Dockerfile with comprehensive validation.
 
@@ -291,6 +360,11 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         build_args: List of Docker build arguments for parameterized builds
         verbose: If True, stream docker build output live; otherwise show
                  only a status message and suppress build output
+        build_options: Extra flags appended to the ``docker build`` command
+                       before the build context (e.g. ``--no-cache
+                       --network host``).  Split with shell quoting rules.
+                       ``$ENV{VAR}`` placeholders are expanded at build time
+                       (e.g. ``$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}``).
 
     Raises:
         SystemExit: If Docker build fails, prerequisites are missing, or Docker is unavailable
@@ -319,6 +393,14 @@ def build_docker(dockerfile_dir: str, dockerfile: str, tag: str,
         if build_args:
             for argument in build_args:
                 cmd.extend(["--build-arg", f"{argument.name}={argument.value}"])
+
+        # Add extra build options (e.g. --no-cache, --network host).
+        # Expand $ENV{VAR} placeholders so users can write
+        #   build_options: "$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+        # and have the variable resolved at build time.
+        if build_options:
+            raw_tokens = shlex.split(expand_build_options_env(build_options))
+            cmd.extend(normalize_build_option_tokens(raw_tokens))
 
         cmd.extend(["."])  # Build context is current directory
 

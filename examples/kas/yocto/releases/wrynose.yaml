@@ -1,0 +1,28 @@
+# KAS configuration for Yocto Wrynose (6.0 LTS)
+# https://downloads.yoctoproject.org/releases/yocto/yocto-6.0/RELEASENOTES
+header:
+  version: 14
+
+defaults:
+  repos:
+    branch: "wrynose"
+
+repos:
+  bitbake:
+    branch: "master"
+
+  openembedded-core:
+    layers:
+      meta: 
+
+  meta-yocto:
+    layers:
+      meta-poky: 
+      meta-yocto-bsp: 
+
+  poky:
+    branch: "master"
+    layers:
+      meta: "disabled"
+      meta-poky: "disabled"
+      meta-yocto-bsp: "disabled"

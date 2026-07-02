@@ -3,11 +3,11 @@ Advantech Board Support Package (BSP) Registry Manager
 
 This package provides a comprehensive command-line interface and Python API for
 managing and building Yocto-based BSPs using the KAS build system. It uses a
-YAML-based registry (schema v2.0) to define devices, releases, features, and
+YAML-based registry (schema v2.2) to define devices, releases, features, and
 optional named BSP presets, making reproducible Yocto builds straightforward.
 
 Key Features:
-- BSP registry management via YAML configuration files (schema v2.0)
+- BSP registry management via YAML configuration files (schema v2.2)
 - Device / release / feature decomposition with compatibility checking
 - Docker container building and management for reproducible builds
 - KAS build system integration for Yocto-based builds
@@ -51,6 +51,7 @@ from .models import (
     empty_dict,
     EnvironmentVariable,
     DockerArg,
+    DockerVolume,
     Docker,
     Specification,
     GlobalEnvironment,
@@ -67,6 +68,7 @@ from .models import (
     Distro,
     Release,
     FeatureCompatibility,
+    FeatureReleaseOverride,
     Feature,
     LavaServerConfig,
     RobotTestConfig,
@@ -95,6 +97,7 @@ from .cli import main
 from .deployer import ArtifactDeployer, DeployResult, UploadedArtifact
 from .gatherer import ArtifactGatherer, GatherResult
 from .storage import CloudStorageBackend, create_backend
+from .remotes_manager import RemotesManager, RemoteEntry
 
 __all__ = [
     # Exceptions
@@ -115,6 +118,7 @@ __all__ = [
     # Shared data classes
     "EnvironmentVariable",
     "DockerArg",
+    "DockerVolume",
     "Docker",
     "Specification",
     # v2.0 data classes
@@ -130,6 +134,7 @@ __all__ = [
     "Distro",
     "Release",
     "FeatureCompatibility",
+    "FeatureReleaseOverride",
     "Feature",
     "LavaServerConfig",
     "RobotTestConfig",

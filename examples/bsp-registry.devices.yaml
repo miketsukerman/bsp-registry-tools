@@ -1,5 +1,5 @@
 specification:
-  version: "2.0"
+  version: "2.2"
 
 registry: 
 
@@ -25,6 +25,7 @@ registry:
 
     - slug: qemuarm64
       description: "QEMU ARM64 (emulated)"
+      architecture: aarch64
       vendor: qemu
       soc_vendor: arm
       includes:
@@ -36,6 +37,7 @@ registry:
 
     - slug: qemuarm
       description: "QEMU ARM (32-bit, emulated)"
+      architecture: arm
       vendor: qemu
       soc_vendor: arm
       includes:
@@ -47,6 +49,7 @@ registry:
 
     - slug: qemux86
       description: "QEMU x86 (emulated)"
+      architecture: x86
       vendor: qemu
       soc_vendor: intel
       includes:
@@ -54,6 +57,7 @@ registry:
   
     - slug: qemux86-64
       description: "QEMU x86-64 (emulated)"
+      architecture: x86_64
       vendor: qemu
       soc_vendor: intel
       includes:

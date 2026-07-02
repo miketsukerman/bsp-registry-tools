@@ -6,6 +6,8 @@ This is the download counterpart to :mod:`bsp.deployer`.
 
 import datetime
 import logging
+import shutil
+import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -23,6 +25,7 @@ from .storage.base import CloudStorageBackend
 class GatherResult:
     """Result of a full gather (download) run."""
     artifacts: List[Path] = field(default_factory=list)
+    cache_artifacts: List[Path] = field(default_factory=list)
     manifest: Optional[Dict] = None
     dest_dir: Optional[Path] = None
     dry_run: bool = False
@@ -113,6 +116,9 @@ class ArtifactGatherer:
         distro: str = "",
         vendor: str = "",
         date_override: Optional[str] = None,
+        gather_cache: bool = False,
+        downloads_dest: Optional[str] = None,
+        sstate_dest: Optional[str] = None,
     ) -> GatherResult:
         """
         Download all artifacts for the given BSP metadata from cloud storage.
@@ -122,6 +128,12 @@ class ArtifactGatherer:
         artifact list is used directly (avoiding a full blob listing).  When
         no manifest exists the method falls back to listing all blobs under the
         resolved prefix via :meth:`~bsp.storage.base.CloudStorageBackend.list_artifacts`.
+
+        When *gather_cache* is ``True`` the method also attempts to download
+        and extract any Yocto cache archives (``downloads.tar.gz`` /
+        ``sstate.tar.gz``) that were previously uploaded by
+        :class:`~bsp.deployer.ArtifactDeployer`.  A missing cache is treated
+        as a soft warning — it does **not** cause the overall gather to fail.
 
         Args:
             dest_dir: Local directory to write downloaded artifacts into.
@@ -133,6 +145,14 @@ class ArtifactGatherer:
             date_override: Override for the ``{date}`` placeholder in the
                            prefix template (``YYYY-MM-DD``).  Defaults to
                            today's date when ``None``.
+            gather_cache: When ``True``, attempt to download and restore Yocto
+                          cache archives alongside the regular artifacts.
+            downloads_dest: Local path to extract the ``downloads`` cache into.
+                            When ``None``, defaults to a ``downloads/``
+                            subdirectory inside *dest_dir*.
+            sstate_dest: Local path to extract the ``sstate`` cache into.
+                         When ``None``, defaults to a ``sstate/`` subdirectory
+                         inside *dest_dir*.
 
         Returns:
             :class:`GatherResult` with the local paths of every downloaded
@@ -147,15 +167,17 @@ class ArtifactGatherer:
             date_override=date_override,
         )
 
-        self.logger.info(
-            "Gathering artifacts for device=%s release=%s from prefix '%s'",
-            device or "unknown",
-            release or "unknown",
-            prefix,
+        print(
+            f"Gathering artifacts for device={device or 'unknown'} "
+            f"release={release or 'unknown'} from prefix '{prefix}'..."
         )
 
         if self.backend.dry_run:
-            self.logger.info("[dry-run] Would download artifacts from '%s' → %s", prefix, dest_dir)
+            print(f"[dry-run] Would download artifacts from '{prefix}' → {dest_dir}")
+            if gather_cache:
+                print(
+                    f"[dry-run] Would restore Yocto caches from '{prefix}/cache/' if available"
+                )
             return result
 
         # Try manifest-guided download first
@@ -172,11 +194,128 @@ class ArtifactGatherer:
             len(result.artifacts),
             dest_dir,
         )
+
+        # --- Optional Yocto cache restore ---
+        if gather_cache:
+            result.cache_artifacts = self._restore_caches(
+                manifest=result.manifest,
+                prefix=prefix,
+                dest_dir=dest_dir,
+                downloads_dest=downloads_dest,
+                sstate_dest=sstate_dest,
+            )
+
         return result
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _restore_caches(
+        self,
+        manifest: Optional[Dict],
+        prefix: str,
+        dest_dir: str,
+        downloads_dest: Optional[str],
+        sstate_dest: Optional[str],
+    ) -> List[Path]:
+        """
+        Download and extract Yocto cache archives if available.
+
+        Archives are located from the manifest ``yocto_cache`` section when
+        present, or discovered heuristically under ``{prefix}/cache/``.  A
+        missing cache is silently skipped (info-level log only).
+
+        Args:
+            manifest: Parsed manifest dict (may be ``None``).
+            prefix: Resolved remote path prefix.
+            dest_dir: Fallback base directory used when *downloads_dest* /
+                      *sstate_dest* are ``None``.
+            downloads_dest: Local directory to restore the downloads cache into.
+            sstate_dest: Local directory to restore the sstate cache into.
+
+        Returns:
+            List of local paths for extracted files (may be empty).
+        """
+        extracted: List[Path] = []
+        cache_prefix = f"{prefix}/cache"
+
+        # Build (cache_type, remote_path, local_dest) triples
+        cache_specs = [
+            (
+                "downloads",
+                f"{cache_prefix}/downloads.tar.gz",
+                downloads_dest or str(Path(dest_dir) / "downloads"),
+            ),
+            (
+                "sstate",
+                f"{cache_prefix}/sstate.tar.gz",
+                sstate_dest or str(Path(dest_dir) / "sstate"),
+            ),
+        ]
+
+        # If the manifest has yocto_cache metadata, use that for the remote URLs
+        manifest_cache: Dict = (manifest or {}).get("yocto_cache", {})
+
+        for cache_type, default_remote, local_dest in cache_specs:
+            # Prefer manifest-provided URL, fall back to heuristic path
+            remote_url = manifest_cache.get(cache_type, {}).get("remote_url")
+            if remote_url and not remote_url.startswith("dry-run:"):
+                # Strip bucket/container prefix from full URL to get the key/path
+                # For manifest-guided downloads, fall back to the key embedded in name
+                remote_path = manifest_cache[cache_type].get("name")
+                if remote_path:
+                    remote_path = f"{cache_prefix}/{remote_path}"
+                else:
+                    remote_path = default_remote
+            else:
+                remote_path = default_remote
+
+            tmp_archive = Path(local_dest) / f"_bsp_{cache_type}.tar.gz"
+            try:
+                Path(local_dest).mkdir(parents=True, exist_ok=True)
+                self.logger.info(
+                    "Downloading Yocto %s cache: %s → %s",
+                    cache_type, remote_path, tmp_archive,
+                )
+                self.backend.download_file(remote_path, tmp_archive)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.info(
+                    "Yocto %s cache not available (skipping): %s", cache_type, exc
+                )
+                tmp_archive.unlink(missing_ok=True)
+                continue
+
+            # Extract the archive in-place
+            try:
+                self.logger.info(
+                    "Extracting Yocto %s cache → %s", cache_type, local_dest
+                )
+                with tarfile.open(tmp_archive, "r:gz") as tar:
+                    # Guard against path traversal: only extract members
+                    # whose resolved path stays inside the destination directory.
+                    dest_resolved = Path(local_dest).resolve()
+                    for member in tar.getmembers():
+                        member_path = (dest_resolved / member.name).resolve()
+                        if not str(member_path).startswith(str(dest_resolved)):
+                            self.logger.warning(
+                                "Skipping potentially unsafe tar member: %s",
+                                member.name,
+                            )
+                            continue
+                        tar.extract(member, local_dest)  # noqa: S202
+                extracted.append(Path(local_dest))
+                self.logger.info(
+                    "Restored Yocto %s cache into %s", cache_type, local_dest
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(
+                    "Failed to extract Yocto %s cache: %s", cache_type, exc
+                )
+            finally:
+                tmp_archive.unlink(missing_ok=True)
+
+        return extracted
 
     def _download_from_manifest(
         self,
@@ -195,6 +334,7 @@ class ArtifactGatherer:
                 continue
             remote_path = f"{prefix}/{name}"
             local_path = dest / name
+            print(f"  Downloading {name}...")
             try:
                 self.backend.download_file(remote_path, local_path)
                 downloaded.append(local_path)

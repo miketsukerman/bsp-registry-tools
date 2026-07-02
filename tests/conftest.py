@@ -13,7 +13,7 @@ from pathlib import Path
 
 MINIMAL_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   ubuntu-22.04:
     image: "test/ubuntu-22.04:latest"
@@ -49,7 +49,7 @@ registry:
 
 REGISTRY_WITH_ENV_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 environment:
   variables:
     - name: "DL_DIR"
@@ -110,7 +110,7 @@ specification:
 
 EMPTY_REGISTRY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 registry:
   devices: []
   releases: []
@@ -120,7 +120,7 @@ registry:
 
 REGISTRY_WITH_FEATURES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:latest"
@@ -178,7 +178,7 @@ registry:
 
 REGISTRY_WITH_NAMED_ENVIRONMENTS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -247,9 +247,85 @@ registry:
         path: build/isar-board
 """
 
+REGISTRY_WITH_PRESET_ENV_OVERRIDE_YAML = """
+specification:
+  version: "2.1"
+
+environments:
+  default:
+    container: "debian-bookworm"
+    variables:
+      - name: "DL_DIR"
+        value: "/tmp/downloads"
+  special-env:
+    container: "debian-bookworm-special"
+    variables:
+      - name: "DL_DIR"
+        value: "/tmp/special-downloads"
+      - name: "SPECIAL_VAR"
+        value: "hello"
+    copy:
+      - special/setup.sh: build/
+
+containers:
+  debian-bookworm:
+    image: "test/debian:latest"
+    file: null
+    args: []
+  debian-bookworm-special:
+    image: "test/debian-special:latest"
+    file: null
+    args: []
+  custom-override:
+    image: "test/custom:latest"
+    file: null
+    args: []
+
+registry:
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      description: "Yocto 5.0 LTS"
+      yocto_version: "5.0"
+      includes:
+        - kas/scarthgap.yaml
+  features: []
+  bsp:
+    - name: preset-with-build-env
+      description: "Preset overriding named env via build.environment"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        environment: special-env
+        path: build/preset-special
+    - name: preset-with-build-env-and-container
+      description: "Preset with build.environment + build.container override"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        environment: special-env
+        container: custom-override
+        path: build/preset-custom
+    - name: preset-default-env
+      description: "Preset using default named env (no build.environment)"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        path: build/preset-default
+"""
+
 REGISTRY_WITH_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:latest"
@@ -284,7 +360,7 @@ registry:
 
 REGISTRY_WITH_NAMED_ENV_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -357,7 +433,7 @@ registry:
 
 REGISTRY_WITH_GLOBAL_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environment:
   copy:
@@ -399,7 +475,7 @@ registry:
 
 REGISTRY_WITH_RUNTIME_ARGS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   isar-qemu-container:
     image: "ghcr.io/ilbers/isar:latest"
@@ -451,7 +527,7 @@ registry:
 
 REGISTRY_WITH_DISTRO_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -497,7 +573,7 @@ registry:
 
 REGISTRY_WITH_FRAMEWORKS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -593,7 +669,7 @@ registry:
 
 REGISTRY_WITH_FRAMEWORKS_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -703,6 +779,14 @@ def registry_with_named_env_file(tmp_dir):
 
 
 @pytest.fixture
+def registry_with_preset_env_override_file(tmp_dir):
+    """Create a registry YAML file where a BSP preset overrides the named environment via build.environment."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_PRESET_ENV_OVERRIDE_YAML)
+    return registry_path
+
+
+@pytest.fixture
 def registry_with_copy_file(tmp_dir):
     """Create a registry YAML file with copy entries in device build config."""
     registry_path = tmp_dir / "bsp-registry.yaml"
@@ -802,7 +886,7 @@ distro: poky
 
 REGISTRY_WITH_MULTI_RELEASE_BSP_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -869,7 +953,7 @@ def registry_with_multi_release_bsp_file(tmp_dir):
 
 REGISTRY_WITH_MULTI_RELEASE_TESTING_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -926,7 +1010,7 @@ def registry_with_multi_release_testing_file(tmp_dir):
 
 REGISTRY_WITH_MULTI_RELEASE_NO_PATH_BSP_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -973,7 +1057,7 @@ def registry_with_multi_release_no_path_bsp_file(tmp_dir):
 
 REGISTRY_WITH_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1103,7 +1187,7 @@ def registry_with_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_VENDORS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1173,7 +1257,7 @@ def registry_with_vendors_file(tmp_dir):
 
 REGISTRY_WITH_VENDOR_OVERRIDE_SLUG_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1313,7 +1397,7 @@ def registry_with_vendor_override_slug_file(tmp_dir):
 
 REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1440,7 +1524,7 @@ def registry_with_soc_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_PRESET_CONTAINER_OVERRIDE_AND_NAMED_ENV_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1497,7 +1581,7 @@ def registry_with_preset_container_override_and_named_env_copy_file(tmp_dir):
 
 REGISTRY_WITH_CONTAINER_COPY_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1575,7 +1659,7 @@ def registry_with_container_copy_file(tmp_dir):
 
 REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1709,7 +1793,7 @@ def registry_with_feature_vendor_overrides_file(tmp_dir):
 
 REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 
 environments:
   default:
@@ -1770,9 +1854,114 @@ def registry_with_preset_local_conf_and_targets_file(tmp_dir):
     return registry_path
 
 
+# ---------------------------------------------------------------------------
+# Feature release_overrides support
+# ---------------------------------------------------------------------------
+
+REGISTRY_WITH_FEATURE_RELEASE_OVERRIDES_YAML = """
+specification:
+  version: "2.1"
+containers:
+  debian-bookworm:
+    image: "test/debian:bookworm"
+    file: null
+    args: []
+registry:
+  frameworks:
+    - slug: yocto
+      description: "Yocto Project build system"
+      vendor: "Yocto Project"
+      includes:
+        - kas/yocto/yocto.yaml
+  distro:
+    - slug: poky
+      description: "Poky (Yocto Project reference distro)"
+      vendor: yocto
+      framework: yocto
+      includes:
+        - kas/poky/distro/poky.yaml
+  devices:
+    - slug: adv-imx8
+      description: "Advantech i.MX8 Board"
+      vendor: advantech
+      soc_vendor: nxp
+      includes:
+        - kas/adv-imx8.yaml
+    - slug: qemu-arm64
+      description: "QEMU ARM64"
+      vendor: qemu
+      soc_vendor: arm
+      includes:
+        - kas/qemu/qemuarm64.yaml
+  releases:
+    - slug: scarthgap
+      distro: poky
+      description: "Yocto 5.0 LTS (Scarthgap)"
+      yocto_version: "5.0"
+      includes:
+        - kas/poky/scarthgap.yaml
+    - slug: styhead
+      distro: poky
+      description: "Yocto 5.1 (Styhead)"
+      yocto_version: "5.1"
+      includes:
+        - kas/poky/styhead.yaml
+  features:
+    - slug: ostree
+      description: "Enable OSTree support in the Yocto image"
+      compatible_with: [yocto]
+      includes:
+        - features/ota/ostree/ostree.yml
+      release_overrides:
+        - release: scarthgap
+          includes:
+            - features/ota/ostree/ostree-scarthgap.yml
+        - release: styhead
+          includes:
+            - features/ota/ostree/ostree-styhead.yml
+    - slug: secure-boot
+      description: "Enable secure boot"
+      includes:
+        - features/secure-boot/secure-boot.yml
+  bsp:
+    - name: adv-imx8-scarthgap-ostree
+      description: "Advantech i.MX8 Scarthgap with OSTree"
+      device: adv-imx8
+      release: scarthgap
+      features: [ostree]
+      build:
+        container: "debian-bookworm"
+        path: build/adv-imx8-scarthgap-ostree
+    - name: adv-imx8-styhead-ostree
+      description: "Advantech i.MX8 Styhead with OSTree"
+      device: adv-imx8
+      release: styhead
+      features: [ostree]
+      build:
+        container: "debian-bookworm"
+        path: build/adv-imx8-styhead-ostree
+    - name: qemu-arm64-scarthgap-ostree
+      description: "QEMU ARM64 Scarthgap with OSTree"
+      device: qemu-arm64
+      release: scarthgap
+      features: [ostree]
+      build:
+        container: "debian-bookworm"
+        path: build/qemu-arm64-scarthgap-ostree
+"""
+
+
+@pytest.fixture
+def registry_with_feature_release_overrides_file(tmp_dir):
+    """Create a registry YAML with release_overrides on features."""
+    registry_path = tmp_dir / "bsp-registry.yaml"
+    registry_path.write_text(REGISTRY_WITH_FEATURE_RELEASE_OVERRIDES_YAML)
+    return registry_path
+
+
 REGISTRY_WITH_LAVA_ENV_VARS_YAML = """
 specification:
-  version: "2.0"
+  version: "2.1"
 containers:
   debian-bookworm:
     image: "test/debian:bookworm"
@@ -1822,3 +2011,4 @@ def registry_with_lava_env_vars_file(tmp_dir):
     registry_path = tmp_dir / "bsp-registry.yaml"
     registry_path.write_text(REGISTRY_WITH_LAVA_ENV_VARS_YAML)
     return registry_path
+

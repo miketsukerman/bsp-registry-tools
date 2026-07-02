@@ -18,10 +18,12 @@ from .models import (
     Docker,
     EnvironmentVariable,
     Feature,
+    FlashConfig,
     Framework,
     NamedEnvironment,
     Release,
     RegistryRoot,
+    ScanConfig,
     SocVendorOverride,
     Vendor,
     VendorOverride,
@@ -58,6 +60,18 @@ class ResolvedConfig:
         targets: List of Bitbake build targets (images/recipes) to pass to
                  KAS.  Populated from ``BspPreset.targets`` during
                  ``resolve_preset()``; empty when resolving without a preset.
+        scan_config: Optional CRA image scanning configuration resolved for
+                     this build.  Populated from the preset's ``scan`` block
+                     (if present) during ``resolve_preset()``; ``None`` when
+                     resolving without a preset or when no ``scan`` block is
+                     configured.
+        resolved_vendor_release: Effective vendor-release slug selected by the
+                                 resolver (explicit or auto-selected). ``None``
+                                 when no vendor-release applies.
+        resolved_override: Effective vendor-override identifier selected by the
+                           resolver (explicit/auto-selected slug, or vendor
+                           name when the matching override has no slug).
+                           ``None`` when no override applies.
     """
     device: Device
     release: Release
@@ -70,6 +84,10 @@ class ResolvedConfig:
     copy: List[Dict[str, str]] = field(default_factory=empty_list)
     effective_distro: Optional[str] = None
     targets: List[str] = field(default_factory=empty_list)
+    scan_config: Optional[ScanConfig] = None
+    flash_config: Optional[FlashConfig] = None
+    resolved_vendor_release: Optional[str] = None
+    resolved_override: Optional[str] = None
 
 
 # =============================================================================
@@ -136,6 +154,33 @@ class V2Resolver:
 
         # Fall back to "default" named environment if present
         return envs.get("default")
+
+    def get_named_environment_by_name(
+        self, env_name: str, context: str
+    ) -> NamedEnvironment:
+        """
+        Look up a named environment by explicit name.
+
+        Args:
+            env_name: The environment name to look up.
+            context: Human-readable description of the caller (for error messages).
+
+        Returns:
+            The matching NamedEnvironment.
+
+        Raises:
+            SystemExit: If the named environment is not found.
+        """
+        envs = self.model.environments or {}
+        if env_name in envs:
+            return envs[env_name]
+        self.logger.error(
+            f"Named environment '{env_name}' referenced by {context} "
+            f"not found in registry environments"
+        )
+        available = ", ".join(envs.keys()) or "(none)"
+        self.logger.info(f"Available environments: {available}")
+        sys.exit(1)
 
     # ------------------------------------------------------------------
     # Lookup helpers
@@ -457,6 +502,7 @@ class V2Resolver:
           -> release.includes -> release.vendor_overrides[device.vendor or override.slug].includes
           -> release.vendor_overrides[device.vendor].releases[vendor_release].includes
           -> device.includes -> feature.includes
+          -> feature.release_overrides[release_slug].includes
           -> feature.vendor_overrides[device.vendor].includes
           -> feature.vendor_overrides[device.vendor].releases[vendor_release].includes
         Merging order for local_conf:  device.local_conf -> feature.local_conf (in order)
@@ -710,6 +756,10 @@ class V2Resolver:
                 kas_files.extend(fw_override.includes)
         for feature in features:
             kas_files.extend(feature.includes)
+            # Apply feature release_overrides: include extras for the active release.
+            for ro in feature.release_overrides:
+                if ro.release == release_slug:
+                    kas_files.extend(ro.includes)
             if feature.vendor_overrides:
                 # Feature vendor_overrides are always matched by device.vendor;
                 # there is no preset-level override_slug concept for features.
@@ -753,6 +803,12 @@ class V2Resolver:
         )
         merged_copy = global_copy + named_env_copy + container_copy + list(device_copy)
 
+        resolved_override_id = (
+            override_slug
+            if override_slug is not None
+            else (active_vendor_override.vendor if active_vendor_override else None)
+        )
+
         return ResolvedConfig(
             device=device,
             release=release,
@@ -764,6 +820,8 @@ class V2Resolver:
             env=env,
             copy=merged_copy,
             effective_distro=effective_distro_slug,
+            resolved_vendor_release=vendor_release_slug,
+            resolved_override=resolved_override_id,
         )
 
     def _compose_build_path(self, resolved: ResolvedConfig) -> str:
@@ -854,6 +912,7 @@ class V2Resolver:
             expanded_path = "-".join(path_parts)
 
             expanded_build = BspBuild(
+                environment=preset.build.environment if preset.build else None,
                 container=preset.build.container if preset.build else None,
                 path=expanded_path,
             )
@@ -873,6 +932,8 @@ class V2Resolver:
                     build=expanded_build,
                     deploy=preset.deploy,
                     testing=preset.testing,
+                    scan=preset.scan,
+                    flash=preset.flash,
                 )
             )
         return expanded
@@ -892,15 +953,24 @@ class V2Resolver:
             result.extend(self.expand_preset(preset))
         return result
 
-    def resolve_preset(self, preset_name: str) -> Tuple[ResolvedConfig, BspPreset]:
+    def resolve_preset(
+        self,
+        preset_name: str,
+        extra_feature_slugs: Optional[List[str]] = None,
+        vendor_release_slug_override: Optional[str] = None,
+        override_slug_override: Optional[str] = None,
+    ) -> Tuple[ResolvedConfig, BspPreset]:
         """
         Resolve a named BSP preset to a ResolvedConfig.
 
         After resolving the underlying device + release + features the
         preset's ``build`` section (if present) is applied:
 
-        * ``build.container`` overrides the container resolved from the
-          named environment.
+        * ``build.environment`` selects a named environment for this preset,
+          overriding the one derived from the release.  The environment's
+          container, env variables, and copy entries are applied.
+        * ``build.container`` overrides the container; takes priority over
+          any container from ``build.environment`` or the release environment.
         * ``build.path`` sets the output directory; if absent the path is
           auto-composed via :meth:`_compose_build_path`.
 
@@ -913,6 +983,12 @@ class V2Resolver:
 
         Args:
             preset_name: Name of the preset in registry.bsp
+            extra_feature_slugs: Additional feature slugs to enable on top of
+                those already listed in the preset definition.
+            vendor_release_slug_override: Optional vendor sub-release slug that,
+                when set, overrides the preset's ``vendor_release`` value.
+            override_slug_override: Optional vendor override slug that, when set,
+                overrides the preset's ``override`` value.
 
         Returns:
             Tuple of (ResolvedConfig, BspPreset)
@@ -934,16 +1010,80 @@ class V2Resolver:
             )
             sys.exit(1)
 
+        # Merge preset features with any extra features supplied at call time.
+        preset_features = list(preset.features)
+        if extra_feature_slugs:
+            for slug in extra_feature_slugs:
+                if slug not in preset_features:
+                    preset_features.append(slug)
+
         resolved = self.resolve(
-            preset.device, preset.release, preset.features,
-            vendor_release_slug=preset.vendor_release,
-            override_slug=preset.override,
+            preset.device, preset.release, preset_features,
+            vendor_release_slug=(
+                vendor_release_slug_override
+                if vendor_release_slug_override is not None
+                else preset.vendor_release
+            ),
+            override_slug=(
+                override_slug_override
+                if override_slug_override is not None
+                else preset.override
+            ),
         )
 
         # Apply preset build overrides
         preset_build: Optional[BspBuild] = preset.build
         if preset_build:
-            # Container override from the preset build section
+            # Named environment override from preset.build.environment.
+            # When set it replaces the release-derived named environment for
+            # this preset's container, env variables, and copy entries.
+            if preset_build.environment:
+                preset_named_env = self.get_named_environment_by_name(
+                    preset_build.environment,
+                    f"preset '{preset_name}' build.environment",
+                )
+                # Re-apply env variables: global root vars first, then this env's vars.
+                global_env_vars = (
+                    list(self.model.environment.variables)
+                    if self.model.environment and self.model.environment.variables
+                    else []
+                )
+                resolved.env = global_env_vars + list(preset_named_env.variables)
+                # Rebuild copy list with the preset-selected named env's copy.
+                global_copy = (
+                    list(self.model.environment.copy)
+                    if self.model.environment and self.model.environment.copy
+                    else []
+                )
+                preset_named_env_copy = list(preset_named_env.copy) if preset_named_env.copy else []
+                # Container will be set below; determine copy based on it.
+                # Temporarily use the preset env's container (may be overridden by
+                # preset_build.container below).
+                env_container_name = preset_named_env.container
+                env_container_copy: list = []
+                if env_container_name and env_container_name in self.containers:
+                    env_container_copy = list(self.containers[env_container_name].copy or [])
+                device = resolved.device
+                device_copy = device.copy if device.copy else (
+                    device.build.copy if device.build else []
+                )
+                resolved.copy = global_copy + preset_named_env_copy + env_container_copy + list(device_copy)
+                # Use the named env's container unless overridden below.
+                if env_container_name:
+                    if env_container_name in self.containers:
+                        resolved.container = self.containers[env_container_name]
+                    else:
+                        self.logger.error(
+                            f"Container '{env_container_name}' not found in registry "
+                            f"containers (referenced by named environment "
+                            f"'{preset_build.environment}')"
+                        )
+                        sys.exit(1)
+                else:
+                    resolved.container = None
+
+            # Container override from the preset build section (highest priority –
+            # overrides both the release-derived and preset-environment container).
             if preset_build.container:
                 container_name = preset_build.container
                 if container_name in self.containers:
@@ -952,7 +1092,14 @@ class V2Resolver:
                     # Rebuild the copy list: the container has changed so the
                     # container-level copy entries must be updated to reflect
                     # the overriding container.
-                    named_env = self.get_named_environment(resolved.release)
+                    named_env = (
+                        self.get_named_environment_by_name(
+                            preset_build.environment,
+                            f"preset '{preset_name}' build.environment",
+                        )
+                        if preset_build.environment
+                        else self.get_named_environment(resolved.release)
+                    )
                     global_copy = (
                         list(self.model.environment.copy)
                         if self.model.environment and self.model.environment.copy
@@ -994,6 +1141,14 @@ class V2Resolver:
         if preset.targets:
             resolved.targets = list(preset.targets)
 
+        # Apply preset-level scan config (preset overrides registry root).
+        # The merge follows the same pattern as `deploy`: preset fields that
+        # differ from their defaults override the root-level config.
+        resolved.scan_config = preset.scan if preset.scan is not None else getattr(self.model, "scan", None)
+
+        # Apply preset-level flash config (same pattern as scan_config).
+        resolved.flash_config = preset.flash if preset.flash is not None else getattr(self.model, "flash", None)
+
         return resolved, preset
 
     # ------------------------------------------------------------------
@@ -1010,8 +1165,10 @@ class V2Resolver:
         Write a temporary KAS YAML file that combines all resolved includes
         and local_conf additions into a single entry-point file.
 
-        Include paths are converted to absolute paths so the temp file can
-        reside anywhere (e.g. /tmp).
+        Include paths are written relative to the output file's directory so
+        that kas-container (which mounts that directory as /repo) can resolve
+        them inside the container.  Includes whose absolute path cannot be
+        expressed relative to the output directory are kept as absolute paths.
 
         Args:
             resolved: Resolved build configuration
@@ -1020,20 +1177,25 @@ class V2Resolver:
                       (defaults to the current working directory)
         """
         base = Path(base_dir).resolve() if base_dir and base_dir.strip() else Path.cwd()
+        output_dir = Path(output_path).parent.resolve()
 
-        # Convert all include paths to absolute
-        abs_includes: List[str] = []
+        # Convert include paths to relative (relative to the output file dir)
+        # so that kas-container can find them when the output directory is
+        # mounted as /repo.  Fall back to absolute for out-of-tree includes.
+        includes: List[str] = []
         for inc in resolved.kas_files:
             inc_path = Path(inc)
-            if inc_path.is_absolute():
-                abs_includes.append(str(inc_path))
-            else:
-                abs_includes.append(str((base / inc_path).resolve()))
+            abs_inc = inc_path if inc_path.is_absolute() else (base / inc_path).resolve()
+            try:
+                includes.append(str(abs_inc.relative_to(output_dir)))
+            except ValueError:
+                # Include lives outside the output directory — keep absolute.
+                includes.append(str(abs_inc))
 
         kas_config: dict = {
             "header": {
                 "version": 14,
-                "includes": abs_includes,
+                "includes": includes,
             }
         }
 

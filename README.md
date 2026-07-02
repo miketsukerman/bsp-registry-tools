@@ -10,6 +10,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 - 📋 **BSP registry management** via YAML configuration files
 - 🌐 **Automatic remote registry fetching** — clone/update a remote registry with no manual setup
+- 🔗 **Named remote management** — `bsp remotes add/remove/rename/set-url/show` for persistent, git-style remote configuration
 - 🐳 **Docker container support** for reproducible build environments
 - 🔧 **KAS integration** for Yocto-based builds (`kas`, `kas-container`)
 - 🖥️ **Interactive shell** access to build environments
@@ -19,7 +20,11 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
+- ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
+- 🔒 **CRA vulnerability scanning** — scan built images for CVEs and generate SBOMs (CycloneDX/SPDX) with `bsp scan` ([Trivy](https://trivy.dev/) / Syft+Grype)
+- 💾 **SD card / block device flashing** — write Yocto WIC images to an SD card or USB drive with `bsp flash` ([bmap-tools](https://github.com/intel/bmap-tools) for fast, verified flashing)
+- 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
 
 
 ## Installation
@@ -62,7 +67,6 @@ pip install ".[server]"
 - [FastAPI](https://fastapi.tiangolo.com/) >= 0.100.0
 - [uvicorn](https://www.uvicorn.org/) >= 0.23.0
 - [strawberry-graphql](https://strawberry.rocks/) >= 0.200.0
-
 #### Optional extras for cloud deployment
 
 Cloud SDK dependencies are optional and only needed if you use `bsp deploy`:
@@ -78,13 +82,95 @@ pip install "bsp-registry-tools[aws]"
 pip install "bsp-registry-tools[deploy]"
 ```
 
+#### Optional extras for shell completions
+
+Tab-completion support is optional and requires [argcomplete](https://kislyuk.github.io/argcomplete/):
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+See the [Shell Completions](#shell-completions) section below for activation instructions.
+
+#### Optional extras for SD card flashing
+
+`bsp flash` requires `bmaptool` which is a **system package**, not a Python
+package.  Install it with your system package manager:
+
+```bash
+# Debian / Ubuntu
+sudo apt install bmap-tools
+
+# Arch Linux
+sudo pacman -S bmap-tools
+
+# From PyPI
+pip install bmaptool
+```
+
+The `flash` optional extra is documentation-only and installs no Python
+dependencies:
+
+```bash
+pip install "bsp-registry-tools[flash]"
+```
+
+See [docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details.
+
+## Shell Completions
+
+`bsp` supports tab completions for Bash, Zsh, Fish, and tcsh via
+[argcomplete](https://kislyuk.github.io/argcomplete/).  Completions
+dynamically query the active registry so that preset names, device slugs,
+release slugs, feature slugs, and remote names are all available.
+
+### 1. Install the completions extra
+
+```bash
+pip install "bsp-registry-tools[completions]"
+```
+
+### 2. Activate completions for your shell
+
+Use the `bsp completions` sub-command to print the shell-specific activation
+snippet, then source it:
+
+```bash
+# Bash — add to ~/.bashrc
+eval "$(bsp completions bash)"
+
+# Zsh — add to ~/.zshrc
+eval "$(bsp completions zsh)"
+
+# Fish — add to ~/.config/fish/config.fish
+bsp completions fish | source
+
+# tcsh — add to ~/.tcshrc
+eval `bsp completions tcsh`
+```
+
+`bsp completions` without an argument auto-detects the shell from `$SHELL`.
+
+### 3. (Alternative) Global activation
+
+If you want completions for all argcomplete-enabled tools at once, use the
+helper provided by argcomplete itself:
+
+```bash
+activate-global-python-argcomplete
+```
+
+This installs a single shell hook that covers every tool that calls
+`argcomplete.autocomplete()`.
+
 ## Quick Start
 
 ### Zero-Config Usage (Remote Registry)
 
 If you have no local registry file, `bsp` automatically clones the default
 [Advantech BSP registry](https://github.com/Advantech-EECC/bsp-registry) into
-`~/.cache/bsp/registry` and keeps it up-to-date on every run:
+the cache root `~/.cache/bsp/registry` (under a remote-specific subdirectory)
+and keeps it up-to-date on every run:
 
 ```bash
 # First run: clones the registry, then lists BSPs
@@ -96,9 +182,44 @@ bsp list
 # Skip the network update (useful offline or in CI)
 bsp --no-update list
 
-# Use a different remote or branch
+# Use a different remote or branch (one-off override)
 bsp --remote https://github.com/my-org/bsp-registry.git --branch dev list
 ```
+
+### Persistent Named Remotes
+
+For a more permanent setup, register one or more named remotes (similar to
+`git remote`).  Once added, these are used automatically whenever `bsp` falls
+back to remote registry fetching — no `--remote` flag required:
+
+```bash
+# Register a named remote
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch dev
+
+# List configured remotes
+bsp remotes
+
+# Show full details
+bsp remotes show myorg
+
+# Now use it — the stored remote is picked up automatically
+bsp list
+bsp build my-preset
+
+# With multiple remotes configured, list/tree show all remotes annotated with [remote-name]
+bsp list
+bsp tree
+
+# Scope listing to a single named remote
+bsp list --remote myorg
+bsp tree --remote myorg
+```
+
+When **multiple remotes** are registered, `bsp list` and `bsp tree` display
+entries from all of them, each annotated with `[remote-name]`.  Registries are
+kept strictly separate — definitions from different remotes are never merged.
+Use `--remote NAME` with `list` or `tree` to restrict output to a single named
+remote.
 
 ### Manual Registry Usage
 
@@ -108,7 +229,7 @@ Create a `bsp-registry.yaml` or `bsp-registry.yml` file (see [examples/bsp-regis
 
 ```yaml
 specification:
-  version: "2.0"
+  version: "2.2"
 
 environment:
   variables:
@@ -231,25 +352,24 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
            [--local]
-           {build,list,containers,tree,export,shell,server,deploy,test} ...
-
+           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server,deploy,test}
-
+  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
                         Command to execute
     build               Build an image for BSP
-    list                List available BSPs
+    list                List available BSPs and components
     containers          List available containers
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
     shell               Enter interactive shell for BSP
     server              Start a GraphQL / REST HTTP server
     deploy              Deploy build artifacts to cloud storage
+    gather              Download BSP build artifacts from cloud storage
     test                Submit a LAVA HIL test job for a BSP
-
+    remotes             Manage named remote BSP registry sources
 
 options:
   -h, --help            show this help message and exit
@@ -273,7 +393,9 @@ The tool determines which registry file to use in the following order:
 2. **`--local`** — use `./bsp-registry.yaml` or `./bsp-registry.yml` in the current directory; no network access.
 3. **`bsp-registry.yaml` exists in the current directory** — auto-detect (preferred extension).
 4. **`bsp-registry.yml` exists in the current directory** — auto-detect (alternate extension).
-5. **Otherwise** — clone/update the remote registry into `~/.cache/bsp/registry` via `RegistryFetcher`.
+5. **`--remote URL` flag(s) provided** — fetch the specified remote(s) on-the-fly (no persistence).
+6. **Named remotes configured** — if `bsp remotes add` has registered remotes in `~/.config/bsp/remotes.yaml`, those are fetched automatically.
+7. **Otherwise** — bootstrap/use the default named remote (`advantech-europe`) and fetch it from the cache root `~/.cache/bsp/registry` using the same remote-specific subdirectory layout as additional remotes.
 
 ### Global Options
 
@@ -294,13 +416,71 @@ The tool determines which registry file to use in the following order:
 ```bash
 bsp list
 bsp --registry my-registry.yaml list
+
+# Filter by component type
+bsp list devices
+bsp list releases
+bsp list features
+bsp list distros
+
+# Filter releases to those compatible with a specific device
+bsp list releases --device imx8qm
+
+# When multiple remotes are configured, scope output to a single named remote
+bsp list --remote myorg
+bsp list devices --remote myorg
+bsp list releases --remote myorg
 ```
 
-#### `containers` — List available container definitions
+When multiple remotes are loaded, every entry is annotated with `[registry-name]`
+so the source is always visible.  Registries from different remotes are kept
+separate — their definitions are never merged together.
+
+| Option | Description |
+|--------|-------------|
+| `--remote NAME` | Show only entries from the named remote registry |
+| `--device DEVICE`, `-d DEVICE` | Filter releases by device slug (only used with `releases`) |
+
+#### `containers` — List container definitions or build container images
 
 ```bash
+# List all container definitions (default action)
 bsp containers
+bsp containers list
+
+# Build all containers that have a Dockerfile
+bsp containers build
+bsp containers build --docker-no-cache   # force clean Docker rebuild
+
+# Build a single named container
+bsp containers build debian-bookworm
+bsp containers build debian-bookworm --docker-no-cache
+
+# Multi-registry: target a specific registry
+bsp containers build upstream:debian-bookworm
 ```
+
+The `build` action iterates every container in the registry that has both an
+`image` and a `file` (Dockerfile) and builds each one. Containers with only an
+`image` (pre-built images pulled from a registry) are skipped with a warning.
+Pass a name to build only that single container.
+
+`--docker-no-cache` passes Docker’s `--no-cache` flag to the build invocation,
+bypassing the layer cache.
+
+The `build_options` field in the registry and the `--docker-build-options` CLI
+flag both support **environment variable expansion** using the ``$ENV{VAR}``
+syntax (consistent with the rest of the registry) at build time:
+
+```yaml
+containers:
+  my-image:
+    image: "my-org/my-image:latest"
+    file: Dockerfile
+    build_options: "$ENV{BSP_REGISTRY_DOCKER_BUILD_OPTIONS}"
+```
+
+If the variable is unset the reference is passed through unchanged.
 
 #### `tree` — Display a tree view of the BSP registry
 
@@ -310,17 +490,27 @@ bsp tree --full
 bsp tree --compact
 bsp --no-color tree
 bsp --registry my-registry.yaml tree
+
+# When multiple remotes are configured, scope the tree to a single named remote
+bsp tree --remote myorg
+bsp tree --full --remote myorg
 ```
 
 Renders the full registry as a colored ASCII tree, grouped into sections:
 **Frameworks**, **Distros**, **Releases** (with vendor overrides), **Devices**,
-**Features** (with vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
+**Features** (with release and vendor overrides in full mode), and **BSP Presets** (with device, release, and feature details).
 Use `--no-color` to disable colors (e.g. for scripts or log files).
+
+When multiple remotes are loaded, items are grouped under `[registry-name]`
+sub-nodes.  Registries from different remotes are kept separate — their
+definitions are never merged together.  Use `--remote NAME` to restrict the
+tree to a single named remote.
 
 | Option | Description |
 |--------|-------------|
-| `--full` | Show full details including includes lists, vendor overrides for releases and features, and override slugs for presets |
+| `--full` | Show full details including includes lists, release overrides and vendor overrides for features, vendor overrides for releases, and override slugs for presets |
 | `--compact` | Show compact output with names/slugs only (no sub-items) |
+| `--remote NAME` | Show only entries from the named remote registry |
 
 **Example output (`bsp tree`):**
 
@@ -351,7 +541,7 @@ BSP Registry
 
 **Example output (`bsp tree --full`):**
 
-In `--full` mode all includes lists are expanded and vendor overrides for both releases and features are shown as nested sub-trees:
+In `--full` mode all includes lists are expanded, release overrides and vendor overrides for features are shown as nested sub-trees, and vendor overrides for releases are also expanded:
 
 ```
 BSP Registry
@@ -365,36 +555,42 @@ BSP Registry
 │               └── includes:
 │                   └── kas/yocto/vendors/advantech/nxp/imx-6.6.53.yaml
 └── Features (1)
-    └── rauc: Enable RAUC support in the Yocto image [requires compatible_with: yocto]
+    └── ostree: Enable OSTree support in the Yocto image [requires compatible_with: yocto]
         ├── includes:
-        │   └── features/ota/rauc/rauc.yml
+        │   └── features/ota/ostree/ostree.yml
+        ├── release override: scarthgap
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-scarthgap.yml
+        ├── release override: styhead
+        │   └── includes:
+        │       └── features/ota/ostree/ostree-styhead.yml
         └── vendor override: advantech
-            ├── includes: features/ota/rauc/advantech-rauc.yml
             └── soc vendor: nxp
-                ├── includes: features/ota/rauc/modular-bsp-ota-nxp.yml
-                └── vendor release: imx-6.6.53: RAUC for i.MX 6.6.53
-                    └── includes:
-                        └── features/ota/rauc/rauc-imx-6.6.53.yml
+                └── includes: features/ota/ostree/modular-bsp-ota-nxp.yml
 ```
 
 #### `build` — Build a BSP image
 
 ```bash
-bsp build <bsp_name> [--clean] [--checkout] [--target TARGET] [--task TASK]
-bsp build <bsp_name> [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
-bsp build <bsp_name> [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
-bsp build --device <device> --release <release> [--feature FEATURE...] [--clean] [--checkout] [--target TARGET] [--task TASK] [--test ...]
+bsp build <bsp_name> [--clean] [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--checkout] [--target TARGET] [--task TASK] [--path PATH]
+bsp build <bsp_name> [--feature FEATURE...] [--deploy] [--deploy-provider PROVIDER] [--deploy-container CONTAINER] [--deploy-prefix PREFIX]
+bsp build <bsp_name> [--feature FEATURE...] [--test [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]]
+bsp build --device <device> --release <release> [--feature FEATURE...] [--clean] [--vendor-release SLUG] [--override SLUG] [--checkout] [--target TARGET] [--task TASK] [--path PATH] [--test ...]
 bsp build --all [--clean] [--keep-going] [--checkout]
 ```
 
 | Option | Description |
 |--------|-------------|
+| `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
+| `--vendor-release SLUG` | Vendor sub-release slug to resolve (maps to `vendor_release`). Useful for selecting a specific vendor BSP release variant at runtime. |
+| `--override SLUG` | Vendor override slug to resolve (maps to `override`). Useful when a release has multiple vendor override entries with different slugs. |
 | `--clean` | Before building, remove previous build artefacts from `<build_path>/tmp/` while preserving `tmp/deploy/` (images and packages) and `tmp/log/` (build logs) to free disk space |
-| `--checkout` | Validate configuration and checkout repos without building (fast, implies no Docker build) |
-| `--all`, `-a` | Build every BSP preset defined in the registry one by one (sequential) |
-| `--keep-going`, `-k` | When used with `--all`, continue building remaining presets after a failure and print a summary at the end (default: stop on first failure) |
+| `--checkout` | Validate configuration and checkout repos without building |
+| `--path PATH` | Override the output build directory path defined in the registry |
 | `--target TARGET` | Bitbake build target (image or recipe) to pass to KAS, overriding any targets defined in the registry preset |
 | `--task TASK` | Bitbake task to run (e.g. `compile`, `configure`) to pass to KAS |
+| `--all`, `-a` | Build every BSP preset defined in the registry one by one (sequential) |
+| `--keep-going`, `-k` | When used with `--all`, continue building remaining presets after a failure and print a summary at the end (default: stop on first failure) |
 | `--deploy` | Deploy artifacts to cloud storage after a successful build |
 | `--deploy-provider PROVIDER` | Cloud storage provider: `azure` (default) or `aws` |
 | `--deploy-container CONTAINER` | Azure container or AWS bucket name (overrides registry config) |
@@ -406,7 +602,10 @@ bsp build --all [--clean] [--keep-going] [--checkout]
 | `--lava-server URL` | LAVA server base URL override (overrides registry `lava.server`) |
 | `--lava-token TOKEN` | LAVA API token override (overrides registry `lava.token`) |
 | `--artifact-url URL` | Base URL where build artifacts are served to the LAVA lab |
+| `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
+| `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
+Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).
 
 **Examples:**
 
@@ -420,6 +619,21 @@ bsp build poky-qemuarm64-scarthgap --checkout
 # Clean before building to free disk space; removes tmp/work/ etc., keeps tmp/deploy/ and tmp/log/
 bsp build poky-qemuarm64-scarthgap --clean
 
+# Build a preset with an extra feature enabled on top of the preset's defaults
+bsp build poky-qemuarm64-scarthgap --feature secure-boot
+
+# Build with multiple extra features
+bsp build poky-qemuarm64-scarthgap --feature secure-boot --feature ota
+
+# Build using a specific vendor sub-release override
+bsp build adv-imx8-scarthgap-imx6.6.53 --vendor-release imx-6.12.0
+
+# Build using a specific vendor override slug
+bsp build adv-imx8-scarthgap --override imx-xwayland-6.6.52
+
+# Override the output build directory
+bsp build poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
 # Build by device + release (with optional features)
 bsp build --device qemuarm64 --release scarthgap --feature ota
 
@@ -428,6 +642,9 @@ bsp build --all
 
 # Build all presets, continue past failures, clean before each build
 bsp build --all --keep-going --clean
+
+# Checkout/validate all presets without building
+bsp build --all --checkout
 
 # Build a specific Bitbake image (overrides registry-configured targets)
 bsp build poky-qemuarm64-scarthgap --target core-image-minimal
@@ -444,23 +661,66 @@ bsp build poky-qemuarm64-scarthgap --deploy --deploy-provider aws --deploy-conta
 # Build and trigger LAVA test, wait for result
 bsp build poky-qemuarm64-scarthgap --test --wait
 
+# Force a clean Docker build (no layer cache)
+bsp build poky-qemuarm64-scarthgap --docker-no-cache
+
+# Pass extra Docker build flags (e.g. use host network during build)
+bsp build poky-qemuarm64-scarthgap --docker-build-options "--network host"
+
 # Build with LAVA credential overrides
 bsp build poky-qemuarm64-scarthgap --test --wait \
   --lava-server https://lava.ci.example.com \
   --lava-token $LAVA_TOKEN \
   --artifact-url http://files.example.com/builds
+```
 
+#### `fetch` — Fetch all sources for a BSP
+
+```bash
+bsp fetch <bsp_name> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--target TARGET] [--path PATH]
+bsp fetch --device <device> --release <release> [--feature FEATURE...] [--vendor-release SLUG] [--override SLUG] [--target TARGET] [--path PATH]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--feature FEATURE`, `-f FEATURE` | Feature slug to enable (can be repeated). When used with a preset name, extra features are merged with those already declared in the preset. |
+| `--vendor-release SLUG` | Vendor sub-release slug to resolve (maps to `vendor_release`). |
+| `--override SLUG` | Vendor override slug to resolve (maps to `override`). |
+| `--target TARGET` | BitBake target to fetch. If omitted, `bsp fetch` uses targets resolved from the KAS configuration or preset. |
+| `--path PATH` | Override the output build directory path defined in the registry |
+
+`bsp fetch` runs BitBake with `--runall=fetch`, which downloads the full source dependency set without starting a full image build.
+
+**Examples:**
+
+```bash
+# Fetch sources for a preset using its configured target(s)
+bsp fetch poky-qemuarm64-scarthgap
+
+# Fetch sources for a specific image target
+bsp fetch poky-qemuarm64-scarthgap --target core-image-minimal
+
+# Fetch sources using a specific vendor sub-release override
+bsp fetch adv-imx8-scarthgap-imx6.6.53 --vendor-release imx-6.12.0
+
+# Fetch sources using a specific vendor override slug
+bsp fetch adv-imx8-scarthgap --override imx-xwayland-6.6.52
+
+# Fetch sources for a component-based selection into a custom build directory
+bsp fetch --device qemuarm64 --release scarthgap --target core-image-minimal --path /mnt/fast-ssd/build
 ```
 
 #### `shell` — Interactive shell in build environment
 
 ```bash
-bsp shell <bsp_name> [--command COMMAND]
+bsp shell <bsp_name> [--command COMMAND] [--path PATH]
+bsp shell --device <device> --release <release> [--feature FEATURE...] [--command COMMAND] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--command COMMAND`, `-c COMMAND` | Execute a specific command instead of starting interactive shell |
+| `--path PATH` | Override the output build directory path defined in the registry |
 
 **Examples:**
 
@@ -470,6 +730,12 @@ bsp shell poky-qemuarm64-scarthgap
 
 # Execute single command
 bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
+
+# Interactive shell with a custom build directory
+bsp shell poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
+# Component-based shell with a custom build directory
+bsp shell --device qemuarm64 --release scarthgap --path /mnt/fast-ssd/build
 ```
 
 #### `export` — Export BSP configuration
@@ -477,11 +743,14 @@ bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
 ```bash
 bsp export <bsp_name> [--output OUTPUT]
 bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
+bsp export <bsp_name> --repo-manifest [--output OUTPUT]
+bsp export --device <device> --release <release> [--feature FEATURE...] --repo-manifest [--output OUTPUT]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
+| `--repo-manifest` | Export Android repo manifest XML from KAS lock/unlocked dumps (CLI only) |
 
 **Examples:**
 
@@ -491,7 +760,76 @@ bsp export poky-qemuarm64-scarthgap
 
 # Save to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
+
+# Export Android repo manifest XML
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
+
+# Export Android repo manifest XML using component mode
+bsp export --device qemuarm64 --release scarthgap --repo-manifest --output qemuarm64-scarthgap.xml
 ```
+
+When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
+manifest generated from `kas dump --lock --sort` plus an unlocked
+`kas dump --sort`. Commit revisions from lock output are preferred when
+available; otherwise revision may come from unlocked config or be omitted.
+This makes it suitable for release capture and later replay in CI or
+production source checkout flows.
+
+**Typical production workflow:**
+
+1. Resolve and export the manifest at release cut time.
+2. Store the XML next to the build outputs, `build-manifest.json`, and release
+   metadata.
+3. Commit the exported XML into a dedicated manifest repository (or release
+   branch) so it can be selected later with `repo init -m ...`.
+4. Reuse the same manifest in CI, factory, or field-reproduction workflows to
+   sync the recorded source revisions.
+
+**Recommended release capture example:**
+
+```bash
+# 1) Export the locked manifest
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+
+# 2) Archive it together with other release metadata
+# (assumes build artifacts/build-manifest.json were generated previously via bsp build)
+cp build/poky-qemuarm64-scarthgap/build-manifest.json release-manifests/
+```
+
+**Later use in production with a manifest repository:**
+
+Commit the exported XML into your manifest Git repository, then initialize a
+workspace from that repository and select the locked manifest file:
+
+```bash
+repo init -u ssh://git.example.com/manifests.git -m release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+This is the preferred production pattern because the exported XML becomes an
+immutable release input that can be reviewed, tagged, mirrored, and reused by
+automation.
+
+**Later use in an existing `repo` workspace via local manifests:**
+
+If you already have an initialized `repo` workspace, add the exported XML under
+`.repo/local_manifests/` and resync:
+
+```bash
+mkdir -p .repo/local_manifests
+cp /path/to/poky-qemuarm64-scarthgap-2026-05-25.xml .repo/local_manifests/bsp-locked.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+**Notes and limitations:**
+
+- The exported Android repo manifest is currently available from the **CLI
+  only**.
+- Reproducibility depends on the repositories being accessible at the recorded
+  URLs and revisions.
+- The manifest captures recorded Git revisions, but it does **not** capture local
+  environment state, credentials, downloaded artifacts, or non-Git external
+  inputs.
 
 #### `server` — Start an HTTP server (REST + GraphQL)
 
@@ -507,12 +845,22 @@ bsp server [--host HOST] [--port PORT] [--reload]
 | `--port PORT` | `8080` | Port to listen on |
 | `--reload` | — | Enable auto-reload on code changes (development mode) |
 
+Once started, the following interfaces are available:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
+| `http://localhost:8080/redoc` | ReDoc UI (REST) |
+| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
+| `http://localhost:8080/api/v1/…` | REST API endpoints |
+
 ---
 
 #### `deploy` — Upload build artifacts to cloud storage
 
 Deploy Yocto build artifacts (images, SDKs) that were produced by `bsp build`
-to Azure Blob Storage or AWS S3.
+to Azure Blob Storage or AWS S3.  Optionally also upload Yocto build caches
+(`DL_DIR` / `SSTATE_DIR`) with `--deploy-cache`.
 
 ```bash
 bsp deploy <bsp_name> [OPTIONS]
@@ -527,7 +875,162 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage |
+| `--no-deploy-cache-downloads` | Skip the DL_DIR upload (use with `--deploy-cache`) |
+| `--no-deploy-cache-sstate` | Skip the SSTATE_DIR upload (use with `--deploy-cache`) |
 | `--dry-run` | List what would be uploaded without uploading (no credentials required) |
+
+---
+
+#### `gather` — Download build artifacts from cloud storage
+
+Downloads Yocto build artifacts that were previously uploaded by `bsp deploy`
+from Azure Blob Storage or AWS S3 to a local directory.  With `--gather-cache`
+it also restores Yocto build caches (`DL_DIR` / `SSTATE_DIR`) from cloud
+storage — a missing cache is skipped silently, so the command always succeeds.
+
+```bash
+bsp gather <bsp_name> [OPTIONS]
+bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
+| `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
+| `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`) |
+| `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
+| `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
+| `--gather-cache` | Also download and restore Yocto cache archives (DL_DIR / SSTATE_DIR) if available |
+| `--cache-downloads-dir PATH` | Local path to restore the DL_DIR cache into (default: `DL_DIR` env var or `<topdir>/downloads`, where TOPDIR is inferred from `artifact_dirs`) |
+| `--cache-sstate-dir PATH` | Local path to restore the SSTATE_DIR cache into (default: `SSTATE_DIR` env var or `<topdir>/sstate-cache`, where TOPDIR is inferred from `artifact_dirs`) |
+| `--dry-run` | List what would be downloaded without downloading (no credentials required) |
+
+**Examples:**
+
+```bash
+# Download artifacts for a preset build (uses today's date)
+bsp gather poky-qemuarm64-scarthgap
+
+# Download artifacts into a specific local directory
+bsp gather poky-qemuarm64-scarthgap --dest-dir /mnt/artifacts
+
+# Download artifacts produced on a specific date
+bsp gather poky-qemuarm64-scarthgap --date 2025-03-15
+
+# Preview what would be downloaded (dry-run)
+bsp gather poky-qemuarm64-scarthgap --dry-run
+
+# Component-based gather
+bsp gather --device qemuarm64 --release scarthgap --dest-dir /mnt/artifacts
+
+# Restore artifacts + Yocto caches
+bsp gather poky-qemuarm64-scarthgap \
+    --gather-cache \
+    --cache-downloads-dir /mnt/yocto/downloads \
+    --cache-sstate-dir /mnt/yocto/sstate
+```
+
+---
+
+#### `scan` — CRA vulnerability scanning and SBOM generation
+
+Scans built Yocto image artifacts for CVEs and generates a Software Bill of
+Materials (SBOM).  Supports [**Trivy**](https://trivy.dev/) (default) and
+**Syft + Grype** as scanner backends.  See
+[docs/cra-scanning.md](docs/cra-scanning.md) for full details and
+prerequisites.
+
+```bash
+bsp scan <bsp_name> [OPTIONS]
+bsp scan --device <d> --release <r> [--feature <f>] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--tool trivy\|syft+grype\|emba` | Scanner backend (default: `trivy`) |
+| `--severity LEVEL` | Minimum CVE severity to report: `LOW`, `MEDIUM`, `HIGH` (default), `CRITICAL` |
+| `--fail-on LEVEL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` (default) |
+| `--sbom-format FORMAT` | SBOM format: `cyclonedx` (default), `spdx-json`, `spdx-tag-value` |
+| `--output-dir PATH` | Directory for reports and SBOMs (default: `<build_path>/reports/`) |
+| `--image-path PATH` | Explicit artifact to scan (repeatable; overrides auto-discovery) |
+| `--dry-run` | List what would be scanned without running the scanner |
+
+**Examples:**
+
+```bash
+# Scan a preset's built artifacts
+bsp scan poky-qemuarm64-scarthgap
+
+# Fail on HIGH or above, generate SPDX-JSON SBOM
+bsp scan poky-qemuarm64-scarthgap --fail-on HIGH --sbom-format spdx-json
+
+# Dry run: show which artifacts would be scanned
+bsp scan poky-qemuarm64-scarthgap --dry-run
+
+# Scan a specific image file explicitly
+bsp scan poky-qemuarm64-scarthgap \
+  --image-path build/poky/tmp/deploy/images/qemuarm64/core-image-minimal.wic
+
+# Scan immediately after a build (--scan flag on bsp build)
+bsp build poky-qemuarm64-scarthgap --scan --scan-fail-on CRITICAL
+```
+
+**Prerequisites:** Install [Trivy](https://trivy.dev/latest/getting-started/installation/) before using `bsp scan`.
+
+---
+
+#### `flash` — Flash a Yocto image to an SD card or block device
+
+Discovers the Yocto WIC image produced by `bsp build` and writes it to a block
+device using [bmap-tools](https://github.com/intel/bmap-tools) (`bmaptool
+copy`) for fast, verified flashing.  See
+[docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details and
+prerequisites.
+
+```bash
+bsp flash <bsp_name> --target /dev/sdX [OPTIONS]
+bsp flash --device <d> --release <r> [--feature <f>] --target /dev/sdX [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--target DEVICE`, `-t DEVICE` | Destination block device (e.g. `/dev/sdb`). Required unless `--dry-run` is used or `--tool uuu` is selected. |
+| `--image-path PATH` | Explicit image file to flash (overrides auto-discovery) |
+| `--image-pattern PATTERN` | Override default glob patterns for image discovery (repeatable) |
+| `--tool bmaptool\|dd\|uuu` | Flash tool override (default: `bmaptool`) |
+| `--extra-args ARGS` | Extra arguments forwarded verbatim to the flash tool (e.g. `--nobmap`) |
+| `--build-path PATH` | Override the build output directory used for image discovery |
+| `--dry-run` | Show what would be flashed without writing anything to the device |
+
+For non-dry-run flashes, `bsp` runs the final flashing command with superuser
+rights (via `sudo` when not already root).
+
+**Examples:**
+
+```bash
+# Flash a preset's built image to /dev/sdb
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb
+
+# Preview what would be flashed without writing
+bsp flash imx8mp-adv-scarthgap --dry-run
+
+# Flash a specific image file explicitly
+bsp flash imx8mp-adv-scarthgap \
+  --target /dev/sdb \
+  --image-path build/imx8mp-adv/scarthgap/tmp/deploy/images/core-image-minimal.wic.bz2
+
+# Use dd instead of bmaptool
+bsp flash imx8mp-adv-scarthgap --target /dev/sdb --tool dd
+
+# Use uuu (mfgtools) for NXP USB flashing (no --target required)
+bsp flash imx8mp-adv-scarthgap --tool uuu --extra-args "-b emmc_all"
+
+# Flash immediately after a build
+bsp build imx8mp-adv-scarthgap --flash /dev/sdb
+```
+
+**Prerequisites:** Install [bmap-tools](https://github.com/intel/bmap-tools) (`sudo apt install bmap-tools`) for `bmaptool` mode, or [uuu/mfgtools](https://github.com/nxp-imx/mfgtools) for `--tool uuu`.
 
 ---
 
@@ -565,14 +1068,108 @@ bsp test poky-qemuarm64-scarthgap --wait \
 # Component-based (no preset needed)
 bsp test --device qemuarm64 --release scarthgap --wait
 ```
-Once started, the following interfaces are available:
 
-| URL | Description |
-|-----|-------------|
-| `http://localhost:8080/docs` | Swagger / OpenAPI UI (REST) |
-| `http://localhost:8080/redoc` | ReDoc UI (REST) |
-| `http://localhost:8080/graphql` | GraphiQL interactive editor (GraphQL) |
-| `http://localhost:8080/api/v1/…` | REST API endpoints |
+#### `remotes` — Manage named remote registries
+
+`bsp remotes` manages a persistent list of named remote BSP registry sources,
+stored in `~/.config/bsp/remotes.yaml` (overridable via the
+`BSP_REMOTES_CONFIG` environment variable).  This is modelled after
+`git remote` and integrates with the registry resolution fallback: when no
+`--remote` flag is passed and no local registry file exists, configured remotes
+are used automatically.
+
+If no remotes are configured yet, `bsp` bootstraps a default remote named
+`advantech-europe` pointing to
+`https://github.com/Advantech-EECC/bsp-registry.git`.
+
+**List remotes**
+
+```bash
+# Short listing — one name per line
+bsp remotes
+
+# Verbose — include URL and branch
+bsp remotes -v
+```
+
+Example output:
+
+```
+advantech-europe
+myorg
+```
+
+```
+advantech-europe  https://github.com/Advantech-EECC/bsp-registry.git (branch: main)
+myorg      https://github.com/my-org/bsp-registry.git (branch: develop)
+```
+
+**Add a remote**
+
+```bash
+bsp remotes add <name> <url> [--branch BRANCH]
+```
+
+```bash
+# Add the default Advantech registry under a friendly name
+bsp remotes add advantech-europe https://github.com/Advantech-EECC/bsp-registry.git
+
+# Add a private registry on a non-default branch
+bsp remotes add myorg https://github.com/my-org/bsp-registry.git --branch develop
+```
+
+**Remove a remote**
+
+```bash
+bsp remotes remove <name>
+# or: bsp remotes rm <name>
+```
+
+**Rename a remote**
+
+```bash
+bsp remotes rename <old-name> <new-name>
+```
+
+**Change a remote's URL**
+
+```bash
+bsp remotes set-url <name> <new-url>
+
+# Also update the branch at the same time
+bsp remotes set-url <name> <new-url> --branch <branch>
+```
+
+**Show details of a remote**
+
+```bash
+bsp remotes show <name>
+```
+
+Example output:
+
+```
+name:   myorg
+url:    https://github.com/my-org/bsp-registry.git
+branch: develop
+```
+
+**`remotes` options summary**
+
+| Sub-command | Arguments | Description |
+|-------------|-----------|-------------|
+| *(none)* | | List configured remote names |
+| `-v` / `--verbose-list` | | Show URL and branch alongside each name |
+| `add` | `<name> <url> [--branch BRANCH]` | Register a new named remote |
+| `remove` / `rm` | `<name>` | Remove a named remote |
+| `rename` | `<old-name> <new-name>` | Rename a remote |
+| `set-url` | `<name> <url> [--branch BRANCH]` | Update URL (and optionally branch) |
+| `show` | `<name>` | Print name, URL and branch for a remote |
+
+> **Config file location** — `~/.config/bsp/remotes.yaml`  (override with
+> `BSP_REMOTES_CONFIG=/path/to/remotes.yaml bsp remotes ...`)
+
+
 
 ## HTTP Server (REST + GraphQL)
 
@@ -746,39 +1343,6 @@ app = create_app(manager=manager)
 uvicorn.run(app, host="0.0.0.0", port=8080)
 ```
 
----
-
-```bash
-# Submit a LAVA job for a pre-built image and exit immediately
-bsp test poky-qemuarm64-scarthgap
-
-# Submit and wait for the job to complete
-bsp test poky-qemuarm64-scarthgap --wait
-
-# Override LAVA settings from the CLI
-bsp test poky-qemuarm64-scarthgap --wait \
-  --lava-server https://lava.ci.example.com \
-  --lava-token $LAVA_TOKEN \
-  --artifact-url http://minio.example.com/builds
-
-# Component-based (no preset needed)
-bsp test --device qemuarm64 --release scarthgap --wait
-```
-
-**Example output (`bsp test poky-qemuarm64-scarthgap --wait`):**
-
-```
-LAVA Job ID: 1042
-Job URL:     https://lava.example.com/scheduler/job/1042
-
-LAVA Job 1042 — Health: Complete
-
-Test Results:
-  ✓ Suite: smoke                           PASS  (3/3 passed)
-  ✓ Suite: boot                            PASS  (5/5 passed)
-  ✗ Suite: network                         FAIL  (2/3 passed)
-```
-
 ## HIL Testing with LAVA and Robot Framework
 
 `bsp-registry-tools` can submit Hardware-in-the-Loop (HIL) test jobs to a
@@ -803,7 +1367,7 @@ CLI flags (`--lava-server`, `--lava-token`, `--artifact-url`) override both.
 # bsp-registry.yaml
 
 specification:
-  version: "2.0"
+  version: "2.2"
 
 # Registry-level LAVA connection settings
 lava:
@@ -907,43 +1471,9 @@ bsp test --device qemuarm64 --release scarthgap \
 ```python
 from bsp import BspManager, LavaClient, LavaTestSuite, build_lava_job
 
-
 manager = BspManager("bsp-registry.yaml")
 manager.initialize()
 
-app = create_app(manager=manager)
-uvicorn.run(app, host="0.0.0.0", port=8080)
-```
-
----
-
-# Deploy using registry-configured settings (Azure by default)
-bsp deploy poky-qemuarm64-scarthgap
-
-# Preview what would be uploaded without uploading
-bsp deploy poky-qemuarm64-scarthgap --dry-run
-
-# Deploy to an explicit Azure container
-bsp deploy poky-qemuarm64-scarthgap --container bsp-artifacts
-
-# Deploy to AWS S3
-bsp deploy poky-qemuarm64-scarthgap --provider aws --bucket my-s3-bucket
-
-# Deploy by components with a custom prefix
-bsp deploy --device qemuarm64 --release scarthgap --prefix "builds/{vendor}/{device}/{date}"
-
-# Upload only compressed image files
-bsp deploy poky-qemuarm64-scarthgap --pattern "**/*.wic.gz"
-```
-
-**Authentication:**
-
-| Provider | Authentication |
-|----------|---------------|
-| Azure | `AZURE_STORAGE_CONNECTION_STRING` env var, or `AZURE_STORAGE_ACCOUNT_URL` + `DefaultAzureCredential` (supports `az login`, service principal env vars, Managed Identity) |
-| AWS | Standard boto3 credential chain: `~/.aws/credentials`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars, IAM role, instance profile |
-
-See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details, YAML configuration, and CI/CD integration examples.
 # Submit LAVA test and wait for results
 passed = manager.test_bsp(
     "poky-qemuarm64-scarthgap",
@@ -963,13 +1493,13 @@ suites: list[LavaTestSuite] = client.get_job_results(job_id)
 
 ## Registry Configuration Reference
 
-The BSP registry is a YAML file following **schema v2.0**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
+The BSP registry is a YAML file following **schema v2.2**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
 
 ### `specification`
 
 ```yaml
 specification:
-  version: "2.0"
+  version: "2.2"
 ```
 
 ### `include` (optional)
@@ -1063,7 +1593,7 @@ containers:
 | `file` | string | — | Path to Dockerfile for building the image |
 | `args` | list | `[]` | Docker build arguments (`name`/`value` pairs) |
 | `privileged` | boolean | `false` | Run container with elevated privileges. Required for ISAR builds. |
-| `runtime_args` | string | — | Extra flags appended to the container engine `run` invocation (e.g. port-forwarding, `--device` access). Forwarded via `KAS_CONTAINER_ARGS`. |
+| `runtime_args` | string | — | Extra flags appended to the container engine `run` invocation (e.g. port-forwarding, `--device` access). Forwarded via `--runtime-args`. |
 
 ### `registry.devices`
 
@@ -1094,6 +1624,39 @@ registry:
       includes:
         - kas/scarthgap.yaml
 ```
+
+### `registry.features`
+
+Optional feature definitions that can be enabled per-build.  Features declare
+their own KAS includes and can restrict themselves to specific frameworks/distros
+(`compatible_with`), board vendors (`compatibility`), and/or releases
+(`release_overrides`).
+
+```yaml
+registry:
+  features:
+    - slug: ostree
+      description: "Enable OSTree support in the Yocto image"
+      compatible_with: [yocto]   # restrict to Yocto framework
+      includes:
+        - features/ota/ostree/ostree.yml   # always included when feature is enabled
+      release_overrides:
+        - release: scarthgap
+          includes:
+            - features/ota/ostree/ostree-scarthgap.yml  # only for Scarthgap
+        - release: styhead
+          includes:
+            - features/ota/ostree/ostree-styhead.yml    # only for Styhead
+      vendor_overrides:
+        - vendor: advantech
+          soc_vendors:
+            - vendor: nxp
+              includes:
+                - features/ota/ostree/modular-bsp-ota-nxp.yml  # only for Advantech NXP boards
+```
+
+See [docs/registry-v2.md](docs/registry-v2.md#registryfeatures) for the full
+reference including `compatibility`, `local_conf`, `env`, and all override fields.
 
 ### `registry.bsp`
 
@@ -1241,6 +1804,61 @@ registry:
 
 See [docs/artifact-deployment.md](docs/artifact-deployment.md) for full details.
 
+### `flash` (optional)
+
+Global SD-card / block-device flashing configuration applied to all presets.  A
+`BspPreset` can also include a `flash:` block to override specific settings for
+that preset.  All fields have sensible defaults; the `flash:` block is not
+required to use `bsp flash`.
+
+```yaml
+flash:
+  tool: bmaptool                  # "bmaptool" (default) | "dd" | "uuu"
+  image_patterns:                 # glob patterns, tried in order (first match wins)
+    - "**/{build_target}-*.wic.*" # expanded at runtime when --target is given (first priority)
+    - "**/*.wic.bz2"
+    - "**/*.wic.gz"
+    - "**/*.wic.xz"
+    - "**/*.wic"
+    - "**/*.sdimg"
+    - "**/*.rpi-sdimg"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  extra_args: null                # extra CLI args forwarded verbatim to the flash tool
+```
+
+**`flash` fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tool` | string | `"bmaptool"` | Flash tool: `"bmaptool"` (uses block-map for fast, verified flashing), `"dd"` (raw copy), or `"uuu"` (NXP mfgtools) |
+| `image_patterns` | list[str] | See above | Glob patterns for flashable image discovery, evaluated in order. Patterns may contain `{build_target}` which is expanded to the BitBake target name when `bsp build --target <name> --flash ...` or `bsp flash --build-target <name>` is used; the exact target pattern `**/<target>.wic.*` is also prepended automatically as the highest-priority entry. |
+| `artifact_dirs` | list[str] | `["tmp/deploy/images"]` | Subdirectories under the build output path to search |
+| `extra_args` | string (opt.) | `null` | Extra arguments forwarded verbatim to the flash tool (e.g. `"--nobmap"`) |
+
+#### Per-preset flash override
+
+```yaml
+flash:                            # global: bmaptool
+  tool: bmaptool
+
+registry:
+  bsp:
+    # Uses global settings unchanged.
+    - name: imx8mp-adv-scarthgap
+      device: imx8mp-adv
+      release: scarthgap
+
+    # Overrides extra_args for this preset (e.g. skip block-map verification).
+    - name: rpi4-scarthgap
+      device: rpi4
+      release: scarthgap
+      flash:
+        extra_args: "--nobmap"
+```
+
+See [docs/sd-card-flashing.md](docs/sd-card-flashing.md) for full details.
+
 ### `lava` (optional)
 
 Top-level LAVA server settings shared across all presets.  All values support
@@ -1276,11 +1894,13 @@ The `examples/` directory contains ready-to-use KAS configurations for QEMU targ
 
 | File | Description |
 |------|-------------|
-| `examples/kas/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
-| `examples/kas/styhead.yaml` | Yocto Styhead (5.1) base configuration |
-| `examples/kas/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
-| `examples/kas/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
-| `examples/kas/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/yocto/releases/scarthgap.yaml` | Yocto Scarthgap (5.0 LTS) base configuration |
+| `examples/kas/yocto/releases/styhead.yaml` | Yocto Styhead (5.1) base configuration |
+| `examples/kas/yocto/releases/walnascar.yaml` | Yocto Walnascar (5.2) base configuration |
+| `examples/kas/devices/qemu/qemuarm64.yaml` | QEMU ARM64 machine configuration |
+| `examples/kas/devices/qemu/qemuarm.yaml` | QEMU ARM (32-bit) machine configuration |
+| `examples/kas/devices/qemu/qemux86-64.yaml` | QEMU x86-64 machine configuration |
+| `examples/kas/isar/` | Isar build-system example configurations |
 
 ### KAS File Structure
 
@@ -1362,6 +1982,7 @@ from bsp.server import create_app
 # Create and run the server (requires bsp-registry-tools[server])
 app = create_app(registry_path="bsp-registry.yaml")
 uvicorn.run(app, host="0.0.0.0", port=8080)
+```
 
 ### Cloud Deployment API
 
@@ -1416,7 +2037,7 @@ result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", r
 ```bash
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
-pip install -e ".[dev]"
+pip install -e .
 ```
 
 ### Running Tests
@@ -1444,22 +2065,25 @@ bsp-registry-tools/
 │   ├── cli.py                # CLI entry point
 │   ├── bsp_manager.py        # Main BSP coordinator
 │   ├── registry_fetcher.py   # Remote registry clone/update
+│   ├── remotes_manager.py    # Persistent named-remote CRUD (bsp remotes)
 │   ├── kas_manager.py        # KAS build system integration
 │   ├── environment.py        # Environment variable management
 │   ├── path_resolver.py      # Path utilities
-│   ├── models.py             # Dataclass models (v2.0 schema)
+│   ├── models.py             # Dataclass models (v2.2 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
+│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
 │   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
+│   ├── gatherer.py           # ArtifactGatherer: download build artifacts from cloud
+│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
 │   ├── utils.py              # YAML / Docker utilities
 │   ├── exceptions.py         # Custom exceptions
-│   └── server/               # Optional HTTP server (requires [server] extras)
-│       ├── __init__.py       # Exports create_app
-│       ├── app.py            # FastAPI application factory
-│       ├── rest.py           # REST router (/api/v1/*)
-│       ├── graphql_schema.py # Strawberry GraphQL schema
-│       └── types.py          # Pydantic response models
-│   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
+│   ├── server/               # Optional HTTP server (requires [server] extras)
+│   │   ├── __init__.py       # Exports create_app
+│   │   ├── app.py            # FastAPI application factory
+│   │   ├── rest.py           # REST router (/api/v1/*)
+│   │   ├── graphql_schema.py # Strawberry GraphQL schema
+│   │   └── types.py          # Pydantic response models
 │   └── storage/              # Cloud storage backends
 │       ├── __init__.py       # Exports CloudStorageBackend and create_backend()
 │       ├── base.py           # Abstract CloudStorageBackend base class
@@ -1470,30 +2094,45 @@ bsp-registry-tools/
 ├── README.md                 # This file
 ├── LICENSE                   # Apache 2.0 License
 ├── docs/
-│   ├── registry-v2.md        # Full v2.0 schema reference
+│   ├── registry-v2.md        # Full v2.2 schema reference
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
+│   ├── server.md             # HTTP server (REST + GraphQL) reference
 │   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
-│   ├── test_cli.py
+│   ├── test_cli_basic.py
+│   ├── test_cli_remote_flags.py
 │   ├── test_deploy.py        # Deployment tests
+│   ├── test_gatherer.py      # Gather (download) tests
 │   ├── test_lava_client.py   # LAVA client unit tests (HTTP mocked)
 │   ├── test_lava_job_builder.py # LAVA job template renderer tests
-
+│   ├── test_models.py
+│   ├── test_kas_manager.py
+│   ├── test_environment.py
+│   ├── test_path_resolver.py
 │   ├── test_registry_fetcher.py
-│   └── ...
+│   └── test_utils.py
 ├── examples/
 │   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
+│   ├── bsp-registry.devices.yaml # Devices include fragment example
 │   ├── lava/
 │   │   └── job-template.yaml.j2  # Annotated example LAVA job Jinja2 template
 │   └── kas/
-│       └── ...                # KAS configuration files
+│       ├── yocto/             # Yocto Project KAS configurations
+│       │   ├── releases/      # Per-release KAS files (scarthgap, styhead, walnascar, …)
+│       │   ├── devices/       # Yocto-specific device KAS files (qemuarm64, qemuarm, …)
+│       │   ├── distro/        # Distro fragments (poky, harden)
+│       │   └── features/      # Feature KAS files (systemd, debug, ssh, …)
+│       ├── isar/              # Isar build system KAS configurations
+│       ├── devices/qemu/      # Shared QEMU device configurations (qemuarm64, qemux86-64, …)
+│       └── vendors/qemu/      # Vendor-level shared KAS fragments
 └── .github/
     └── workflows/
-        ├── tests.yaml         # CI: run tests on push/PR
-        └── publish.yaml       # CD: publish to PyPI on release
+        ├── tests.yml          # CI: run tests on push/PR
+        ├── cli-tests.yml      # CI: integration CLI tests
+        └── publish.yml        # CD: publish to PyPI on release
 ```
 
 ## Publishing to PyPI
@@ -1538,8 +2177,10 @@ python -m build
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
 | `RegistryFetcher` | Clones/updates a remote git-hosted BSP registry to a local cache |
+| `RemotesManager` | Reads/writes `~/.config/bsp/remotes.yaml` — CRUD for named remote registry sources |
 | `bsp.server.create_app` | Factory that creates a FastAPI app with REST + GraphQL endpoints |
 | `ArtifactDeployer` | Discovers and uploads Yocto build artifacts to cloud storage |
+| `ArtifactGatherer` | Downloads previously uploaded Yocto build artifacts from cloud storage |
 | `AzureStorageBackend` | Azure Blob Storage backend (requires `azure-storage-blob`) |
 | `AwsStorageBackend` | AWS S3 backend (requires `boto3`) |
 | `LavaClient` | LAVA REST API wrapper — submit, poll, and fetch results for HIL test jobs |
@@ -1550,13 +2191,11 @@ python -m build
 | Class | Description |
 |-------|-------------|
 | `RegistryRoot` | Root registry container (specification, registry, containers, environments, deploy, lava) |
-
 | `Registry` | Contains devices, releases, features, presets, frameworks, and distros |
 | `Device` | Hardware device/board definition (slug, vendor, soc_vendor, includes) |
 | `Release` | Yocto/Isar release definition (slug, distro reference, includes) |
-| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, vendor_overrides) |
+| `Feature` | Optional BSP feature (slug, includes, compatibility constraints, release_overrides, vendor_overrides) |
 | `BspPreset` | Named preset combining device + release + features + optional deploy and testing configs |
-
 | `Framework` | Build-system framework definition (e.g. Yocto, Isar) |
 | `Distro` | Linux distribution definition (e.g. Poky, Isar distro) |
 | `Docker` | Docker image, build arg, privileged mode, and runtime_args configuration |
@@ -1564,6 +2203,7 @@ python -m build
 | `EnvironmentVariable` | Name/value pair with `$ENV{}` expansion support |
 | `DeployConfig` | Cloud deployment configuration (provider, container/bucket, prefix, patterns, artifact dirs) |
 | `DeployResult` | Result of a deployment run: list of uploaded artifacts with URLs and checksums |
+| `GatherResult` | Result of a gather run: list of local paths for downloaded artifacts |
 | `LavaServerConfig` | Registry-level LAVA server connection settings (server, token, timeouts) |
 | `LavaTestConfig` | Per-preset LAVA test settings (device_type, artifact_url, tags, job_template, robot) |
 | `RobotTestConfig` | Robot Framework suite list and variable dict embedded in a LAVA job |

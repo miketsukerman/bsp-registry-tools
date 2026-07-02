@@ -1,0 +1,431 @@
+# CRA Image Scanning
+
+## Background: EU Cyber Resilience Act
+
+The **EU Cyber Resilience Act (CRA)** mandates that manufacturers of products
+with digital elements — including embedded Linux Board Support Packages (BSPs)
+— must:
+
+- Maintain a **Software Bill of Materials (SBOM)** for every release
+- Perform and document **vulnerability assessments** against known CVEs
+- Ensure **no known exploitable CVEs** are present at the time of release
+- Report **actively exploited vulnerabilities** within defined timelines
+
+The primary tool for this in the embedded / Yocto ecosystem is
+[**Trivy**](https://trivy.dev/) (Aqua Security), which can scan Yocto rootfs
+tarballs and WIC images, generate SBOMs (CycloneDX, SPDX), and report CVEs.  A
+secondary option is [**Syft + Grype**](https://github.com/anchore/) (Anchore).
+A third option is [**EMBA**](https://github.com/e-m-b-a/emba) (Siemens Energy),
+a comprehensive firmware security analyser that performs binary-level CVE
+detection without requiring a package-manager database in the image.
+
+All tools are **external CLI programs** — they are not Python packages.  See
+[Prerequisites](#prerequisites) for installation instructions.
+
+---
+
+## Prerequisites
+
+### Trivy (recommended)
+
+```bash
+# Linux — official install script
+curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+  | sh -s -- -b /usr/local/bin
+
+# macOS
+brew install aquasecurity/trivy/trivy
+
+# Verify
+trivy --version
+```
+
+Full instructions: <https://trivy.dev/latest/getting-started/installation/>
+
+### Syft + Grype (alternative)
+
+```bash
+# Syft
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+  | sh -s -- -b /usr/local/bin
+
+# Grype
+curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+  | sh -s -- -b /usr/local/bin
+```
+
+### EMBA (binary-level firmware analyser)
+
+EMBA is a Bash-based firmware security framework developed by Siemens Energy.
+Unlike Trivy and Syft+Grype, EMBA analyses binaries directly and does **not**
+require a package-manager database (dpkg/opkg/rpm/apk) to be present in the
+image.  This makes it the right choice for stripped Yocto images where the
+package database has been removed to save space.
+
+EMBA is **not** available as a package or binary release; it must be cloned and
+set up with its installer:
+
+```bash
+# Clone EMBA
+git clone https://github.com/e-m-b-a/emba /opt/emba
+cd /opt/emba
+
+# Install dependencies (Kali Linux recommended; uses Docker internally)
+sudo ./installer.sh -d
+
+# Verify
+sudo /opt/emba/emba -V
+```
+
+> **Note:** EMBA is tested primarily on Kali Linux.  It can also run in its own
+> Docker container (`embeddedanalyzer/emba`) — see the
+> [EMBA wiki](https://github.com/e-m-b-a/emba/wiki/Installation) for details.
+
+**Scan time:** A full EMBA scan takes 15–60+ minutes per image (it performs
+static analysis, binary extraction, optional QEMU emulation, and CVE matching
+against multiple databases).  Use EMBA as a **scheduled nightly deep-scan**
+rather than a fast CI gate.
+
+---
+
+## Registry YAML configuration
+
+A `scan:` block may be added at **root level** (global defaults applying to
+every build) and/or at **preset level** (overrides the root-level config for
+that specific preset):
+
+```yaml
+# bsp-registry.yaml
+
+specification:
+  version: "2.0"
+
+# -------------------------------------------------------------------
+# Global scan defaults (applied to every preset unless overridden)
+# -------------------------------------------------------------------
+scan:
+  tool: trivy                     # "trivy" (default) | "syft+grype" | "emba"
+  severity: HIGH                  # minimum CVE severity to report
+                                  # LOW | MEDIUM | HIGH (default) | CRITICAL
+  fail_on: CRITICAL               # exit non-zero at this severity level
+                                  # NONE | LOW | MEDIUM | HIGH | CRITICAL (default)
+  sbom_format: cyclonedx          # cyclonedx (default) | spdx-json | spdx-tag-value
+  output_dir: reports/            # output directory for reports and SBOMs
+                                  # (default: <build_path>/reports/)
+  artifact_patterns:              # glob patterns to select image files
+    - "**/*.rootfs.tar.gz"
+    - "**/*.rootfs.tar.bz2"
+    - "**/*.ext4"
+  artifact_dirs:                  # subdirs under build_path to search
+    - "tmp/deploy/images"
+  upload: false                   # upload reports to cloud storage (optional)
+
+registry:
+  devices: [...]
+  releases: [...]
+  bsp:
+    - name: imx8-scarthgap
+      description: "i.MX 8 Scarthgap BSP"
+      device: imx8
+      release: scarthgap
+      build:
+        path: build/imx8/scarthgap
+      # Preset-level scan override: stricter fail_on for this release
+      scan:
+        fail_on: HIGH
+```
+
+### `scan:` field reference
+
+| Field | Default | Description |
+|---|---|---|
+| `tool` | `trivy` | Scanner backend: `trivy`, `syft+grype`, or `emba` |
+| `severity` | `HIGH` | Minimum CVE severity included in report: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
+| `fail_on` | `CRITICAL` | Exit non-zero at this severity: `NONE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
+| `sbom_format` | `cyclonedx` | SBOM format: `cyclonedx`, `spdx-json`, `spdx-tag-value` |
+| `output_dir` | `<build_path>/reports/` | Directory for scan reports and SBOMs |
+| `artifact_patterns` | `**/*.rootfs.tar.gz`, `**/*.rootfs.tar.bz2`, … | Glob patterns to select image files to scan |
+| `artifact_dirs` | `tmp/deploy/images` | Subdirectories under the build path to search |
+| `upload` | `false` | Upload reports to cloud storage (same as `deploy`) |
+| `trivy_os_family` | *(auto)* | Force Trivy OS-family (e.g. `debian`). See [Empty SBOM](#empty-sbom-package-database-missing-or-empty). |
+| `trivy_os_version` | *(none)* | Pin Trivy OS version (e.g. `"12"`). Used with `trivy_os_family`. |
+| `emba_path` | *(required for emba)* | Path to the EMBA installation directory (containing the `emba` script). |
+| `emba_profile` | *(none)* | Path to an EMBA scan profile file (e.g. `/opt/emba/scan-profiles/default-scan.emba`). |
+| `emba_extra_args` | *(none)* | Additional EMBA command-line flags (split by whitespace, e.g. `"-t -Y myvendor"`). |
+| `emba_timeout_minutes` | `120` | Maximum minutes to wait for an EMBA scan before aborting. |
+| `emba_use_sudo` | `false` | Run EMBA under `sudo` (needed for QEMU emulation and bind mounts). |
+| `emba_no_docker` | `false` | Pass `-D` to EMBA (host-only mode, no Docker wrapper). Required in CI with nested Docker restrictions. |
+
+### Configuring the EMBA backend
+
+```yaml
+scan:
+  tool: emba
+  emba_path: /opt/emba                           # required: path to EMBA checkout
+  emba_profile: /opt/emba/scan-profiles/default-scan.emba  # optional but recommended
+  emba_no_docker: true                           # recommended in most CI environments
+  emba_timeout_minutes: 120                      # full scans can take 15–60+ min
+  severity: HIGH
+  fail_on: CRITICAL
+```
+
+> **When to use EMBA instead of Trivy:**
+>
+> | Situation | Recommended tool |
+> |---|---|
+> | Image has dpkg/opkg/rpm database | Trivy or Syft+Grype |
+> | Image strips the package database (`IMAGE_FEATURES` without `package-management`) | **EMBA** |
+> | Fast CI gate (< 5 min) | Trivy |
+> | Nightly deep-scan with binary-level CVE detection | **EMBA** |
+> | Proprietary binary firmware (`.bin`, raw flash) | **EMBA** |
+
+EMBA writes its outputs to a per-artifact subdirectory under `output_dir`:
+
+```
+<output_dir>/
+  emba-<stem>/                       # EMBA log directory for this artifact
+    csv_logs/
+      f20_vul_aggregator.csv         # consolidated CVE findings (parsed by bsp)
+      f17_cve_bin_tool.csv           # binary-level CVE findings (fallback)
+    sbom/
+      EMBA_cyclonedx_sbom.json       # CycloneDX 1.5 SBOM (copied to output_dir)
+    html_report/index.html           # optional HTML web report (if -W was passed)
+  sbom-emba-<stem>.cdx.json         # SBOM copied here for uniform access
+```
+
+### Supported artifact formats
+
+`trivy rootfs` (the Trivy scanner backend) can only extract **rootfs tarballs** and
+**raw ext4 images**. Several Yocto output formats are structurally incompatible and
+produce an empty SBOM and zero CVE findings when passed to Trivy.
+
+| Format | Scannable? | Notes |
+|---|---|---|
+| `*.rootfs.tar.gz` / `*.rootfs.tar.bz2` | ✅ Yes | Recommended scan target |
+| `*.tar.gz` / `*.tar.bz2` | ✅ Yes | Generic tarballs |
+| `*.ext4` | ✅ Yes | Raw ext4 filesystem image |
+| `*.sdimg` / `*.rpi-sdimg` | ✅ Yes | Depends on Trivy version |
+| `*.rootfs.tar.zst` / `*.tar.zst` | ❌ No | Zstd not supported by Trivy's archive extractor; silent empty result |
+| `*.wic` and `*.wic.*` | ❌ No | Raw disk image with partition table; Trivy has no WIC/GPT parser |
+
+> **WIC and compressed WIC images** (`.wic`, `.wic.gz`, `.wic.bz2`, `.wic.xz`,
+> `.wic.zst`) can **never** be scanned directly by `trivy rootfs`.  They are raw disk
+> images containing a partition table; Trivy has no partition extractor.  The scanner
+> will log a warning and skip these files automatically.
+>
+> **Zstd-compressed tarballs** (`.tar.zst`, `.rootfs.tar.zst`) are silently accepted
+> by Trivy but yield an empty SBOM because the archive extractor does not support
+> zstd.  The scanner will log a warning and skip them.  Decompress with
+> `zstd -d image.rootfs.tar.zst -o image.rootfs.tar` and add `**/*.rootfs.tar` to
+> `artifact_patterns`, or configure Yocto to produce `.tar.gz` output
+> (`IMAGE_FSTYPES += "tar.gz"`).
+
+### Empty SBOM: package database missing or empty
+
+Even when the format is correct (e.g. `.rootfs.tar.gz`), you may see an SBOM with
+**`"components": []`**.  The scanner performs a lightweight pre-scan inspection of the
+tarball and emits a targeted `WARNING` explaining the exact cause.
+
+#### Case 1 — `dpkg/status` present but Trivy still produces an empty SBOM
+
+**Why it happens:**  Trivy requires OS detection (reading `/etc/os-release` or
+similar) to decide which package-manager analyzers to activate.  Standard Yocto
+images do not include the Debian/Ubuntu OS markers that Trivy expects, so the dpkg
+analyzer is never invoked — even when `/var/lib/dpkg/status` is fully populated.
+
+**Fix (automatic):**  The scanner automatically detects which package database is
+present in the tarball and passes `--os-family debian` (or `alpine`/`centos` for apk/
+rpm) to Trivy.  No configuration change is needed.
+
+**Manual override** (if the auto-inferred family is wrong):
+```yaml
+scan:
+  tool: trivy
+  trivy_os_family: debian   # force Trivy to use the dpkg analyzer
+  trivy_os_version: "12"    # optional: also pin the distro version for CVE matching
+```
+
+#### Case 2 — `dpkg/info` present, `dpkg/status` absent or empty
+
+**Symptom (scanner warning):**
+```
+WARNING: The rootfs 'imx-image-core.rootfs.tar.gz' contains the dpkg package directory
+(var/lib/dpkg/info) but the package database (var/lib/dpkg/status) is absent or empty.
+```
+
+**Why it happens:**  Yocto assembles `status` from per-package fragments during
+`do_rootfs`.  If the build is incremental or partially cached, this merge step can be
+skipped, leaving `status` absent or zero-byte while `info/` is still populated.
+
+**Fix:**  Perform a clean build to force Yocto to regenerate `status`:
+```bash
+bitbake -c clean <image-recipe>
+bitbake <image-recipe>
+```
+Also verify that `IMAGE_FEATURES += "package-management"` is present so Yocto retains
+the dpkg database in the final rootfs.
+
+#### Case 3 — opkg database stripped (no `var/lib/opkg/status`)
+
+**Why it happens:**  Yocto images using `opkg` often strip `/var/lib/opkg/status` to
+save space.  Add `IMAGE_FEATURES += "package-management"` to your image recipe to
+retain it.  Note that Trivy has no opkg support regardless of `trivy_os_family`; use
+`tool: syft+grype` for opkg-based images.
+
+#### Case 4 — No recognisable package-manager database at all
+
+The scanner checks for dpkg, opkg, apk, and rpm databases.  If none are found it
+emits a generic warning and recommends switching to `syft+grype`, which has broader
+Yocto package-manager support:
+
+```yaml
+scan:
+  tool: syft+grype
+```
+
+---
+
+## CLI Usage
+
+### `bsp scan` — standalone scan command
+
+Scan the build artifacts for a named BSP preset:
+
+```bash
+bsp scan imx8-scarthgap
+```
+
+Scan by specifying device, release, and optional features directly:
+
+```bash
+bsp scan --device imx8 --release scarthgap
+```
+
+#### Common flags
+
+```
+bsp scan <preset | --device D --release R [--feature F ...]>
+         [--tool trivy|syft+grype]
+         [--severity LOW|MEDIUM|HIGH|CRITICAL]
+         [--fail-on NONE|LOW|MEDIUM|HIGH|CRITICAL]
+         [--sbom-format cyclonedx|spdx-json|spdx-tag-value]
+         [--output-dir PATH]
+         [--image-path PATH]    # scan a specific artifact (repeatable)
+         [--dry-run]            # list what would be scanned
+```
+
+#### Examples
+
+```bash
+# Scan with MEDIUM as minimum severity threshold, fail on HIGH
+bsp scan imx8-scarthgap --severity MEDIUM --fail-on HIGH
+
+# Generate an SPDX-JSON SBOM instead of CycloneDX
+bsp scan imx8-scarthgap --sbom-format spdx-json --output-dir /tmp/sboms
+
+# Dry run: list artifacts without scanning
+bsp scan imx8-scarthgap --dry-run
+
+# Scan a specific WIC image explicitly
+bsp scan imx8-scarthgap \
+    --image-path build/imx8/scarthgap/tmp/deploy/images/core-image-minimal-imx8.wic
+
+# Use Syft + Grype instead of Trivy
+bsp scan imx8-scarthgap --tool syft+grype
+```
+
+### `bsp build --scan` — scan after build
+
+The `--scan` flag on `bsp build` triggers a vulnerability scan immediately
+after a successful build (analogous to `--deploy` and `--test`):
+
+```bash
+bsp build imx8-scarthgap --scan
+
+# Scan with non-default fail threshold
+bsp build imx8-scarthgap --scan --scan-fail-on HIGH
+
+# Combined: build, deploy, then scan
+bsp build imx8-scarthgap --deploy --scan
+```
+
+#### `--scan` flags on `bsp build`
+
+```
+--scan                    Scan artifacts after a successful build
+--scan-tool TOOL          Scanner backend (trivy or syft+grype)
+--scan-severity LEVEL     Minimum severity to report
+--scan-fail-on LEVEL      Exit non-zero at this severity
+--scan-output-dir PATH    Directory for scan reports
+```
+
+---
+
+## Output
+
+After a scan, the tool prints a summary:
+
+```
+Scan completed: 3 finding(s) across 1 artifact(s)
+  Severity breakdown: CRITICAL=1  HIGH=2  MEDIUM=0  LOW=0
+  SBOM(s) generated:
+    build/imx8/scarthgap/reports/sbom-core-image-minimal-imx8_wic.cdx.json (312 components, format: cyclonedx)
+  Report(s):
+    build/imx8/scarthgap/reports/trivy-core-image-minimal-imx8_wic.json
+    build/imx8/scarthgap/reports/sbom-core-image-minimal-imx8_wic.cdx.json
+```
+
+Files written to `output_dir` (default: `<build_path>/reports/`):
+
+| File pattern | Contents |
+|---|---|
+| `trivy-<stem>.json` | Trivy CVE vulnerability report (JSON) |
+| `grype-<stem>.json` | Grype CVE vulnerability report (JSON) |
+| `sbom-<stem>.cdx.json` | CycloneDX SBOM (Trivy, Syft, or EMBA) |
+| `sbom-<stem>.spdx.json` | SPDX-JSON SBOM |
+| `sbom-<stem>.spdx` | SPDX tag-value SBOM |
+| `emba-<stem>/csv_logs/f20_vul_aggregator.csv` | EMBA consolidated CVE findings (CSV) |
+| `emba-<stem>/csv_logs/f17_cve_bin_tool.csv` | EMBA binary-level CVE findings (CSV, fallback) |
+| `sbom-emba-<stem>.cdx.json` | EMBA CycloneDX SBOM (copy of EMBA's output) |
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Scan passed — no findings at or above `fail_on` severity |
+| `1` | Scan failed — at least one finding at or above `fail_on` severity |
+| `1` | Tool not installed, configuration error, or artifact not found |
+
+The exit code is `0` when `fail_on: NONE` regardless of findings.
+
+---
+
+## Supported SBOM formats
+
+| Format | `sbom_format` value | File extension |
+|---|---|---|
+| CycloneDX (JSON) | `cyclonedx` | `.cdx.json` |
+| SPDX (JSON) | `spdx-json` | `.spdx.json` |
+| SPDX (tag-value) | `spdx-tag-value` | `.spdx` |
+
+---
+
+## Integration with CI/CD
+
+```yaml
+# GitHub Actions example
+- name: Scan BSP for CVEs
+  run: |
+    bsp scan imx8-scarthgap \
+      --fail-on CRITICAL \
+      --sbom-format cyclonedx \
+      --output-dir reports/
+
+- name: Upload SBOM and scan report
+  uses: actions/upload-artifact@v4
+  with:
+    name: cra-scan-reports
+    path: reports/
+```
