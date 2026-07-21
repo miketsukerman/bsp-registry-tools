@@ -194,6 +194,7 @@ _LAVA_SIGNAL_RE = re.compile(
     r"<LAVA_SIGNAL_TESTCASE\s+TEST_CASE_ID=(\S+)\s+RESULT=(pass|fail)>",
     re.IGNORECASE,
 )
+_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
 @dataclass
@@ -936,9 +937,10 @@ class DirectTestRunner:
             step_name = f"step-{idx}"
             log_file = suite_log_dir / f"{step_name}.log"
             total_steps = len(steps)
+            spinner = _SPINNER_FRAMES[(idx - 1) % len(_SPINNER_FRAMES)]
 
             print(
-                f"[direct-test] {suite_display_name} {step_name} ({idx}/{total_steps}) running",
+                f"[direct-test] {spinner} {suite_display_name} {step_name} ({idx}/{total_steps}) running",
                 flush=True,
             )
 
@@ -974,13 +976,24 @@ class DirectTestRunner:
             if status != "PASS":
                 suite_pass = False
 
+            lava_signals = self._parse_lava_signals(stdout)
+            if status == "PASS":
+                lava_failures = sum(1 for sig in lava_signals if not sig.passed)
+                if lava_failures > 0:
+                    status_mark = "🟡"
+                    status_suffix = f" (LAVA {lava_failures} failed)"
+                else:
+                    status_mark = "✅"
+                    status_suffix = ""
+            else:
+                status_mark = "❌"
+                status_suffix = ""
+
             print(
-                f"[direct-test] {suite_display_name} {step_name} ({idx}/{total_steps}) "
-                f"{status} in {duration:.2f}s",
+                f"[direct-test] {status_mark} {suite_display_name} {step_name} ({idx}/{total_steps}) "
+                f"{status}{status_suffix} in {duration:.2f}s",
                 flush=True,
             )
-
-            lava_signals = self._parse_lava_signals(stdout)
 
             log_file.write_text(
                 f"# command\n{expanded}\n\n"

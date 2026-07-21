@@ -198,10 +198,88 @@ run:
 
         captured = capsys.readouterr()
         assert result.passed is True
-        assert "[direct-test] smoke-suite step-1 (1/2) running" in captured.out
-        assert "[direct-test] smoke-suite step-1 (1/2) PASS in" in captured.out
-        assert "[direct-test] smoke-suite step-2 (2/2) running" in captured.out
-        assert "[direct-test] smoke-suite step-2 (2/2) PASS in" in captured.out
+        assert "[direct-test] ⠋ smoke-suite step-1 (1/2) running" in captured.out
+        assert "[direct-test] ✅ smoke-suite step-1 (1/2) PASS in" in captured.out
+        assert "[direct-test] ⠙ smoke-suite step-2 (2/2) running" in captured.out
+        assert "[direct-test] ✅ smoke-suite step-2 (2/2) PASS in" in captured.out
+
+    def test_emits_yellow_pass_when_lava_cases_have_failures(self, tmp_path, capsys):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "lava-mixed.yaml").write_text(
+            """
+metadata:
+  name: lava-mixed
+run:
+  steps:
+    - "printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=case-a RESULT=pass>\\n<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=case-b RESULT=fail>\\n'"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/lava-mixed.yaml"],
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        captured = capsys.readouterr()
+        assert result.passed is True
+        assert "[direct-test] 🟡 lava-mixed step-1 (1/1) PASS (LAVA 1 failed) in" in captured.out
+
+    def test_emits_green_pass_when_all_lava_cases_pass(self, tmp_path, capsys):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "lava-green.yaml").write_text(
+            """
+metadata:
+  name: lava-green
+run:
+  steps:
+    - "printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=case-a RESULT=pass>\\n<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=case-b RESULT=pass>\\n'"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/lava-green.yaml"],
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        captured = capsys.readouterr()
+        assert result.passed is True
+        assert "[direct-test] ✅ lava-green step-1 (1/1) PASS in" in captured.out
 
     def test_runs_definition_set_locally(self, tmp_path):
         repo = tmp_path / "defs-repo"
