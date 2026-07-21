@@ -253,7 +253,7 @@ class DirectTestSuiteResult:
 
     @property
     def execution_succeeded(self) -> bool:
-        """Return True when every step command succeeded for this suite."""
+        """Return True when every step command succeeded, regardless of LAVA signal results."""
         if self.cases:
             return all(case.execution_succeeded for case in self.cases)
         # Suites without explicit cases rely on their stored aggregate status.
