@@ -924,7 +924,7 @@ class TestLavaSignalParsing:
                         status="FAIL",
                         duration=0.5,
                         command="./run-net-tests.sh",
-                        command_passed=True,
+                        execution_succeeded=True,
                         lava_signals=[
                             LavaSignalCase(test_case_id="ping-gateway", result="pass"),
                             LavaSignalCase(test_case_id="download-a-file", result="fail"),

@@ -216,12 +216,14 @@ class DirectTestCaseResult:
     log_path: Optional[str] = None
     timed_out: bool = False
     lava_signals: List["LavaSignalCase"] = field(default_factory=list)
-    command_passed: Optional[bool] = None
+    execution_succeeded: Optional[bool] = None
 
     @property
     def executed_successfully(self) -> bool:
-        if self.command_passed is not None:
-            return self.command_passed
+        # Older in-memory/manual results may not populate execution_succeeded,
+        # so fall back to the stored status for report rendering.
+        if self.execution_succeeded is not None:
+            return self.execution_succeeded
         return self.status.upper() == "PASS"
 
     @property
@@ -253,6 +255,7 @@ class DirectTestSuiteResult:
     def executed_successfully(self) -> bool:
         if self.cases:
             return all(case.executed_successfully for case in self.cases)
+        # Suites without explicit cases rely on their stored aggregate status.
         return self.status.upper() == "PASS"
 
     @property
@@ -1057,7 +1060,7 @@ class DirectTestRunner:
                     log_path=str(log_file),
                     timed_out=timed_out,
                     lava_signals=lava_signals,
-                    command_passed=(rc == 0),
+                    execution_succeeded=(rc == 0),
                 )
             )
 
