@@ -876,6 +876,7 @@ class TestLavaSignalParsing:
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Overall: <span class=\"badge fail\">" in html
+        assert html.count('class="badge warn"') == 2
 
     def test_html_report_contains_lava_signals(self, tmp_path):
         """HTML report shows LAVA signal cases as a sub-table."""
@@ -909,6 +910,39 @@ class TestLavaSignalParsing:
         assert "download-a-file" in html
         assert "TEST_CASE_ID" in html
         assert "LAVA test cases" in html
+
+    def test_html_report_marks_lava_failures_as_yellow_pass(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="net-suite",
+                status="FAIL",
+                duration=1.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="FAIL",
+                        duration=0.5,
+                        command="./run-net-tests.sh",
+                        command_passed=True,
+                        lava_signals=[
+                            LavaSignalCase(test_case_id="ping-gateway", result="pass"),
+                            LavaSignalCase(test_case_id="download-a-file", result="fail"),
+                        ],
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="test",
+            backend="direct-local",
+            suites=suites,
+            passed=False,
+        )
+        assert "Overall: <span class=\"badge fail\">" in html
+        assert html.count('class="badge warn"') == 2
+        assert "Steps: 1" in html
+        assert "LAVA cases: 2" in html
 
 
 class TestLocalJobPath:

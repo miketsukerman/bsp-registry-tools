@@ -44,6 +44,7 @@ _HTML_REPORT_TEMPLATE = """\
   .pass  { background: #d4edda; color: #155724; }
   .fail  { background: #f8d7da; color: #721c24; }
   .skip  { background: #fff3cd; color: #856404; }
+  .warn  { background: #fff3cd; color: #856404; }
   .card  { background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
            margin-bottom: 1.25rem; overflow: hidden; }
   .card-header { display: flex; align-items: center; gap: 0.75rem;
@@ -91,9 +92,8 @@ _HTML_REPORT_TEMPLATE = """\
 {% endif %}
 
 {% for suite in suites %}
-  {% set suite_pass = (suite.status | upper) == 'PASS' %}
   {% set total = suite.cases | length %}
-  {% set n_pass = suite.cases | selectattr('status', 'equalto', 'PASS') | list | length %}
+  {% set n_pass = suite.cases | selectattr('executed_successfully') | list | length %}
   {% set n_fail = total - n_pass %}
   {# Count LAVA signal cases across the suite #}
   {% set lava_total = namespace(v=0) %}
@@ -106,8 +106,8 @@ _HTML_REPORT_TEMPLATE = """\
   {% endfor %}
 <div class="card">
   <div class="card-header">
-    <span class="badge {{ 'pass' if suite_pass else 'fail' }}">
-      {{ suite.status | upper }}
+    <span class="badge {{ suite.report_status_class }}">
+      {{ suite.report_status }}
     </span>
     <h2>{{ suite.name }}</h2>
     <span class="duration">{{ "%.2f"|format(suite.duration) }}s</span>
@@ -135,7 +135,6 @@ _HTML_REPORT_TEMPLATE = """\
     </thead>
     <tbody>
     {% for case in suite.cases %}
-      {% set case_pass = (case.status | upper) == 'PASS' %}
       <tr>
         <td>
           {{ case.name }}
@@ -143,7 +142,7 @@ _HTML_REPORT_TEMPLATE = """\
             <span class="timeout-tag">⏱ timed-out</span>
           {% endif %}
         </td>
-        <td><span class="badge {{ 'pass' if case_pass else 'fail' }}">{{ case.status | upper }}</span></td>
+        <td><span class="badge {{ case.report_status_class }}">{{ case.report_status }}</span></td>
         <td>{{ "%.2f"|format(case.duration) }}s</td>
         <td><code>{{ case.command | e }}</code></td>
       </tr>
@@ -217,6 +216,29 @@ class DirectTestCaseResult:
     log_path: Optional[str] = None
     timed_out: bool = False
     lava_signals: List["LavaSignalCase"] = field(default_factory=list)
+    command_passed: Optional[bool] = None
+
+    @property
+    def executed_successfully(self) -> bool:
+        if self.command_passed is not None:
+            return self.command_passed
+        return self.status.upper() == "PASS"
+
+    @property
+    def has_failed_lava_signals(self) -> bool:
+        return any(not sig.passed for sig in self.lava_signals)
+
+    @property
+    def report_status(self) -> str:
+        if self.executed_successfully and self.has_failed_lava_signals:
+            return "PASS"
+        return self.status.upper()
+
+    @property
+    def report_status_class(self) -> str:
+        if self.executed_successfully and self.has_failed_lava_signals:
+            return "warn"
+        return "pass" if self.status.upper() == "PASS" else "fail"
 
 
 @dataclass
@@ -226,6 +248,28 @@ class DirectTestSuiteResult:
     duration: float
     log_dir: Optional[str] = None
     cases: List[DirectTestCaseResult] = field(default_factory=list)
+
+    @property
+    def executed_successfully(self) -> bool:
+        if self.cases:
+            return all(case.executed_successfully for case in self.cases)
+        return self.status.upper() == "PASS"
+
+    @property
+    def has_failed_lava_signals(self) -> bool:
+        return any(case.has_failed_lava_signals for case in self.cases)
+
+    @property
+    def report_status(self) -> str:
+        if self.executed_successfully and self.has_failed_lava_signals:
+            return "PASS"
+        return self.status.upper()
+
+    @property
+    def report_status_class(self) -> str:
+        if self.executed_successfully and self.has_failed_lava_signals:
+            return "warn"
+        return "pass" if self.status.upper() == "PASS" else "fail"
 
 
 @dataclass
@@ -1013,6 +1057,7 @@ class DirectTestRunner:
                     log_path=str(log_file),
                     timed_out=timed_out,
                     lava_signals=lava_signals,
+                    command_passed=(rc == 0),
                 )
             )
 
