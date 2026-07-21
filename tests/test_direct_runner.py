@@ -941,6 +941,13 @@ class TestLavaSignalParsing:
         )
         assert "Overall: <span class=\"badge fail\">" in html
         assert html.count('class="badge warn"') == 2
+        suite_name_index = html.index("<h2>net-suite</h2>")
+        assert html.rfind('class="badge warn"', 0, suite_name_index) != -1
+        step_name_index = html.index("step-1")
+        step_command_index = html.index("./run-net-tests.sh")
+        warn_after_step = html.find('class="badge warn"', step_name_index)
+        assert warn_after_step != -1
+        assert warn_after_step < step_command_index
         assert "Steps: 1" in html
         assert "LAVA cases: 2" in html
 
