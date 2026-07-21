@@ -973,21 +973,22 @@ class DirectTestRunner:
 
             duration = time.monotonic() - start
             status = "PASS" if rc == 0 else "FAIL"
-            if status != "PASS":
-                suite_pass = False
-
             lava_signals = self._parse_lava_signals(stdout)
-            if status == "PASS":
-                lava_failures = sum(1 for sig in lava_signals if not sig.passed)
-                if lava_failures > 0:
-                    status_mark = "🟡"
-                    status_suffix = f" (LAVA {lava_failures} failed)"
-                else:
-                    status_mark = "✅"
-                    status_suffix = ""
+            lava_failures = sum(1 for sig in lava_signals if not sig.passed)
+
+            if status == "PASS" and lava_failures > 0:
+                status = "FAIL"
+                status_mark = "❌"
+                status_suffix = f" (LAVA {lava_failures} failed)"
+            elif status == "PASS":
+                status_mark = "✅"
+                status_suffix = ""
             else:
                 status_mark = "❌"
                 status_suffix = ""
+
+            if status != "PASS":
+                suite_pass = False
 
             print(
                 f"[direct-test] {status_mark} {suite_display_name} {step_name} ({idx}/{total_steps}) "

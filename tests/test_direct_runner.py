@@ -203,7 +203,7 @@ run:
         assert "[direct-test] ⠙ smoke-suite step-2 (2/2) running" in captured.out
         assert "[direct-test] ✅ smoke-suite step-2 (2/2) PASS in" in captured.out
 
-    def test_emits_yellow_pass_when_lava_cases_have_failures(self, tmp_path, capsys):
+    def test_emits_failed_status_when_lava_cases_have_failures(self, tmp_path, capsys):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"
         defs_dir.mkdir(parents=True)
@@ -239,8 +239,8 @@ run:
         )
 
         captured = capsys.readouterr()
-        assert result.passed is True
-        assert "[direct-test] 🟡 lava-mixed step-1 (1/1) PASS (LAVA 1 failed) in" in captured.out
+        assert result.passed is False
+        assert "[direct-test] ❌ lava-mixed step-1 (1/1) FAIL (LAVA 1 failed) in" in captured.out
 
     def test_emits_green_pass_when_all_lava_cases_pass(self, tmp_path, capsys):
         repo = tmp_path / "defs-repo"
@@ -849,12 +849,14 @@ class TestLavaSignalParsing:
             label="lava-integration",
         )
 
-        assert result.passed is True
+        assert result.passed is False
         assert len(result.suites) == 1
         suite = result.suites[0]
         assert suite.name == "network-suite"
+        assert suite.status == "FAIL"
         assert len(suite.cases) == 1
         step = suite.cases[0]
+        assert step.status == "FAIL"
         assert len(step.lava_signals) == 2
         assert step.lava_signals[0].test_case_id == "ping-gateway"
         assert step.lava_signals[0].result == "pass"
@@ -864,10 +866,16 @@ class TestLavaSignalParsing:
         # Verify JSON output contains lava_signals
         import json
         summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text())
+        assert summary["passed"] is False
+        assert summary["suites"][0]["status"] == "FAIL"
+        assert summary["suites"][0]["cases"][0]["status"] == "FAIL"
         sig_json = summary["suites"][0]["cases"][0]["lava_signals"]
         assert len(sig_json) == 2
         assert sig_json[0] == {"test_case_id": "ping-gateway", "result": "pass"}
         assert sig_json[1] == {"test_case_id": "download-a-file", "result": "fail"}
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Overall: <span class=\"badge fail\">" in html
 
     def test_html_report_contains_lava_signals(self, tmp_path):
         """HTML report shows LAVA signal cases as a sub-table."""
