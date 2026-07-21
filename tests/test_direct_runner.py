@@ -325,6 +325,66 @@ run:
         assert result.suites[0].name == "smoke-suite"
         assert (tmp_path / "out" / "direct-test-summary.json").exists()
 
+    def test_params_exported_as_env_vars(self, tmp_path):
+        """Parameters from the test-definition source must be available as shell env vars."""
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        out_file = tmp_path / "out" / "env_out.txt"
+        # The step reads $CAN_COUNT from the environment (no template substitution).
+        (defs_dir / "env.yaml").write_text(
+            f"""
+metadata:
+  name: env-suite
+run:
+  steps:
+    - "echo $CAN_COUNT > {out_file}"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs"],
+                    params={"CAN_COUNT": "2"},
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+        )
+
+        assert result.passed is True
+        assert out_file.read_text(encoding="utf-8").strip() == "2"
+
+    def test_ssh_transport_passes_env_to_remote(self):
+        """_SshTransport.run() must include exported env vars in the remote command."""
+        config = DirectTransportConfig(host="board.local", user="root", port=22)
+        transport = _SshTransport(config)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            transport.run(
+                "test_script.sh",
+                cwd="/tmp/work",
+                env={"CAN_COUNT": "2", "CAN0_DEV": "can0"},
+            )
+
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]  # bash -lc '...'
+        assert "CAN_COUNT" in remote_cmd
+        assert "CAN0_DEV" in remote_cmd
+        assert "export" in remote_cmd
+
     def test_resolves_multiple_definition_files(self, tmp_path):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"

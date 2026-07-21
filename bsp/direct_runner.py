@@ -998,6 +998,7 @@ class DirectTestRunner:
                 rc, stdout, stderr = transport.run(
                     expanded,
                     cwd=run_cwd,
+                    env=merged_params if merged_params else None,
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired as exc:
