@@ -3,8 +3,10 @@ Tests for KasManager KAS/Yocto build orchestration.
 """
 
 import os
-import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from bsp import KasManager
 
@@ -593,3 +595,323 @@ class TestKasManager:
         # env is passed as a keyword arg
         called_env = mock_run.call_args[1]["env"] if mock_run.call_args[1] else mock_run.call_args.kwargs["env"]
         assert "KAS_RUNTIME_ARGS" not in called_env
+
+
+class TestRepoManifestExport:
+    def test_export_repo_manifest_xml_uses_locked_dump_and_returns_xml(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        # Synthetic 40-char hex SHAs used as deterministic test fixtures.
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    revision: refs/heads/master
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ) as mock_run:
+            xml = manager.export_repo_manifest_xml()
+
+        lock_args = mock_run.call_args_list[0][0][0]
+        unlocked_args = mock_run.call_args_list[1][0][0]
+        assert lock_args[:3] == ["dump", "--lock", "--sort"]
+        assert unlocked_args[:2] == ["dump", "--sort"]
+        assert "--lock" not in unlocked_args
+        assert "<manifest>" in xml
+        assert 'project name="meta-bar"' in xml
+        assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
+
+    def test_export_repo_manifest_xml_accepts_non_sha_revision(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: refs/heads/main
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="refs/heads/main"' in xml
+
+    def test_export_repo_manifest_xml_writes_output_file(self, kas_config_file, tmp_dir):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: cccccccccccccccccccccccccccccccccccccccc
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
+        out = tmp_dir / "manifest.xml"
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            manager.export_repo_manifest_xml(str(out))
+
+        assert out.exists()
+        text = out.read_text()
+        assert "<manifest>" in text
+        assert 'revision="cccccccccccccccccccccccccccccccccccccccc"' in text
+
+    def test_export_repo_manifest_xml_supports_repositories_key(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repositories:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: dddddddddddddddddddddddddddddddddddddddd
+"""
+        unlocked_yaml = """
+repositories:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: dddddddddddddddddddddddddddddddddddddddd
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="dddddddddddddddddddddddddddddddddddddddd"' in xml
+
+    def test_export_repo_manifest_xml_reads_second_yaml_document(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """---
+header:
+  version: 14
+---
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' in xml
+
+    def test_export_repo_manifest_xml_supports_deeply_nested_repos(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+header:
+  version: 14
+lock:
+  payload:
+    config:
+      repos:
+        meta-foo:
+          url: https://example.com/meta-foo.git
+          commit: ffffffffffffffffffffffffffffffffffffffff
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    revision: refs/heads/main
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision="ffffffffffffffffffffffffffffffffffffffff"' in xml
+
+    def test_export_repo_manifest_xml_allows_missing_revision(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        locked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+"""
+        unlocked_yaml = """
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'revision=' not in xml
+
+    def test_export_repo_manifest_xml_supports_kas5_overrides_lock_format(self, kas_config_file):
+        """KAS 5.x kas dump --lock outputs overrides.repos with only commits (no URLs)."""
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        # KAS 5.x lock format: only commits in overrides.repos, no URLs
+        locked_yaml = """
+header:
+  version: 14
+overrides:
+  repos:
+    meta-foo:
+      commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    meta-bar:
+      commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"""
+        # Unlocked dump still has full repo info including URLs
+        unlocked_yaml = """
+header:
+  version: 14
+repos:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    branch: main
+    path: sources/meta-foo
+  meta-bar:
+    url: https://example.com/meta-bar.git
+    branch: master
+"""
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(
+                 manager,
+                 "_run_kas_command",
+                 side_effect=[
+                     SimpleNamespace(stdout=locked_yaml),
+                     SimpleNamespace(stdout=unlocked_yaml),
+                 ],
+             ):
+            xml = manager.export_repo_manifest_xml()
+
+        assert "<manifest>" in xml
+        assert 'project name="meta-foo"' in xml
+        assert 'project name="meta-bar"' in xml
+        # Commits from lock output should be used as revisions
+        assert 'revision="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' in xml
+        assert 'revision="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in xml
+        # Paths from unlocked output should be present
+        assert 'path="sources/meta-foo"' in xml
+
+
+class TestKasConfigExport:
+    def test_export_kas_config_passes_lock_flag_to_dump(self, kas_config_file):
+        manager = KasManager(
+            kas_files=[str(kas_config_file)],
+            build_dir=str(kas_config_file.parent / "build")
+        )
+        with patch.object(manager, "validate_kas_files", return_value=True), \
+             patch.object(manager, "check_kas_available", return_value=True), \
+             patch.object(manager, "dump_config", return_value="header:\n  version: 14\n") as mock_dump:
+            manager.export_kas_config(lock=True)
+
+        mock_dump.assert_called_once_with(show_output=False, lock=True)

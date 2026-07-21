@@ -601,6 +601,8 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
 | `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
+Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).
+
 **Examples:**
 
 ```bash
@@ -692,12 +694,14 @@ bsp fetch --device qemuarm64 --release scarthgap --target core-image-minimal --p
 #### `shell` — Interactive shell in build environment
 
 ```bash
-bsp shell <bsp_name> [--command COMMAND]
+bsp shell <bsp_name> [--command COMMAND] [--path PATH]
+bsp shell --device <device> --release <release> [--feature FEATURE...] [--command COMMAND] [--path PATH]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--command COMMAND`, `-c COMMAND` | Execute a specific command instead of starting interactive shell |
+| `--path PATH` | Override the output build directory path defined in the registry |
 
 **Examples:**
 
@@ -707,6 +711,12 @@ bsp shell poky-qemuarm64-scarthgap
 
 # Execute single command
 bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
+
+# Interactive shell with a custom build directory
+bsp shell poky-qemuarm64-scarthgap --path /mnt/fast-ssd/build
+
+# Component-based shell with a custom build directory
+bsp shell --device qemuarm64 --release scarthgap --path /mnt/fast-ssd/build
 ```
 
 #### `export` — Export BSP configuration
@@ -714,11 +724,14 @@ bsp shell poky-qemuarm64-scarthgap --command "bitbake core-image-minimal"
 ```bash
 bsp export <bsp_name> [--output OUTPUT]
 bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
+bsp export <bsp_name> --repo-manifest [--output OUTPUT]
+bsp export --device <device> --release <release> [--feature FEATURE...] --repo-manifest [--output OUTPUT]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
+| `--repo-manifest` | Export Android repo manifest XML from KAS lock/unlocked dumps (CLI only) |
 
 **Examples:**
 
@@ -728,7 +741,76 @@ bsp export poky-qemuarm64-scarthgap
 
 # Save to file
 bsp export poky-qemuarm64-scarthgap --output exported-config.yaml
+
+# Export Android repo manifest XML
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
+
+# Export Android repo manifest XML using component mode
+bsp export --device qemuarm64 --release scarthgap --repo-manifest --output qemuarm64-scarthgap.xml
 ```
+
+When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
+manifest generated from `kas dump --lock --sort` plus an unlocked
+`kas dump --sort`. Commit revisions from lock output are preferred when
+available; otherwise revision may come from unlocked config or be omitted.
+This makes it suitable for release capture and later replay in CI or
+production source checkout flows.
+
+**Typical production workflow:**
+
+1. Resolve and export the manifest at release cut time.
+2. Store the XML next to the build outputs, `build-manifest.json`, and release
+   metadata.
+3. Commit the exported XML into a dedicated manifest repository (or release
+   branch) so it can be selected later with `repo init -m ...`.
+4. Reuse the same manifest in CI, factory, or field-reproduction workflows to
+   sync the recorded source revisions.
+
+**Recommended release capture example:**
+
+```bash
+# 1) Export the locked manifest
+bsp export poky-qemuarm64-scarthgap --repo-manifest --output release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+
+# 2) Archive it together with other release metadata
+# (assumes build artifacts/build-manifest.json were generated previously via bsp build)
+cp build/poky-qemuarm64-scarthgap/build-manifest.json release-manifests/
+```
+
+**Later use in production with a manifest repository:**
+
+Commit the exported XML into your manifest Git repository, then initialize a
+workspace from that repository and select the locked manifest file:
+
+```bash
+repo init -u ssh://git.example.com/manifests.git -m release-manifests/poky-qemuarm64-scarthgap-2026-05-25.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+This is the preferred production pattern because the exported XML becomes an
+immutable release input that can be reviewed, tagged, mirrored, and reused by
+automation.
+
+**Later use in an existing `repo` workspace via local manifests:**
+
+If you already have an initialized `repo` workspace, add the exported XML under
+`.repo/local_manifests/` and resync:
+
+```bash
+mkdir -p .repo/local_manifests
+cp /path/to/poky-qemuarm64-scarthgap-2026-05-25.xml .repo/local_manifests/bsp-locked.xml
+repo sync -c --no-tags --optimized-fetch --prune
+```
+
+**Notes and limitations:**
+
+- The exported Android repo manifest is currently available from the **CLI
+  only**.
+- Reproducibility depends on the repositories being accessible at the recorded
+  URLs and revisions.
+- The manifest captures recorded Git revisions, but it does **not** capture local
+  environment state, credentials, downloaded artifacts, or non-Git external
+  inputs.
 
 #### `server` — Start an HTTP server (REST + GraphQL)
 

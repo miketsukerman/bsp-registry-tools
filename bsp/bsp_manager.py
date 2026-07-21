@@ -4,14 +4,19 @@ Main BSP management class coordinating registry, builds, and exports.
 
 import logging
 import os
+import json
+import platform
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
@@ -24,7 +29,12 @@ from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .scanner import ImageScanner, ScanResult
 from .storage import create_backend
-from .utils import get_registry_from_yaml_file, build_docker, expand_build_options_env
+from .utils import (
+    get_registry_from_yaml_file,
+    build_docker,
+    expand_build_options_env,
+    get_installed_package_version,
+)
 
 if COLORAMA_AVAILABLE:
     from colorama import Fore, Style
@@ -41,6 +51,12 @@ def _expand_env(value: str) -> str:
         var = m.group(1)
         return os.environ.get(var, m.group(0))
     return re.sub(r'\$ENV\{([^}]+)\}', _replace, value)
+
+
+_RPI_SOC_FAMILY_MAP = {
+    "rpi4": "bcm2711",
+    "rpi5": "bcm2712",
+}
 
 # =============================================================================
 # Main BSP Management Class with v2.0 Support
@@ -1543,8 +1559,22 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            self._log_config_dump(config_output)
+            runtime_args_value = kas_mgr.get_runtime_args()
+            manifest_runtime_args = (
+                runtime_args_value if isinstance(runtime_args_value, str) else None
+            )
+            self._write_build_manifest(
+                resolved=resolved,
+                build_path=build_path,
+                checkout_only=checkout_only,
+                preset=preset,
+                target=target,
+                task=task,
+                config_output=config_output,
+                docker_build_options=docker_build_options,
+                resolved_runtime_args=manifest_runtime_args,
+            )
 
             if checkout_only:
                 logging.info("Performing checkout and validation (no build)...")
@@ -1580,11 +1610,11 @@ class BspManager:
             self._cleanup_temp_kas_file()
 
     @staticmethod
-    def _extract_targets_from_kas_config(config_output: Optional[str]) -> List[str]:
+    def _extract_targets_from_kas_config(config_output: Optional[Any]) -> List[str]:
         """Return normalized targets from ``kas dump`` YAML output."""
         import yaml
 
-        if not config_output:
+        if not config_output or not isinstance(config_output, str):
             return []
         try:
             config = yaml.safe_load(config_output) or {}
@@ -1599,6 +1629,256 @@ class BspManager:
         if isinstance(targets, list):
             return [str(target) for target in targets if target]
         return []
+
+    @staticmethod
+    def _log_config_dump(config_output: Optional[Any]) -> None:
+        """Log KAS dump output only when it is a non-empty string."""
+        if isinstance(config_output, str) and config_output:
+            logging.debug("Configuration dump:\n" + config_output)
+
+    @staticmethod
+    def _resolve_manifest_soc_family(
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset],
+    ) -> Optional[str]:
+        """Resolve a best-effort SoC family value for build-manifest output."""
+        if resolved.device.soc_family:
+            return resolved.device.soc_family
+
+        family_patterns = (
+            (r"(?:i\.?mx|imx)[\s-]?([0-9][a-z0-9]*)", lambda m: f"imx{m.group(1).lower()}"),
+            (r"\b(rk[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b((?:qcs|sa|sm|sc)[0-9]{3,4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(bcm[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(rpi[0-9]+)\b", lambda m: m.group(1).lower()),
+            (r"\bras(?:pberry)?\s*pi\s*([0-9]+)\b", lambda m: f"rpi{m.group(1).lower()}"),
+            (r"\b(am[0-9]{2}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+            (r"\b(j[0-9]{4}[a-z0-9]*)\b", lambda m: m.group(1).lower()),
+        )
+        soc_vendor = (resolved.device.soc_vendor or "").lower().replace("-", "").replace(" ", "")
+
+        for source in (
+            resolved.device.description,
+            preset.description if preset else None,
+            resolved.device.slug,
+        ):
+            if not source:
+                continue
+            for pattern, formatter in family_patterns:
+                match = re.search(pattern, source, re.IGNORECASE)
+                if not match:
+                    continue
+                family = formatter(match)
+                if soc_vendor in {"broadcom", "raspberrypi"} and family in _RPI_SOC_FAMILY_MAP:
+                    return _RPI_SOC_FAMILY_MAP[family]
+                return family
+        return None
+
+    @staticmethod
+    def _resolve_manifest_container_build_options(
+        resolved: ResolvedConfig,
+        docker_build_options: Optional[str],
+    ) -> Optional[str]:
+        """Resolve effective docker build options for manifest output."""
+        if not resolved.container:
+            return None
+        base_options = (
+            docker_build_options
+            if docker_build_options is not None
+            else resolved.container.build_options
+        )
+        return BspManager._compose_docker_build_options(base_options, use_cache=None)
+
+    @staticmethod
+    def _resolve_manifest_registry_git_provenance(config_path: Path) -> Dict[str, Optional[Any]]:
+        """Resolve git commit and dirty status for the registry repository."""
+        registry_dir = config_path.parent if config_path.is_file() else config_path
+        try:
+            rev_parse = subprocess.run(
+                ["git", "-C", str(registry_dir), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            status = subprocess.run(
+                ["git", "-C", str(registry_dir), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return {
+                "commit_sha": None,
+                "is_dirty": None,
+            }
+        return {
+            "commit_sha": rev_parse.stdout.strip() or None,
+            "is_dirty": bool(status.stdout.strip()),
+        }
+
+    def _generate_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[Any],
+        docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build a JSON-serializable manifest with resolved build components."""
+        effective_distro = resolved.effective_distro or resolved.release.distro or ""
+        distro_obj = None
+        if effective_distro:
+            distro_obj = next(
+                (d for d in self.model.registry.distro if d.slug == effective_distro),
+                None,
+            )
+
+        selected_targets = [target] if target else self._extract_targets_from_kas_config(config_output)
+        manifest_soc_family = self._resolve_manifest_soc_family(resolved, preset)
+        manifest_container_build_options = self._resolve_manifest_container_build_options(
+            resolved, docker_build_options
+        )
+        registry_git_provenance = self._resolve_manifest_registry_git_provenance(self.config_path)
+
+        container_name = None
+        if resolved.container:
+            for name, definition in self.containers.items():
+                if definition is resolved.container:
+                    container_name = name
+                    break
+
+        return {
+            "schema_version": "1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "registry": {
+                "path": str(self.config_path),
+            },
+            "provenance": {
+                "tool": {
+                    "name": "bsp-registry-tools",
+                    "version": get_installed_package_version("bsp-registry-tools"),
+                },
+                "cli": {
+                    "argv": list(sys.argv),
+                    "command": shlex.join(sys.argv),
+                },
+                "python": {
+                    "version": platform.python_version(),
+                },
+                "registry_git": registry_git_provenance,
+            },
+            "preset": (
+                {
+                    "name": preset.name,
+                    "description": preset.description,
+                    "vendor_release": (
+                        resolved.resolved_vendor_release
+                        if resolved.resolved_vendor_release is not None
+                        else preset.vendor_release
+                    ),
+                    "override": (
+                        resolved.resolved_override
+                        if resolved.resolved_override is not None
+                        else preset.override
+                    ),
+                }
+                if preset
+                else None
+            ),
+            "build": {
+                "path": build_path,
+                "checkout_only": checkout_only,
+                "target": target,
+                "task": task,
+                "docker_build_options": docker_build_options,
+                "resolved_targets": selected_targets,
+            },
+            "components": {
+                "device": {
+                    "slug": resolved.device.slug,
+                    "vendor": resolved.device.vendor,
+                    "soc_vendor": resolved.device.soc_vendor,
+                    "soc_family": manifest_soc_family,
+                    "architecture": resolved.device.architecture,
+                },
+                "release": {
+                    "slug": resolved.release.slug,
+                    "yocto_version": resolved.release.yocto_version,
+                    "isar_version": resolved.release.isar_version,
+                },
+                "distro": {
+                    "slug": effective_distro,
+                    "framework": getattr(distro_obj, "framework", None) if distro_obj else None,
+                },
+                "features": [
+                    {"slug": feature.slug, "description": feature.description}
+                    for feature in resolved.features
+                ],
+                "container": (
+                    {
+                        "name": container_name,
+                        "image": resolved.container.image,
+                        "file": resolved.container.file,
+                        "runtime_args": resolved_runtime_args,
+                        "build_options": manifest_container_build_options,
+                        "privileged": resolved.container.privileged,
+                        "args": [
+                            {"name": arg.name, "value": arg.value}
+                            for arg in resolved.container.args
+                        ],
+                    }
+                    if resolved.container
+                    else None
+                ),
+            },
+            "inputs": {
+                "kas_files": list(resolved.kas_files),
+                "local_conf": list(resolved.local_conf),
+                "environment_variables": [
+                    {"name": env_var.name, "value": env_var.value}
+                    for env_var in resolved.env
+                ],
+                "copy": list(resolved.copy),
+            },
+        }
+
+    def _write_build_manifest(
+        self,
+        resolved: ResolvedConfig,
+        build_path: str,
+        checkout_only: bool,
+        preset: Optional[BspPreset],
+        target: Optional[str],
+        task: Optional[str],
+        config_output: Optional[Any],
+        docker_build_options: Optional[str],
+        resolved_runtime_args: Optional[str],
+    ) -> Path:
+        """Write build manifest JSON to ``<build_path>/build-manifest.json``."""
+        if build_path and str(build_path).strip():
+            effective_build_path = build_path
+        else:
+            effective_build_path = resolved.build_path or "build"
+        manifest_path = Path(effective_build_path) / "build-manifest.json"
+        manifest = self._generate_build_manifest(
+            resolved=resolved,
+            build_path=effective_build_path,
+            checkout_only=checkout_only,
+            preset=preset,
+            target=target,
+            task=task,
+            config_output=config_output,
+            docker_build_options=docker_build_options,
+            resolved_runtime_args=resolved_runtime_args,
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        logging.info("Build manifest generated: %s", manifest_path)
+        return manifest_path
 
     def _fetch_resolved(
         self,
@@ -1643,8 +1923,7 @@ class BspManager:
 
         try:
             config_output = kas_mgr.dump_config(show_output=False)
-            if config_output:
-                logging.debug("Configuration dump:\n" + config_output)
+            self._log_config_dump(config_output)
 
             targets = [target] if target else self._extract_targets_from_kas_config(config_output)
             if not targets:
@@ -1889,6 +2168,7 @@ class BspManager:
         resolved: ResolvedConfig,
         command: Optional[str] = None,
         label: str = "",
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Start a KAS shell session for the given ResolvedConfig.
@@ -1897,6 +2177,7 @@ class BspManager:
             resolved: Resolved build configuration
             command: Optional command to run in the shell
             label: Descriptive label for log messages
+            build_path_override: If provided, overrides the build output path from the registry
         """
         logging.info(f"Starting shell for {label or resolved.device.slug}")
 
@@ -1909,10 +2190,15 @@ class BspManager:
                     label=label or resolved.device.slug,
                 )
 
-        self.prepare_build_directory(resolved.build_path)
-        self._copy_files(resolved)
+        if build_path_override is not None:
+            logging.info(f"Overriding build path: {build_path_override}")
+        build_path = build_path_override or resolved.build_path
+        self.prepare_build_directory(build_path)
+        self._copy_files(resolved, build_path_override=build_path_override)
 
-        kas_mgr = self._get_kas_manager_for_resolved(resolved, use_container=True)
+        kas_mgr = self._get_kas_manager_for_resolved(
+            resolved, use_container=True, build_path_override=build_path_override
+        )
 
         try:
             if command:
@@ -1924,13 +2210,19 @@ class BspManager:
         finally:
             self._cleanup_temp_kas_file()
 
-    def shell_into_bsp(self, bsp_name: str, command: Optional[str] = None) -> None:
+    def shell_into_bsp(
+        self,
+        bsp_name: str,
+        command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
+    ) -> None:
         """
         Enter interactive shell for a BSP preset.
 
         Args:
             bsp_name: Name of the BSP preset
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If preset not found or shell fails
@@ -1939,7 +2231,10 @@ class BspManager:
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
             self._shell_resolved(
-                resolved, command=command, label=f"{preset.name} - {preset.description}"
+                resolved,
+                command=command,
+                label=f"{preset.name} - {preset.description}",
+                build_path_override=build_path_override,
             )
 
     def shell_by_components(
@@ -1948,6 +2243,7 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         command: Optional[str] = None,
+        build_path_override: Optional[str] = None,
     ) -> None:
         """
         Enter interactive shell by specifying device, release, and features directly.
@@ -1957,6 +2253,7 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs
             command: Optional command to execute in the shell
+            build_path_override: If provided, overrides the build output path from the registry
 
         Raises:
             SystemExit: If any component is not found or shell fails
@@ -1967,7 +2264,10 @@ class BspManager:
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
         self._shell_resolved(
-            resolved, command=command, label=f"{device_slug}/{release_slug}"
+            resolved,
+            command=command,
+            label=f"{device_slug}/{release_slug}",
+            build_path_override=build_path_override,
         )
 
     # ------------------------------------------------------------------
@@ -1979,6 +2279,8 @@ class BspManager:
         resolved: ResolvedConfig,
         output_file: Optional[str] = None,
         label: str = "",
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -1988,7 +2290,8 @@ class BspManager:
             output_file: Optional file path to save the configuration
             label: Descriptive label for log messages
         """
-        logging.info(f"Exporting KAS configuration for {label or resolved.device.slug}")
+        export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
+        logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
 
         downloads = None
         sstate = None
@@ -2031,22 +2334,35 @@ class BspManager:
                     search_paths=[str(self.config_path.parent)],
                     env_manager=self.env_manager,
                 )
-                config_yaml = kas_mgr.export_kas_config(output_file)
+                if repo_manifest:
+                    exported_content = kas_mgr.export_repo_manifest_xml(output_file)
+                else:
+                    exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
         if not output_file:
+            target_label = label or resolved.device.slug
+            title = (
+                f"Android Repo Manifest for {target_label}"
+                if repo_manifest
+                else f"KAS Configuration for {target_label}"
+            )
             print("\n" + "=" * 60)
-            print(f"KAS Configuration for {label or resolved.device.slug}")
+            print(title)
             print("=" * 60)
-            print(config_yaml)
+            print(exported_content)
             print("=" * 60)
 
         logging.info("Configuration exported successfully!")
 
     def export_bsp_config(
-        self, bsp_name: str, output_file: Optional[str] = None
+        self,
+        bsp_name: str,
+        output_file: Optional[str] = None,
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2065,6 +2381,8 @@ class BspManager:
                 resolved,
                 output_file=output_file,
                 label=f"{preset.name} - {preset.description}",
+                repo_manifest=repo_manifest,
+                lock=lock,
             )
 
     def export_by_components(
@@ -2073,6 +2391,8 @@ class BspManager:
         release_slug: str,
         feature_slugs: Optional[List[str]] = None,
         output_file: Optional[str] = None,
+        repo_manifest: bool = False,
+        lock: bool = False,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2095,6 +2415,8 @@ class BspManager:
             resolved,
             output_file=output_file,
             label=f"{device_slug}/{release_slug}",
+            repo_manifest=repo_manifest,
+            lock=lock,
         )
 
     # ------------------------------------------------------------------

@@ -5,7 +5,6 @@ CLI entry point for the BSP registry manager.
 import argparse
 import logging
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from .bsp_manager import BspManager
@@ -23,7 +22,7 @@ from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig, YoctoCacheConfig
 from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher
 from .remotes_manager import RemotesManager
-from .utils import SUPPORTED_REGISTRY_VERSION
+from .utils import SUPPORTED_REGISTRY_VERSION, get_installed_package_version
 
 # =============================================================================
 # Helpers
@@ -283,10 +282,7 @@ def main() -> int:
     """
     try:
         # Parse command line arguments
-        try:
-            _version = _pkg_version("bsp-registry-tools")
-        except PackageNotFoundError:
-            _version = "unknown"
+        _version = get_installed_package_version("bsp-registry-tools")
         _version_str = (
             f"bsp-registry-tools {_version}\n"
             f"Supported model description version: {SUPPORTED_REGISTRY_VERSION}"
@@ -754,6 +750,18 @@ def main() -> int:
             type=str,
             help="Output file path (default: stdout)"
         )
+        export_parser.add_argument(
+            "--repo-manifest",
+            action="store_true",
+            dest="repo_manifest",
+            help="Export Android repo manifest XML"
+        )
+        export_parser.add_argument(
+            "--lock",
+            action="store_true",
+            dest="lock",
+            help="Use `kas dump --lock` when exporting KAS configuration"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -812,6 +820,13 @@ def main() -> int:
             type=str,
             dest="shell_command",
             help="Command to execute in shell (optional, if not provided starts interactive shell)"
+        )
+        shell_parser.add_argument(
+            "--path",
+            type=str,
+            dest="build_path",
+            metavar="PATH",
+            help="Override output build directory path"
         )
 
         # ----------------------------------------------------------------
@@ -1804,14 +1819,26 @@ def main() -> int:
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
             output = getattr(args, "output", None)
+            repo_manifest = getattr(args, "repo_manifest", False)
+            lock = getattr(args, "lock", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.export_bsp_config(bsp_name=bsp_name, output_file=output)
+                bsp_mgr.export_bsp_config(
+                    bsp_name=bsp_name,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
+                    lock=lock,
+                )
             elif device and release:
                 bsp_mgr.export_by_components(
-                    device, release, features, output_file=output
+                    device,
+                    release,
+                    features,
+                    output_file=output,
+                    repo_manifest=repo_manifest,
+                    lock=lock,
                 )
             else:
                 logging.error(
@@ -1846,14 +1873,21 @@ def main() -> int:
             release = getattr(args, "release", None)
             features = getattr(args, "features", None) or []
             bsp_name = getattr(args, "bsp_name", None)
+            build_path = getattr(args, "build_path", None)
 
             if _check_exclusive(bsp_name, device, release, shell_parser):
                 return 1
             if bsp_name:
-                bsp_mgr.shell_into_bsp(bsp_name=bsp_name, command=shell_command)
+                bsp_mgr.shell_into_bsp(
+                    bsp_name=bsp_name,
+                    command=shell_command,
+                    build_path_override=build_path,
+                )
             elif device and release:
                 bsp_mgr.shell_by_components(
-                    device, release, features, command=shell_command
+                    device, release, features,
+                    command=shell_command,
+                    build_path_override=build_path,
                 )
             else:
                 logging.error(

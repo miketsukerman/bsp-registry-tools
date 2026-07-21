@@ -4,7 +4,9 @@ Tests for BspManager registry operations (v2.0 schema).
 
 import logging
 import pytest
+import json
 import shlex
+import subprocess
 import yaml
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -750,6 +752,288 @@ class TestBspManagerBuildByComponents:
              patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
             manager.build_by_components("imx8-board", "scarthgap", target="core-image-minimal")
         mock_build.assert_called_once_with(target="core-image-minimal", task=None)
+
+    def test_build_bsp_writes_build_manifest(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-preset"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- core-image-base\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch("bsp.bsp_manager.get_installed_package_version", return_value="9.9.9"), \
+             patch("bsp.bsp_manager.sys.argv", ["bsp", "build", "imx8-scarthgap-ota"]), \
+             patch.object(
+                 BspManager,
+                 "_resolve_manifest_registry_git_provenance",
+                 return_value={"commit_sha": None, "is_dirty": None},
+             ):
+            manager.build_bsp(
+               "imx8-scarthgap-ota",
+               build_path_override=str(output_dir),
+               task="compile",
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"]["name"] == "imx8-scarthgap-ota"
+        assert data["components"]["device"]["slug"] == "imx8-board"
+        assert data["components"]["release"]["slug"] == "scarthgap"
+        assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
+        assert data["build"]["task"] == "compile"
+        assert data["build"]["resolved_targets"] == ["core-image-base"]
+        assert data["provenance"]["tool"]["name"] == "bsp-registry-tools"
+        assert data["provenance"]["tool"]["version"] == "9.9.9"
+        assert data["provenance"]["cli"]["argv"] == ["bsp", "build", "imx8-scarthgap-ota"]
+        assert data["provenance"]["cli"]["command"] == "bsp build imx8-scarthgap-ota"
+
+    def test_build_by_components_writes_build_manifest(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-components"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- ignored\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_by_components(
+                "imx8-board",
+                "scarthgap",
+                ["ota"],
+                target="custom-image",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"] is None
+        assert data["components"]["device"]["slug"] == "imx8-board"
+        assert data["components"]["release"]["slug"] == "scarthgap"
+        assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
+        assert data["build"]["target"] == "custom-image"
+        assert data["build"]["resolved_targets"] == ["custom-image"]
+
+    def test_build_by_components_manifest_uses_dump_targets_when_cli_target_missing(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-dump-targets"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value="target:\n- from-dump\n"), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_by_components(
+                "imx8-board",
+                "scarthgap",
+                ["ota"],
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["build"]["target"] is None
+        assert data["build"]["resolved_targets"] == ["from-dump"]
+
+    def test_build_manifest_handles_non_string_dump_config(self, registry_with_features_file, tmp_path):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-non-string-dump"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value={"target": ["invalid"]}), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "imx8-scarthgap-ota",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["build"]["resolved_targets"] == []
+
+    def test_build_manifest_resolves_preset_vendor_fields(
+        self, registry_with_feature_vendor_overrides_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_feature_vendor_overrides_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-resolved-preset-fields"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "adv-imx8-scarthgap-rauc-no-vendor-release",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["preset"]["vendor_release"] == "imx-6.6.53"
+        assert data["preset"]["override"] == "advantech"
+        assert data["build"]["resolved_targets"] == []
+
+    def test_build_manifest_resolves_soc_family_and_container_effective_options(
+        self, tmp_dir, tmp_path, monkeypatch
+    ):
+        registry_dir = tmp_dir / "manifest_resolved_fields"
+        registry_dir.mkdir()
+        kas_file = registry_dir / "test.yaml"
+        kas_file.write_text("header:\n  version: 14\nmachine: rsb3720\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+containers:
+  ubuntu-22.04:
+    image: "advantech/bsp-registry/ubuntu-22.04/kas:5.2"
+    file: Dockerfile.ubuntu
+    args: []
+    build_options: "$ENV{{BSP_BUILD_OPTS}}"
+    volumes:
+      - host: "$ENV{{BSP_HOST_CACHE}}/sstate"
+        container: "/sstate"
+        read_only: true
+registry:
+  devices:
+    - slug: rsb3720
+      description: "RSB-3720 (i.MX8)"
+      vendor: advantech-europe
+      soc_vendor: nxp
+      architecture: arm64
+      build:
+        includes:
+          - {kas_file}
+  releases:
+    - slug: walnascar
+      description: "Walnascar"
+      includes: []
+  features: []
+  bsp:
+    - name: modular-bsp-rauc-rsb3720-walnascar
+      description: "Advantech RSB-3720 6GB (i.MX8) with RAUC support"
+      device: rsb3720
+      release: walnascar
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/modular-bsp-rauc-rsb3720-walnascar
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        monkeypatch.setenv("KAS_RUNTIME_ARGS", "--ipc host")
+        monkeypatch.setenv("BSP_HOST_CACHE", "/tmp/cache-root")
+        monkeypatch.setenv("BSP_BUILD_OPTS", "--network host")
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-resolved-device-container-fields"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp(
+                "modular-bsp-rauc-rsb3720-walnascar",
+                build_path_override=str(output_dir),
+            )
+
+        manifest_path = output_dir / "build-manifest.json"
+        data = json.loads(manifest_path.read_text())
+        assert data["components"]["device"]["soc_family"] == "imx8"
+        assert data["components"]["container"]["runtime_args"] == \
+            "--ipc host -v /tmp/cache-root/sstate:/sstate:ro"
+        assert data["components"]["container"]["build_options"] == "--network host"
+
+    def test_build_manifest_records_registry_git_provenance_when_available(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-git-provenance"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch(
+                 "bsp.bsp_manager.subprocess.run",
+                 side_effect=[
+                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="abc123\n"),
+                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout=" M file\n"),
+                 ],
+             ):
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=str(output_dir))
+
+        data = json.loads((output_dir / "build-manifest.json").read_text())
+        assert data["provenance"]["registry_git"]["commit_sha"] == "abc123"
+        assert data["provenance"]["registry_git"]["is_dirty"] is True
+
+    def test_build_manifest_records_null_registry_git_provenance_when_unavailable(
+        self, registry_with_features_file, tmp_path
+    ):
+        manager = BspManager(config_path=str(registry_with_features_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-git-provenance-unavailable"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True), \
+             patch(
+                 "bsp.bsp_manager.subprocess.run",
+                 side_effect=subprocess.CalledProcessError(128, ["git"]),
+             ):
+            manager.build_bsp("imx8-scarthgap-ota", build_path_override=str(output_dir))
+
+        data = json.loads((output_dir / "build-manifest.json").read_text())
+        assert data["provenance"]["registry_git"]["commit_sha"] is None
+        assert data["provenance"]["registry_git"]["is_dirty"] is None
+
+    @pytest.mark.parametrize(
+        ("soc_vendor", "device_description", "preset_description", "device_slug", "expected_soc_family"),
+        [
+            ("rockchip", "Rockchip RK3588 reference board", None, "device-slug", "rk3588"),
+            ("qualcomm", None, "Automotive SA8155 build", "device-slug", "sa8155"),
+            ("broadcom", "Raspberry Pi 5 development board", None, "rpi5-devkit", "bcm2712"),
+            ("ti", None, None, "am62-evm", "am62"),
+        ],
+    )
+    def test_resolve_manifest_soc_family_non_imx_families(
+        self,
+        soc_vendor,
+        device_description,
+        preset_description,
+        device_slug,
+        expected_soc_family,
+    ):
+        resolved = MagicMock()
+        resolved.device = MagicMock(
+            soc_family=None,
+            soc_vendor=soc_vendor,
+            description=device_description,
+            slug=device_slug,
+        )
+        preset = MagicMock(description=preset_description) if preset_description else None
+        assert BspManager._resolve_manifest_soc_family(resolved, preset) == expected_soc_family
+
+    def test_resolve_manifest_soc_family_uses_deterministic_source_priority(self):
+        resolved = MagicMock()
+        resolved.device = MagicMock(
+            soc_family=None,
+            soc_vendor="qualcomm",
+            description="RK3568 board",
+            slug="am62-board",
+        )
+        preset = MagicMock(description="QCS6490 fallback")
+        assert BspManager._resolve_manifest_soc_family(resolved, preset) == "rk3568"
 
     def test_build_bsp_path_override(self, registry_with_features_file):
         manager = BspManager(config_path=str(registry_with_features_file))
@@ -4591,3 +4875,191 @@ registry:
         assert args[0] == str(reg_b_dir)
         assert args[1] == "Dockerfile.b"
         assert args[2] == "test/shared:b"
+
+class TestExportRepoManifest:
+    def test_export_bsp_config_repo_manifest_uses_kas_repo_export(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", return_value="<manifest/>") as mock_export:
+            manager.export_bsp_config("test-bsp", repo_manifest=True)
+        mock_export.assert_called_once_with(None)
+
+    def test_export_bsp_config_default_uses_kas_config_export(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", return_value="header:\n  version: 14\n") as mock_export:
+            manager.export_bsp_config("test-bsp")
+        mock_export.assert_called_once_with(None, lock=False)
+
+    def test_export_bsp_config_with_lock_uses_kas_lock_dump(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", return_value="header:\n  version: 14\n") as mock_export:
+            manager.export_bsp_config("test-bsp", lock=True)
+        mock_export.assert_called_once_with(None, lock=True)
+
+    def test_export_by_components_repo_manifest_with_output(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        out = str(tmp_dir / "manifest.xml")
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", return_value="<manifest/>") as mock_export:
+            manager.export_by_components(
+                "test-device",
+                "test-release",
+                [],
+                output_file=out,
+                repo_manifest=True,
+            )
+        mock_export.assert_called_once_with(out)
+
+
+# =============================================================================
+# Tests for shell --path (build_path_override) support
+# =============================================================================
+
+class TestShellBuildPathOverride:
+    """Verify that build_path_override is honoured throughout the shell call stack."""
+
+    def _make_simple_registry(self, tmp_dir) -> "Path":
+        """Return a registry file with a single preset that has no Dockerfile."""
+        import textwrap
+        content = textwrap.dedent("""
+            specification:
+              version: "2.1"
+            containers:
+              ubuntu-22.04:
+                image: "test/ubuntu-22.04:latest"
+                file: null
+                args: []
+            registry:
+              devices:
+                - slug: shell-device
+                  description: "Shell Device"
+                  vendor: test-vendor
+                  soc_vendor: test-soc
+                  build:
+                    container: "ubuntu-22.04"
+                    path: build/default
+                    includes: []
+              releases:
+                - slug: shell-release
+                  description: "Shell Release"
+                  includes: []
+              features: []
+              bsp:
+                - name: shell-bsp
+                  description: "Shell BSP"
+                  device: shell-device
+                  release: shell-release
+                  features: []
+        """)
+        registry_path = tmp_dir / "bsp-registry.yaml"
+        registry_path.write_text(content)
+        return registry_path
+
+    def test_shell_resolved_uses_build_path_override_for_prepare(self, tmp_dir):
+        """_shell_resolved passes build_path_override to prepare_build_directory."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory") as mock_prepare, \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_prepare.assert_called_once_with(custom_path)
+
+    def test_shell_resolved_passes_override_to_copy_files(self, tmp_dir):
+        """_shell_resolved passes build_path_override to _copy_files."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory"), \
+             patch.object(manager, "_copy_files") as mock_copy, \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_copy.assert_called_once_with(resolved, build_path_override=custom_path)
+
+    def test_shell_resolved_passes_override_to_kas_manager_factory(self, tmp_dir):
+        """_shell_resolved passes build_path_override to _get_kas_manager_for_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory"), \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_factory.return_value = mock_kas
+            manager._shell_resolved(resolved, build_path_override=custom_path)
+
+        mock_factory.assert_called_once_with(
+            resolved, use_container=True, build_path_override=custom_path
+        )
+
+    def test_shell_into_bsp_forwards_build_path_override(self, tmp_dir):
+        """shell_into_bsp() passes build_path_override down to _shell_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+
+        with patch.object(manager, "_shell_resolved") as mock_shell_resolved:
+            manager.shell_into_bsp("shell-bsp", build_path_override=custom_path)
+
+        _, kwargs = mock_shell_resolved.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_by_components_forwards_build_path_override(self, tmp_dir):
+        """shell_by_components() passes build_path_override down to _shell_resolved."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        custom_path = str(tmp_dir / "custom-shell-build")
+
+        with patch.object(manager, "_shell_resolved") as mock_shell_resolved:
+            manager.shell_by_components(
+                "shell-device", "shell-release", build_path_override=custom_path
+            )
+
+        _, kwargs = mock_shell_resolved.call_args
+        assert kwargs.get("build_path_override") == custom_path
+
+    def test_shell_resolved_no_override_uses_resolved_build_path(self, tmp_dir):
+        """When build_path_override is None, resolved.build_path is used."""
+        registry_path = self._make_simple_registry(tmp_dir)
+        manager = BspManager(config_path=str(registry_path))
+        manager.initialize()
+
+        resolved = manager.resolver.resolve("shell-device", "shell-release")
+
+        with patch.object(manager, "prepare_build_directory") as mock_prepare, \
+             patch.object(manager, "_copy_files"), \
+             patch.object(manager, "_get_kas_manager_for_resolved") as mock_kas_factory, \
+             patch.object(manager, "_cleanup_temp_kas_file"):
+            mock_kas = MagicMock()
+            mock_kas_factory.return_value = mock_kas
+            manager._shell_resolved(resolved)
+
+        mock_prepare.assert_called_once_with(resolved.build_path)
