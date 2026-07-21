@@ -924,7 +924,7 @@ class TestLavaSignalParsing:
                         status="FAIL",
                         duration=0.5,
                         command="./run-net-tests.sh",
-                        execution_succeeded=True,
+                        _execution_succeeded=True,
                         lava_signals=[
                             LavaSignalCase(test_case_id="ping-gateway", result="pass"),
                             LavaSignalCase(test_case_id="download-a-file", result="fail"),
@@ -942,7 +942,7 @@ class TestLavaSignalParsing:
         assert "Overall: <span class=\"badge fail\">" in html
         assert html.count('class="badge warn"') == 2
         suite_name_index = html.index("<h2>net-suite</h2>")
-        assert html.rfind('class="badge warn"', 0, suite_name_index) != -1
+        assert html.find('class="badge warn"') < suite_name_index
         step_name_index = html.index("step-1")
         step_command_index = html.index("./run-net-tests.sh")
         warn_after_step = html.find('class="badge warn"', step_name_index)

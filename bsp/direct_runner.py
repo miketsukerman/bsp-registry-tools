@@ -93,7 +93,7 @@ _HTML_REPORT_TEMPLATE = """\
 
 {% for suite in suites %}
   {% set total = suite.cases | length %}
-  {% set n_pass = suite.cases | selectattr('executed_successfully') | list | length %}
+  {% set n_pass = suite.cases | selectattr('execution_succeeded') | list | length %}
   {% set n_fail = total - n_pass %}
   {# Count LAVA signal cases across the suite #}
   {% set lava_total = namespace(v=0) %}
@@ -216,14 +216,14 @@ class DirectTestCaseResult:
     log_path: Optional[str] = None
     timed_out: bool = False
     lava_signals: List["LavaSignalCase"] = field(default_factory=list)
-    execution_succeeded: Optional[bool] = None
+    _execution_succeeded: Optional[bool] = None
 
     @property
-    def executed_successfully(self) -> bool:
+    def execution_succeeded(self) -> bool:
         # Older in-memory/manual results may not populate execution_succeeded,
         # so fall back to the stored status for report rendering.
-        if self.execution_succeeded is not None:
-            return self.execution_succeeded
+        if self._execution_succeeded is not None:
+            return self._execution_succeeded
         return self.status.upper() == "PASS"
 
     @property
@@ -232,13 +232,13 @@ class DirectTestCaseResult:
 
     @property
     def report_status(self) -> str:
-        if self.executed_successfully and self.has_failed_lava_signals:
+        if self.execution_succeeded and self.has_failed_lava_signals:
             return "PASS"
         return self.status.upper()
 
     @property
     def report_status_class(self) -> str:
-        if self.executed_successfully and self.has_failed_lava_signals:
+        if self.execution_succeeded and self.has_failed_lava_signals:
             return "warn"
         return "pass" if self.status.upper() == "PASS" else "fail"
 
@@ -252,9 +252,10 @@ class DirectTestSuiteResult:
     cases: List[DirectTestCaseResult] = field(default_factory=list)
 
     @property
-    def executed_successfully(self) -> bool:
+    def execution_succeeded(self) -> bool:
+        """Return True when every step command succeeded for this suite."""
         if self.cases:
-            return all(case.executed_successfully for case in self.cases)
+            return all(case.execution_succeeded for case in self.cases)
         # Suites without explicit cases rely on their stored aggregate status.
         return self.status.upper() == "PASS"
 
@@ -264,13 +265,13 @@ class DirectTestSuiteResult:
 
     @property
     def report_status(self) -> str:
-        if self.executed_successfully and self.has_failed_lava_signals:
+        if self.execution_succeeded and self.has_failed_lava_signals:
             return "PASS"
         return self.status.upper()
 
     @property
     def report_status_class(self) -> str:
-        if self.executed_successfully and self.has_failed_lava_signals:
+        if self.execution_succeeded and self.has_failed_lava_signals:
             return "warn"
         return "pass" if self.status.upper() == "PASS" else "fail"
 
@@ -1060,7 +1061,7 @@ class DirectTestRunner:
                     log_path=str(log_file),
                     timed_out=timed_out,
                     lava_signals=lava_signals,
-                    execution_succeeded=(rc == 0),
+                    _execution_succeeded=(rc == 0),
                 )
             )
 
