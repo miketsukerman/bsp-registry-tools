@@ -91,9 +91,7 @@ _HTML_REPORT_TEMPLATE = """\
   <div class="kpi-grid">
     <div class="kpi"><div class="name">Total suites</div><div class="value">{{ report.total_suites }}</div></div>
     <div class="kpi"><div class="name">Suites with issues</div><div class="value">{{ report.failing_suites }}</div></div>
-    <div class="kpi"><div class="name">Total steps</div><div class="value">{{ report.total_steps }}</div></div>
-    <div class="kpi"><div class="name">Failed steps</div><div class="value">{{ report.failed_steps }}</div></div>
-    <div class="kpi"><div class="name">Timed-out steps</div><div class="value">{{ report.timed_out_steps }}</div></div>
+    <div class="kpi"><div class="name">Total LAVA cases</div><div class="value">{{ report.total_lava_cases }}</div></div>
     <div class="kpi"><div class="name">Failed LAVA cases</div><div class="value">{{ report.failed_lava_cases }}</div></div>
   </div>
 </div>
@@ -129,30 +127,16 @@ _HTML_REPORT_TEMPLATE = """\
     <thead>
       <tr>
         <th>Suite</th>
-        <th>Step</th>
-        <th>Status</th>
-        <th>Issue</th>
-        <th>Duration</th>
-        <th>Command</th>
-        <th>Log</th>
+        <th>TEST_CASE_ID</th>
+        <th>Result</th>
       </tr>
     </thead>
     <tbody>
       {% for failure in failures %}
       <tr>
         <td>{{ failure.suite_name }}</td>
-        <td>{{ failure.step_name }}</td>
-        <td><span class="badge {{ failure.status_class }}">{{ failure.status }}</span></td>
-        <td>{{ failure.issue }}</td>
-        <td>{{ "%.2f"|format(failure.duration) }}s</td>
-        <td><span class="cmd">{{ failure.command | e }}</span></td>
-        <td class="log-link">
-          {% if failure.log_path %}
-          <a href="file://{{ failure.log_path | e }}">open</a>
-          {% else %}
-          <span class="muted">—</span>
-          {% endif %}
-        </td>
+        <td>{{ failure.test_case_id | e }}</td>
+        <td><span class="badge {{ failure.status_class }}">{{ failure.result }}</span></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -170,94 +154,38 @@ _HTML_REPORT_TEMPLATE = """\
     <span class="suite-duration">{{ "%.2f"|format(suite.duration) }}s</span>
   </div>
   <div class="suite-stats">
-    <span>Steps: <strong>{{ suite.total_steps }}</strong></span>
-    <span>Failed steps: <strong>{{ suite.failed_steps }}</strong></span>
-    <span>Timed out: <strong>{{ suite.timed_out_steps }}</strong></span>
     <span>LAVA cases: <strong>{{ suite.lava_total }}</strong></span>
     <span>Failed LAVA cases: <strong>{{ suite.lava_failed }}</strong></span>
     {% if suite.log_dir %}
     <span>Log dir: <span class="cmd">{{ suite.log_dir | e }}</span></span>
     {% endif %}
   </div>
+  {% if suite.execution_note %}
+  <div class="panel" style="border: none; border-top: 1px solid #edf1f7; border-radius: 0; margin-bottom: 0;">
+    <p class="issue-note">{{ suite.execution_note }}</p>
+  </div>
+  {% endif %}
 
-  {% if suite.cases %}
+  {% if suite.lava_cases %}
   <table>
     <thead>
       <tr>
-        <th>Step</th>
-        <th>Status</th>
-        <th>Duration</th>
-        <th>Command</th>
-        <th>Log</th>
+        <th>TEST_CASE_ID</th>
+        <th>Result</th>
       </tr>
     </thead>
     <tbody>
-    {% for case in suite.cases %}
+    {% for case in suite.lava_cases %}
       <tr>
-        <td>
-          <strong>{{ case.name }}</strong>
-          {% if case.timed_out %}<span class="badge timeout">TIMEOUT</span>{% endif %}
-          {% if case.issue %}<div class="issue-note">{{ case.issue }}</div>{% endif %}
-        </td>
-        <td><span class="badge {{ case.status_class }}">{{ case.status }}</span></td>
-        <td>{{ "%.2f"|format(case.duration) }}s</td>
-        <td><span class="cmd">{{ case.command | e }}</span></td>
-        <td class="log-link">
-          {% if case.log_path %}
-          <a href="file://{{ case.log_path | e }}">open</a>
-          {% else %}
-          <span class="muted">—</span>
-          {% endif %}
-        </td>
-      </tr>
-      <tr>
-        <td colspan="5">
-          {% if case.has_details %}
-          <details>
-            <summary>Step details</summary>
-            {% if case.params %}
-            <p class="muted" style="margin-top:0.3rem;">Parameters used by this step:</p>
-            <table class="mini-table">
-              <thead>
-                <tr><th>NAME</th><th>VALUE</th></tr>
-              </thead>
-              <tbody>
-              {% for key, value in case.params | dictsort %}
-                <tr>
-                  <td>{{ key | e }}</td>
-                  <td><span class="cmd">{{ value | e }}</span></td>
-                </tr>
-              {% endfor %}
-              </tbody>
-            </table>
-            {% endif %}
-            {% if case.lava_signals %}
-            <p class="muted" style="margin-top:0.45rem;">LAVA test cases reported by this step:</p>
-            <table class="mini-table">
-                <thead>
-                  <tr><th>TEST_CASE_ID</th><th>RESULT</th></tr>
-                </thead>
-                <tbody>
-                {% for sig in case.lava_signals %}
-                  {% set sig_pass = sig.result == 'pass' %}
-                  <tr>
-                    <td>{{ sig.test_case_id | e }}</td>
-                    <td><span class="badge {{ 'pass' if sig_pass else 'fail' }}">{{ sig.result | upper }}</span></td>
-                  </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-            {% endif %}
-          </details>
-          {% endif %}
-        </td>
+        <td>{{ case.test_case_id | e }}</td>
+        <td><span class="badge {{ case.status_class }}">{{ case.result }}</span></td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   {% else %}
   <div class="panel" style="border: none; border-top: 1px solid #edf1f7; border-radius: 0; margin-bottom: 0;">
-    <p class="muted">No steps executed for this suite.</p>
+    <p class="muted">No LAVA test cases reported for this suite.</p>
   </div>
   {% endif %}
 </div>
@@ -1340,9 +1268,6 @@ class DirectTestRunner:
         rendered_suites: List[Dict[str, Any]] = []
         failures: List[Dict[str, Any]] = []
 
-        total_steps = 0
-        failed_steps = 0
-        timed_out_steps = 0
         total_lava_cases = 0
         failed_lava_cases = 0
 
@@ -1351,7 +1276,7 @@ class DirectTestRunner:
             suite_lava_failed = 0
             suite_failed_steps = 0
             suite_timed_out = 0
-            rendered_cases: List[Dict[str, Any]] = []
+            rendered_lava_cases: List[Dict[str, Any]] = []
 
             for case in suite.cases:
                 case_lava_failed = case.lava_failed_count
@@ -1363,45 +1288,30 @@ class DirectTestRunner:
                 suite_lava_total += case_lava_total
                 suite_lava_failed += case_lava_failed
 
-                if case.timed_out:
-                    issue = "Timed out"
-                elif not case.execution_succeeded:
-                    issue = "Command failed"
-                elif case_lava_failed:
-                    issue = f"LAVA failures: {case_lava_failed}"
-                else:
-                    issue = ""
-
-                case_data = {
-                    "name": case.name,
-                    "status": case.report_status,
-                    "status_class": case.report_status_class,
-                    "duration": case.duration,
-                    "command": case.command,
-                    "params": case.params,
-                    "timed_out": case.timed_out,
-                    "log_path": case.log_path,
-                    "lava_signals": case.lava_signals,
-                    "lava_total": case_lava_total,
-                    "lava_failed": case_lava_failed,
-                    "issue": issue,
-                    "has_details": bool(case.params or case.lava_signals),
-                }
-                rendered_cases.append(case_data)
-
-                if issue:
-                    failures.append(
+                for sig in case.lava_signals:
+                    rendered_lava_cases.append(
                         {
-                            "suite_name": suite.name,
-                            "step_name": case.name,
-                            "status": case.report_status,
-                            "status_class": case.report_status_class,
-                            "issue": issue,
-                            "duration": case.duration,
-                            "command": case.command,
-                            "log_path": case.log_path,
+                            "test_case_id": sig.test_case_id,
+                            "result": sig.result.upper(),
+                            "status_class": "pass" if sig.passed else "fail",
                         }
                     )
+                    if not sig.passed:
+                        failures.append(
+                            {
+                                "suite_name": suite.name,
+                                "test_case_id": sig.test_case_id,
+                                "result": sig.result.upper(),
+                                "status_class": "fail",
+                            }
+                        )
+
+            if suite_timed_out:
+                execution_note = "Execution timed out before all LAVA test cases were reported."
+            elif suite_failed_steps:
+                execution_note = "Execution issues occurred before all LAVA test cases were reported."
+            else:
+                execution_note = ""
 
             suite_data = {
                 "id": f"suite-{idx}",
@@ -1410,19 +1320,14 @@ class DirectTestRunner:
                 "status_class": suite.report_status_class,
                 "duration": suite.duration,
                 "log_dir": suite.log_dir,
-                "cases": rendered_cases,
-                "total_steps": len(rendered_cases),
-                "failed_steps": suite_failed_steps,
-                "timed_out_steps": suite_timed_out,
+                "lava_cases": rendered_lava_cases,
                 "lava_total": suite_lava_total,
                 "lava_failed": suite_lava_failed,
+                "execution_note": execution_note,
                 "has_issues": bool(suite_failed_steps or suite_timed_out or suite_lava_failed or suite.report_status_class != "pass"),
             }
             rendered_suites.append(suite_data)
 
-            total_steps += len(rendered_cases)
-            failed_steps += suite_failed_steps
-            timed_out_steps += suite_timed_out
             total_lava_cases += suite_lava_total
             failed_lava_cases += suite_lava_failed
 
@@ -1432,9 +1337,6 @@ class DirectTestRunner:
         report = {
             "total_suites": len(rendered_suites),
             "failing_suites": sum(1 for suite in rendered_suites if suite["has_issues"]),
-            "total_steps": total_steps,
-            "failed_steps": failed_steps,
-            "timed_out_steps": timed_out_steps,
             "total_lava_cases": total_lava_cases,
             "failed_lava_cases": failed_lava_cases,
         }

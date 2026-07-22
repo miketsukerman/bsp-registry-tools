@@ -824,6 +824,7 @@ class TestReportGeneration:
                         command="echo hello",
                         params={"GREETING": "hello", "TARGET": "board"},
                         log_path="/tmp/logs/smoke-suite/step-1.log",
+                        lava_signals=[LavaSignalCase(test_case_id="ping-gateway", result="pass")],
                     ),
                     DirectTestCaseResult(
                         name="step-2",
@@ -832,6 +833,8 @@ class TestReportGeneration:
                         command="false",
                         timed_out=False,
                         log_path="/tmp/logs/smoke-suite/step-2.log",
+                        lava_signals=[LavaSignalCase(test_case_id="download-a-file", result="fail")],
+                        _execution_succeeded=True,
                     ),
                 ],
             ),
@@ -871,13 +874,16 @@ class TestReportGeneration:
         assert "direct-local" in content
         assert "ci-run" in content
         assert "FAIL" in content
-        assert "echo hello" in content
+        assert "ping-gateway" in content
+        assert "download-a-file" in content
         assert "Aggregate summary" in content
         assert "Failures first" in content
         assert "Suite navigation" in content
-        assert "href=\"file:///tmp/logs/smoke-suite/step-1.log\"" in content
+        assert "TEST_CASE_ID" in content
+        assert "echo hello" not in content
+        assert "href=\"file:///tmp/logs/smoke-suite/step-1.log\"" not in content
 
-    def test_html_report_failure_section_lists_step_issues(self, tmp_path):
+    def test_html_report_failure_section_lists_failed_lava_case_ids(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         runner._write_summary(
             output_dir=tmp_path,
@@ -888,8 +894,9 @@ class TestReportGeneration:
         )
         content = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Failures first" in content
-        assert "Command failed" in content
-        assert "step-2" in content
+        assert "download-a-file" in content
+        assert "Command failed" not in content
+        assert "step-2" not in content
 
     def test_html_report_is_valid_html(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
@@ -1088,11 +1095,12 @@ run:
         )
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
-        assert "Parameters used by this step" in html
-        assert "GREETING" in html
-        assert "hello" in html
-        assert "TARGET" in html
-        assert "board" in html
+        assert "Parameters used by this step" not in html
+        assert "GREETING" not in html
+        assert "hello" not in html
+        assert "TARGET" not in html
+        assert "board" not in html
+        assert "No LAVA test cases reported for this suite." in html
 
         summary = _json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
         assert summary["suites"][0]["cases"][0]["params"] == {
@@ -1124,9 +1132,9 @@ run:
             suites=suites,
             passed=False,
         )
-        assert "TIMEOUT" in html
-        assert "Timed out" in html
-        assert "sleep 999" in html
+        assert "Execution timed out before all LAVA test cases were reported." in html
+        assert "No LAVA test cases reported for this suite." in html
+        assert "sleep 999" not in html
 
     def test_pdf_skipped_when_weasyprint_missing(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
@@ -1297,9 +1305,12 @@ class TestLavaSignalParsing:
         assert "Overall:" in html
         assert "badge fail" in html
         assert html.count('class="badge warn"') >= 2
+        assert "ping-gateway" in html
+        assert "download-a-file" in html
+        assert "step-1" not in html
 
     def test_html_report_contains_lava_signals(self, tmp_path):
-        """HTML report shows LAVA signal cases as a sub-table."""
+        """HTML report shows only suite-level LAVA signal cases."""
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         suites = [
             DirectTestSuiteResult(
@@ -1329,9 +1340,10 @@ class TestLavaSignalParsing:
         assert "ping-gateway" in html
         assert "download-a-file" in html
         assert "TEST_CASE_ID" in html
-        assert "LAVA test cases" in html
+        assert "step-1" not in html
+        assert "./run-net-tests.sh" not in html
 
-    def test_html_report_contains_case_params(self, tmp_path):
+    def test_html_report_omits_case_params(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         suites = [
             DirectTestSuiteResult(
@@ -1355,11 +1367,12 @@ class TestLavaSignalParsing:
             suites=suites,
             passed=True,
         )
-        assert "Parameters used by this step" in html
-        assert "TARGET" in html
-        assert "board-a" in html
-        assert "GREETING" in html
-        assert "hello" in html
+        assert "Parameters used by this step" not in html
+        assert "TARGET" not in html
+        assert "board-a" not in html
+        assert "GREETING" not in html
+        assert "hello" not in html
+        assert "No LAVA test cases reported for this suite." in html
 
     def test_html_report_marks_lava_failures_as_yellow_pass(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
@@ -1391,15 +1404,12 @@ class TestLavaSignalParsing:
         )
         assert "Overall:" in html
         assert "badge fail" in html
-        assert html.count('class="badge warn"') >= 2
+        assert html.count('class="badge warn"') >= 1
         assert "EXEC PASS / LAVA FAIL" in html
-        step_name_index = html.index("step-1")
-        step_command_index = html.index("./run-net-tests.sh")
-        warn_after_step = html.find('class="badge warn"', step_name_index)
-        assert warn_after_step != -1
-        assert warn_after_step < step_command_index
-        assert "Steps: <strong>1</strong>" in html
         assert "LAVA cases: <strong>2</strong>" in html
+        assert "download-a-file" in html
+        assert "step-1" not in html
+        assert "./run-net-tests.sh" not in html
 
 
 class TestLocalJobPath:

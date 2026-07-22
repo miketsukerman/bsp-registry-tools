@@ -1095,7 +1095,7 @@ When `--verbose` is enabled, test execution logs include per-suite and per-case 
 
 Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including:
 
-- `direct-test-report.html` with aggregate KPIs, suite quick navigation, a fail-first triage table, and collapsible per-step details (parameters/LAVA cases)
+- `direct-test-report.html` with aggregate KPIs, suite quick navigation, and a LAVA test-case-ID-focused reader view grouped by suite
 - `direct-test-summary.json` for machine-readable summary data
 - per-step log files linked from the HTML report
 
