@@ -185,7 +185,7 @@ _HTML_REPORT_TEMPLATE = """\
 """
 
 
-_VAR_BRACE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_VAR_BRACE_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _VAR_DOLLAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # LAVA signal format (case-insensitive to tolerate minor variations in test scripts):
 # <LAVA_SIGNAL_TESTCASE TEST_CASE_ID=<id> RESULT=pass|fail>

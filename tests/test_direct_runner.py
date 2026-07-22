@@ -383,7 +383,7 @@ params:
   GREETING: hello
 run:
   steps:
-    - "echo {{GREETING}}-${TARGET} > output.txt"
+    - "echo {GREETING}-${TARGET} > output.txt"
     - "test -f output.txt"
 """,
             encoding="utf-8",
@@ -1245,6 +1245,65 @@ actions:
 
         assert result.passed is True
         assert result.suites[0].name == "param-suite"
+
+    def test_lava_job_parameters_substitute_single_brace_vars(self, tmp_path):
+        """LAVA job `parameters:` must override `{VAR}` placeholders in test steps.
+
+        Regression test for the bug where DISTRO_VER from the job file's
+        parameters: block was silently ignored because _VAR_BRACE_RE matched
+        Jinja2-style {{ VAR }} instead of Lava-Test-style {VAR}.  The test
+        script would then use the default from params: instead of the job value.
+        """
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+        out_file = tmp_path / "out" / "distro_ver.txt"
+
+        # Simulate context.yaml-style definition: default DISTRO_VER is the
+        # bare release list; the LAVA job overrides it with a .*() regex.
+        (defs_dir / "context.yaml").write_text(
+            f"""
+metadata:
+  name: context-suite
+params:
+  DISTRO_VER: scarthgap|styhead|walnascar
+run:
+  steps:
+    - "printf '%s\\n' '{{DISTRO_VER}}' > {out_file}"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/context.yaml
+          parameters:
+            DISTRO_VER: ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)"
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="distro-ver",
+        )
+
+        assert result.passed is True
+        # The file must contain the job-parameter value, not the default.
+        written = out_file.read_text(encoding="utf-8").strip()
+        assert written == ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)"
 
     def test_multiple_local_job_paths(self, tmp_path):
         """Multiple --test-job-path values execute all referenced suites."""
