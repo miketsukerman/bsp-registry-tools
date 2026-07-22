@@ -1,5 +1,6 @@
 """Tests for direct test-definition execution backend."""
 
+import json
 import subprocess
 from html.parser import HTMLParser
 
@@ -182,8 +183,6 @@ actions:
         assert result.suites[0].name == "network-suite"
         assert len(result.suites[0].cases) == 1
         assert len(result.suites[0].cases[0].lava_signals) == 1
-
-        import json
 
         summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
