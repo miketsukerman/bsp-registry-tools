@@ -31,60 +31,76 @@ _HTML_REPORT_TEMPLATE = """\
 <title>BSP Test Report{% if label %} — {{ label }}{% endif %}</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, Arial, sans-serif; background: #f4f6f9; color: #222; padding: 2rem; }
-  h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
-  .meta { color: #555; font-size: 0.9rem; margin-bottom: 0.5rem; }
-  .preset-info { background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
-                 padding: 0.6rem 1rem; margin-bottom: 1.25rem; font-size: 0.88rem; color: #333; }
-  .preset-info table { width: auto; border-collapse: collapse; }
-  .preset-info td { padding: 0.15rem 0.75rem 0.15rem 0; border: none; vertical-align: top; }
-  .preset-info td:first-child { font-weight: 600; white-space: nowrap; color: #555; }
-  .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px;
-           font-weight: bold; font-size: 0.85rem; }
-  .pass  { background: #d4edda; color: #155724; }
-  .fail  { background: #f8d7da; color: #721c24; }
-  .skip  { background: #fff3cd; color: #856404; }
-  .warn  { background: #fff3cd; color: #856404; }
-  .card  { background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
-           margin-bottom: 1.25rem; overflow: hidden; }
-  .card-header { display: flex; align-items: center; gap: 0.75rem;
-                 padding: 0.75rem 1rem; background: #f8f9fa;
-                 border-bottom: 1px solid #dee2e6; }
-  .card-header h2 { font-size: 1rem; flex: 1; }
-  .card-header .duration { font-size: 0.8rem; color: #777; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-  th { text-align: left; padding: 0.5rem 1rem; background: #f1f3f5;
-       border-bottom: 1px solid #dee2e6; font-weight: 600; }
-  td { padding: 0.45rem 1rem; border-bottom: 1px solid #f0f0f0; }
+  body { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; background: #f3f5f8; color: #1f2937; padding: 1.6rem; line-height: 1.35; }
+  .page { max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 1.65rem; margin-bottom: 0.35rem; }
+  h2 { font-size: 1.15rem; margin-bottom: 0.5rem; }
+  .meta { color: #4b5563; font-size: 0.92rem; margin-bottom: 1rem; }
+  .panel { background: #fff; border: 1px solid #d7dde6; border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+  .badge { display: inline-block; padding: 0.2rem 0.62rem; border-radius: 999px; font-weight: 700; font-size: 0.74rem; letter-spacing: 0.01em; white-space: nowrap; }
+  .pass  { background: #d1fae5; color: #065f46; }
+  .fail  { background: #fee2e2; color: #991b1b; }
+  .warn  { background: #fef3c7; color: #92400e; }
+  .timeout { background: #ffedd5; color: #9a3412; }
+  .label-row { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.35rem; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 0.6rem; }
+  .kpi { border: 1px solid #e3e7ee; border-radius: 6px; padding: 0.55rem 0.7rem; background: #fafbfc; }
+  .kpi .name { font-size: 0.78rem; color: #4b5563; margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .kpi .value { font-size: 1.2rem; font-weight: 700; color: #111827; }
+  .toc-list { list-style: none; display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.25rem; }
+  .toc-list li a { text-decoration: none; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.78rem; }
+  .failure-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  .failure-table th { text-align: left; padding: 0.48rem 0.55rem; background: #fee2e2; color: #7f1d1d; border-bottom: 1px solid #fecaca; }
+  .failure-table td { padding: 0.42rem 0.55rem; border-bottom: 1px solid #f3d2d2; vertical-align: top; }
+  .failure-table tr:last-child td { border-bottom: none; }
+  .suite-card { background: #fff; border: 1px solid #d7dde6; border-radius: 8px; margin-bottom: 1rem; overflow: hidden; }
+  .suite-header { display: flex; align-items: center; gap: 0.7rem; padding: 0.7rem 0.9rem; background: #f8fafc; border-bottom: 1px solid #e3e8f0; }
+  .suite-header h3 { font-size: 1rem; flex: 1; }
+  .suite-duration { color: #4b5563; font-size: 0.82rem; font-weight: 600; }
+  .suite-stats { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.55rem 0.9rem; border-bottom: 1px solid #eef2f7; font-size: 0.82rem; color: #374151; }
+  .suite-stats strong { color: #111827; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  th { text-align: left; padding: 0.45rem 0.55rem; background: #f3f6fb; color: #1f2937; border-bottom: 1px solid #dbe2ec; }
+  td { padding: 0.4rem 0.55rem; border-bottom: 1px solid #edf1f7; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
-  .summary-bar { display: flex; gap: 1.5rem; padding: 0.75rem 1rem;
-                 background: #e9ecef; font-size: 0.9rem; font-weight: 600; }
-  .timeout-tag { font-size: 0.75rem; color: #e67e22; margin-left: 0.4rem; }
-  code { font-size: 0.8rem; background: #f1f3f5; padding: 0.1rem 0.3rem;
-         border-radius: 3px; word-break: break-all; }
-  .case-details { margin: 0.25rem 0 0.25rem 1.5rem; }
-  .case-params { margin-bottom: 0.5rem; }
-  .case-params table, .lava-signals table { background: #fafbfc; font-size: 0.82rem; border: 1px solid #e0e0e0; border-radius: 4px; }
-  .case-params th, .lava-signals th { background: #eff1f3; padding: 0.3rem 0.75rem; font-size: 0.8rem; }
-  .case-params td, .lava-signals td { padding: 0.3rem 0.75rem; border-bottom: 1px solid #efefef; }
-  .case-params tr:last-child td, .lava-signals tr:last-child td { border-bottom: none; }
-  .lava-signals { margin: 0.25rem 0 0.25rem 0; }
-  .detail-label { font-size: 0.72rem; color: #555; font-style: italic; margin-bottom: 0.15rem; }
+  .cmd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0.14rem 0.3rem; word-break: break-all; }
+  details { margin-top: 0.35rem; padding: 0.35rem 0.45rem; background: #fbfcfe; border: 1px dashed #d9e0eb; border-radius: 6px; }
+  details > summary { cursor: pointer; color: #374151; font-size: 0.78rem; font-weight: 600; }
+  .mini-table { width: 100%; margin-top: 0.35rem; border-collapse: collapse; font-size: 0.78rem; }
+  .mini-table th { background: #eef2f7; padding: 0.3rem 0.45rem; border-bottom: 1px solid #dde5f0; }
+  .mini-table td { padding: 0.28rem 0.45rem; border-bottom: 1px solid #ebeff5; }
+  .mini-table tr:last-child td { border-bottom: none; }
+  .issue-note { color: #7f1d1d; font-size: 0.76rem; margin-top: 0.2rem; font-weight: 600; }
+  .muted { color: #4b5563; }
+  .log-link { white-space: nowrap; }
+  .log-link a { color: #1d4ed8; text-decoration: none; }
 </style>
 </head>
 <body>
-
+<div class="page">
 <h1>BSP Test Report{% if label %}: {{ label }}{% endif %}</h1>
 <p class="meta">
   Generated: {{ generated_at }} &nbsp;|&nbsp;
   Backend: <strong>{{ backend }}</strong> &nbsp;|&nbsp;
-  Overall: <span class="badge {{ 'pass' if passed else 'fail' }}">
-    {{ 'PASS' if passed else 'FAIL' }}
-  </span>
+  Overall:
+  <span class="badge {{ 'pass' if passed else 'fail' }}">{{ 'PASS' if passed else 'FAIL' }}</span>
 </p>
 
+<div class="panel">
+  <h2>Aggregate summary</h2>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="name">Total suites</div><div class="value">{{ report.total_suites }}</div></div>
+    <div class="kpi"><div class="name">Suites with issues</div><div class="value">{{ report.failing_suites }}</div></div>
+    <div class="kpi"><div class="name">Total steps</div><div class="value">{{ report.total_steps }}</div></div>
+    <div class="kpi"><div class="name">Failed steps</div><div class="value">{{ report.failed_steps }}</div></div>
+    <div class="kpi"><div class="name">Timed-out steps</div><div class="value">{{ report.timed_out_steps }}</div></div>
+    <div class="kpi"><div class="name">Failed LAVA cases</div><div class="value">{{ report.failed_lava_cases }}</div></div>
+  </div>
+</div>
+
 {% if preset_info %}
-<div class="preset-info">
+<div class="panel">
+  <h2>Preset info</h2>
   <table>
     {% if preset_info.device %}<tr><td>Device:</td><td>{{ preset_info.device }}{% if preset_info.device_description %} — {{ preset_info.device_description }}{% endif %}</td></tr>{% endif %}
     {% if preset_info.release %}<tr><td>Release:</td><td>{{ preset_info.release }}{% if preset_info.release_description %} — {{ preset_info.release_description }}{% endif %}</td></tr>{% endif %}
@@ -93,38 +109,77 @@ _HTML_REPORT_TEMPLATE = """\
 </div>
 {% endif %}
 
-{% for suite in suites %}
-  {% set total = suite.cases | length %}
-  {% set n_pass = suite.cases | selectattr('execution_succeeded') | list | length %}
-  {% set n_fail = total - n_pass %}
-  {# Count LAVA signal cases across the suite #}
-  {% set lava_total = namespace(v=0) %}
-  {% set lava_pass  = namespace(v=0) %}
-  {% for case in suite.cases %}
-    {% for sig in case.lava_signals %}
-      {% set lava_total.v = lava_total.v + 1 %}
-      {% if sig.result == 'pass' %}{% set lava_pass.v = lava_pass.v + 1 %}{% endif %}
+<div class="panel">
+  <h2>Suite navigation</h2>
+  {% if suites %}
+  <ul class="toc-list">
+    {% for suite in suites %}
+    <li><a href="#{{ suite.id }}">{{ suite.name }}</a></li>
     {% endfor %}
-  {% endfor %}
-<div class="card">
-  <div class="card-header">
-    <span class="badge {{ suite.report_status_class }}">
-      {{ suite.report_status }}
-    </span>
-    <h2>{{ suite.name }}</h2>
-    <span class="duration">{{ "%.2f"|format(suite.duration) }}s</span>
+  </ul>
+  {% else %}
+  <p class="muted">No suites available.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Failures first</h2>
+  {% if failures %}
+  <table class="failure-table">
+    <thead>
+      <tr>
+        <th>Suite</th>
+        <th>Step</th>
+        <th>Status</th>
+        <th>Issue</th>
+        <th>Duration</th>
+        <th>Command</th>
+        <th>Log</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for failure in failures %}
+      <tr>
+        <td>{{ failure.suite_name }}</td>
+        <td>{{ failure.step_name }}</td>
+        <td><span class="badge {{ failure.status_class }}">{{ failure.status }}</span></td>
+        <td>{{ failure.issue }}</td>
+        <td>{{ "%.2f"|format(failure.duration) }}s</td>
+        <td><span class="cmd">{{ failure.command | e }}</span></td>
+        <td class="log-link">
+          {% if failure.log_path %}
+          <a href="file://{{ failure.log_path | e }}">open</a>
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No failures detected.</p>
+  {% endif %}
+</div>
+
+{% for suite in suites %}
+<div class="suite-card" id="{{ suite.id }}">
+  <div class="suite-header">
+    <span class="badge {{ suite.status_class }}">{{ suite.status }}</span>
+    <h3>{{ suite.name }}</h3>
+    <span class="suite-duration">{{ "%.2f"|format(suite.duration) }}s</span>
   </div>
-  <div class="summary-bar">
-    <span>Steps: {{ total }}</span>
-    <span style="color:#155724">Pass: {{ n_pass }}</span>
-    {% if n_fail %}<span style="color:#721c24">Fail: {{ n_fail }}</span>{% endif %}
-    {% if lava_total.v %}
-      &nbsp;|&nbsp;
-      <span>LAVA cases: {{ lava_total.v }}</span>
-      <span style="color:#155724">Pass: {{ lava_pass.v }}</span>
-      {% if lava_total.v - lava_pass.v %}<span style="color:#721c24">Fail: {{ lava_total.v - lava_pass.v }}</span>{% endif %}
+  <div class="suite-stats">
+    <span>Steps: <strong>{{ suite.total_steps }}</strong></span>
+    <span>Failed steps: <strong>{{ suite.failed_steps }}</strong></span>
+    <span>Timed out: <strong>{{ suite.timed_out_steps }}</strong></span>
+    <span>LAVA cases: <strong>{{ suite.lava_total }}</strong></span>
+    <span>Failed LAVA cases: <strong>{{ suite.lava_failed }}</strong></span>
+    {% if suite.log_dir %}
+    <span>Log dir: <span class="cmd">{{ suite.log_dir | e }}</span></span>
     {% endif %}
   </div>
+
   {% if suite.cases %}
   <table>
     <thead>
@@ -133,77 +188,85 @@ _HTML_REPORT_TEMPLATE = """\
         <th>Status</th>
         <th>Duration</th>
         <th>Command</th>
+        <th>Log</th>
       </tr>
     </thead>
     <tbody>
     {% for case in suite.cases %}
       <tr>
         <td>
-          {{ case.name }}
-          {% if case.timed_out %}
-            <span class="timeout-tag">⏱ timed-out</span>
+          <strong>{{ case.name }}</strong>
+          {% if case.timed_out %}<span class="badge timeout">TIMEOUT</span>{% endif %}
+          {% if case.issue %}<div class="issue-note">{{ case.issue }}</div>{% endif %}
+        </td>
+        <td><span class="badge {{ case.status_class }}">{{ case.status }}</span></td>
+        <td>{{ "%.2f"|format(case.duration) }}s</td>
+        <td><span class="cmd">{{ case.command | e }}</span></td>
+        <td class="log-link">
+          {% if case.log_path %}
+          <a href="file://{{ case.log_path | e }}">open</a>
+          {% else %}
+          <span class="muted">—</span>
           {% endif %}
         </td>
-        <td><span class="badge {{ case.report_status_class }}">{{ case.report_status }}</span></td>
-        <td>{{ "%.2f"|format(case.duration) }}s</td>
-        <td><code>{{ case.command | e }}</code></td>
       </tr>
-      {% if case.params or case.lava_signals %}
       <tr>
-        <td colspan="4" style="padding: 0 0 0.5rem 0; border-bottom: 1px solid #f0f0f0;">
-          <div class="case-details">
+        <td colspan="5">
+          {% if case.has_details %}
+          <details>
+            <summary>Step details</summary>
             {% if case.params %}
-            <div class="case-params">
-              <div class="detail-label">Parameters used by this step:</div>
-              <table>
-                <thead>
-                  <tr><th>NAME</th><th>VALUE</th></tr>
-                </thead>
-                <tbody>
-                {% for key, value in case.params | dictsort %}
-                  <tr>
-                    <td>{{ key | e }}</td>
-                    <td><code>{{ value | e }}</code></td>
-                  </tr>
-                {% endfor %}
-                </tbody>
-              </table>
-            </div>
-            {% endif %}
-            {% if case.lava_signals %}
-            <div class="lava-signals">
-            <div class="detail-label">LAVA test cases reported by this step:</div>
-            <table>
+            <p class="muted" style="margin-top:0.3rem;">Parameters used by this step:</p>
+            <table class="mini-table">
               <thead>
-                <tr><th>TEST_CASE_ID</th><th>RESULT</th></tr>
+                <tr><th>NAME</th><th>VALUE</th></tr>
               </thead>
               <tbody>
-              {% for sig in case.lava_signals %}
-                {% set sig_pass = sig.result == 'pass' %}
+              {% for key, value in case.params | dictsort %}
                 <tr>
-                  <td>{{ sig.test_case_id | e }}</td>
-                  <td><span class="badge {{ 'pass' if sig_pass else 'fail' }}">{{ sig.result | upper }}</span></td>
+                  <td>{{ key | e }}</td>
+                  <td><span class="cmd">{{ value | e }}</span></td>
                 </tr>
               {% endfor %}
               </tbody>
             </table>
-            </div>
             {% endif %}
-          </div>
+            {% if case.lava_signals %}
+            <p class="muted" style="margin-top:0.45rem;">LAVA test cases reported by this step:</p>
+            <table class="mini-table">
+                <thead>
+                  <tr><th>TEST_CASE_ID</th><th>RESULT</th></tr>
+                </thead>
+                <tbody>
+                {% for sig in case.lava_signals %}
+                  {% set sig_pass = sig.result == 'pass' %}
+                  <tr>
+                    <td>{{ sig.test_case_id | e }}</td>
+                    <td><span class="badge {{ 'pass' if sig_pass else 'fail' }}">{{ sig.result | upper }}</span></td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+          </details>
+          {% endif %}
         </td>
       </tr>
-      {% endif %}
     {% endfor %}
     </tbody>
   </table>
+  {% else %}
+  <div class="panel" style="border: none; border-top: 1px solid #edf1f7; border-radius: 0; margin-bottom: 0;">
+    <p class="muted">No steps executed for this suite.</p>
+  </div>
   {% endif %}
 </div>
 {% endfor %}
 
 {% if not suites %}
-<p style="color:#777">No test suites were executed.</p>
+<p class="muted">No test suites were executed.</p>
 {% endif %}
-
+</div>
 </body>
 </html>
 """
@@ -256,9 +319,13 @@ class DirectTestCaseResult:
         return any(not sig.passed for sig in self.lava_signals)
 
     @property
+    def lava_failed_count(self) -> int:
+        return sum(1 for sig in self.lava_signals if not sig.passed)
+
+    @property
     def report_status(self) -> str:
         if self.execution_succeeded and self.has_failed_lava_signals:
-            return "PASS"
+            return "EXEC PASS / LAVA FAIL"
         return self.status.upper()
 
     @property
@@ -291,7 +358,7 @@ class DirectTestSuiteResult:
     @property
     def report_status(self) -> str:
         if self.execution_succeeded and self.has_failed_lava_signals:
-            return "PASS"
+            return "EXEC PASS / LAVA FAIL"
         return self.status.upper()
 
     @property
@@ -1254,16 +1321,124 @@ class DirectTestRunner:
         passed: bool,
         preset_info: Optional[Dict[str, str]] = None,
     ) -> str:
+        report_context = self._build_html_report_context(suites)
         env = Environment(autoescape=True)
         tmpl = env.from_string(_HTML_REPORT_TEMPLATE)
         return tmpl.render(
             label=label,
             backend=backend,
-            suites=suites,
+            suites=report_context["suites"],
+            report=report_context["report"],
+            failures=report_context["failures"],
             passed=passed,
             preset_info=preset_info or {},
             generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
+
+    @staticmethod
+    def _build_html_report_context(suites: List[DirectTestSuiteResult]) -> Dict[str, Any]:
+        rendered_suites: List[Dict[str, Any]] = []
+        failures: List[Dict[str, Any]] = []
+
+        total_steps = 0
+        failed_steps = 0
+        timed_out_steps = 0
+        total_lava_cases = 0
+        failed_lava_cases = 0
+
+        for idx, suite in enumerate(suites, start=1):
+            suite_lava_total = 0
+            suite_lava_failed = 0
+            suite_failed_steps = 0
+            suite_timed_out = 0
+            rendered_cases: List[Dict[str, Any]] = []
+
+            for case in suite.cases:
+                case_lava_failed = case.lava_failed_count
+                case_lava_total = len(case.lava_signals)
+                if not case.execution_succeeded:
+                    suite_failed_steps += 1
+                if case.timed_out:
+                    suite_timed_out += 1
+                suite_lava_total += case_lava_total
+                suite_lava_failed += case_lava_failed
+
+                if case.timed_out:
+                    issue = "Timed out"
+                elif not case.execution_succeeded:
+                    issue = "Command failed"
+                elif case_lava_failed:
+                    issue = f"LAVA failures: {case_lava_failed}"
+                else:
+                    issue = ""
+
+                case_data = {
+                    "name": case.name,
+                    "status": case.report_status,
+                    "status_class": case.report_status_class,
+                    "duration": case.duration,
+                    "command": case.command,
+                    "params": case.params,
+                    "timed_out": case.timed_out,
+                    "log_path": case.log_path,
+                    "lava_signals": case.lava_signals,
+                    "lava_total": case_lava_total,
+                    "lava_failed": case_lava_failed,
+                    "issue": issue,
+                    "has_details": bool(case.params or case.lava_signals),
+                }
+                rendered_cases.append(case_data)
+
+                if issue:
+                    failures.append(
+                        {
+                            "suite_name": suite.name,
+                            "step_name": case.name,
+                            "status": case.report_status,
+                            "status_class": case.report_status_class,
+                            "issue": issue,
+                            "duration": case.duration,
+                            "command": case.command,
+                            "log_path": case.log_path,
+                        }
+                    )
+
+            suite_data = {
+                "id": f"suite-{idx}",
+                "name": suite.name,
+                "status": suite.report_status,
+                "status_class": suite.report_status_class,
+                "duration": suite.duration,
+                "log_dir": suite.log_dir,
+                "cases": rendered_cases,
+                "total_steps": len(rendered_cases),
+                "failed_steps": suite_failed_steps,
+                "timed_out_steps": suite_timed_out,
+                "lava_total": suite_lava_total,
+                "lava_failed": suite_lava_failed,
+                "has_issues": bool(suite_failed_steps or suite_timed_out or suite_lava_failed or suite.report_status_class != "pass"),
+            }
+            rendered_suites.append(suite_data)
+
+            total_steps += len(rendered_cases)
+            failed_steps += suite_failed_steps
+            timed_out_steps += suite_timed_out
+            total_lava_cases += suite_lava_total
+            failed_lava_cases += suite_lava_failed
+
+        rendered_suites.sort(key=lambda suite: (not suite["has_issues"], suite["name"]))
+        failures.sort(key=lambda item: (item["suite_name"], item["step_name"]))
+
+        report = {
+            "total_suites": len(rendered_suites),
+            "failing_suites": sum(1 for suite in rendered_suites if suite["has_issues"]),
+            "total_steps": total_steps,
+            "failed_steps": failed_steps,
+            "timed_out_steps": timed_out_steps,
+            "total_lava_cases": total_lava_cases,
+            "failed_lava_cases": failed_lava_cases,
+        }
+        return {"suites": rendered_suites, "failures": failures, "report": report}
 
     def _write_pdf_report(self, pdf_path: Path, html_content: str) -> None:
         try:

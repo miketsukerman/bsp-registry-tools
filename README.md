@@ -1093,7 +1093,11 @@ When `--verbose` is enabled, test execution logs include per-suite and per-case 
 - **LAVA backend**: logs each suite and case result after `--wait` completes.
 - **Direct backends**: logs each suite/case status, execution duration, command, and generated per-step log file path.
 
-Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including `direct-test-summary.json` and per-step log files.
+Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including:
+
+- `direct-test-report.html` with aggregate KPIs, suite quick navigation, a fail-first triage table, and collapsible per-step details (parameters/LAVA cases)
+- `direct-test-summary.json` for machine-readable summary data
+- per-step log files linked from the HTML report
 
 When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
 

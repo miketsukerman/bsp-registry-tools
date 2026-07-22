@@ -255,7 +255,7 @@ actions:
         assert summary["suites"][0]["cases"][0]["lava_signals"] == [
             {"test_case_id": "ping-gateway", "result": "pass"}
         ]
-        assert "LAVA cases: 1" in html
+        assert "LAVA cases: <strong>1</strong>" in html
         parser = _TableDataCellParser()
         parser.feed(html)
         assert parser.cells.count("ping-gateway") == 1
@@ -823,6 +823,7 @@ class TestReportGeneration:
                         duration=0.5,
                         command="echo hello",
                         params={"GREETING": "hello", "TARGET": "board"},
+                        log_path="/tmp/logs/smoke-suite/step-1.log",
                     ),
                     DirectTestCaseResult(
                         name="step-2",
@@ -830,6 +831,7 @@ class TestReportGeneration:
                         duration=0.73,
                         command="false",
                         timed_out=False,
+                        log_path="/tmp/logs/smoke-suite/step-2.log",
                     ),
                 ],
             ),
@@ -870,6 +872,24 @@ class TestReportGeneration:
         assert "ci-run" in content
         assert "FAIL" in content
         assert "echo hello" in content
+        assert "Aggregate summary" in content
+        assert "Failures first" in content
+        assert "Suite navigation" in content
+        assert "href=\"file:///tmp/logs/smoke-suite/step-1.log\"" in content
+
+    def test_html_report_failure_section_lists_step_issues(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        runner._write_summary(
+            output_dir=tmp_path,
+            label="ci-run",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        content = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Failures first" in content
+        assert "Command failed" in content
+        assert "step-2" in content
 
     def test_html_report_is_valid_html(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
@@ -926,7 +946,7 @@ class TestReportGeneration:
             suites=[],
             passed=True,
         )
-        assert '<div class="preset-info">' not in html
+        assert "Preset info" not in html
 
     def test_json_summary_includes_preset_info(self, tmp_path):
         import json as _json
@@ -1104,7 +1124,8 @@ run:
             suites=suites,
             passed=False,
         )
-        assert "timed-out" in html
+        assert "TIMEOUT" in html
+        assert "Timed out" in html
         assert "sleep 999" in html
 
     def test_pdf_skipped_when_weasyprint_missing(self, tmp_path):
@@ -1273,8 +1294,9 @@ class TestLavaSignalParsing:
         assert sig_json[1] == {"test_case_id": "download-a-file", "result": "fail"}
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
-        assert "Overall: <span class=\"badge fail\">" in html
-        assert html.count('class="badge warn"') == 2
+        assert "Overall:" in html
+        assert "badge fail" in html
+        assert html.count('class="badge warn"') >= 2
 
     def test_html_report_contains_lava_signals(self, tmp_path):
         """HTML report shows LAVA signal cases as a sub-table."""
@@ -1367,22 +1389,17 @@ class TestLavaSignalParsing:
             suites=suites,
             passed=False,
         )
-        assert "Overall: <span class=\"badge fail\">" in html
-        assert html.count('class="badge warn"') == 2
-        assert (
-            '<div class="card-header">\n'
-            '    <span class="badge warn">\n'
-            '      PASS\n'
-            '    </span>\n'
-            '    <h2>net-suite</h2>'
-        ) in html
+        assert "Overall:" in html
+        assert "badge fail" in html
+        assert html.count('class="badge warn"') >= 2
+        assert "EXEC PASS / LAVA FAIL" in html
         step_name_index = html.index("step-1")
         step_command_index = html.index("./run-net-tests.sh")
         warn_after_step = html.find('class="badge warn"', step_name_index)
         assert warn_after_step != -1
         assert warn_after_step < step_command_index
-        assert "Steps: 1" in html
-        assert "LAVA cases: 2" in html
+        assert "Steps: <strong>1</strong>" in html
+        assert "LAVA cases: <strong>2</strong>" in html
 
 
 class TestLocalJobPath:
