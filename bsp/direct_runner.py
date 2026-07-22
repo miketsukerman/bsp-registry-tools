@@ -1289,10 +1289,11 @@ class DirectTestRunner:
                 suite_lava_failed += case_lava_failed
 
                 for sig in case.lava_signals:
+                    result_text = sig.result.upper()
                     rendered_lava_cases.append(
                         {
                             "test_case_id": sig.test_case_id,
-                            "result": sig.result.upper(),
+                            "result": result_text,
                             "status_class": "pass" if sig.passed else "fail",
                         }
                     )
@@ -1301,7 +1302,7 @@ class DirectTestRunner:
                             {
                                 "suite_name": suite.name,
                                 "test_case_id": sig.test_case_id,
-                                "result": sig.result.upper(),
+                                "result": result_text,
                                 "status_class": "fail",
                             }
                         )
