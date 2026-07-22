@@ -1,6 +1,8 @@
 """Tests for direct test-definition execution backend."""
 
 import subprocess
+from html.parser import HTMLParser
+
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,29 @@ from bsp.direct_runner import (
     _SshTransport,
 )
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
+
+
+class _TableCellParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._in_td = False
+        self._current = []
+        self.cells = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "td":
+            self._in_td = True
+            self._current = []
+
+    def handle_data(self, data):
+        if self._in_td:
+            self._current.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "td" and self._in_td:
+            self.cells.append("".join(self._current).strip())
+            self._in_td = False
+            self._current = []
 
 
 def _init_git_repo(repo_dir: Path) -> None:
@@ -158,11 +183,17 @@ actions:
         assert len(result.suites[0].cases) == 1
         assert len(result.suites[0].cases[0].lava_signals) == 1
 
-        summary = (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
+        import json
+
+        summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
-        assert summary.count('"test_case_id": "ping-gateway"') == 1
+        assert summary["suites"][0]["cases"][0]["lava_signals"] == [
+            {"test_case_id": "ping-gateway", "result": "pass"}
+        ]
         assert "LAVA cases: 1" in html
-        assert html.count("<td>ping-gateway</td>") == 1
+        parser = _TableCellParser()
+        parser.feed(html)
+        assert parser.cells.count("ping-gateway") == 1
 
     def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
         repo = tmp_path / "defs-repo"
