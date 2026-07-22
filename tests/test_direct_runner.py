@@ -20,7 +20,7 @@ from bsp.direct_runner import (
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 
 
-class _TableCellParser(HTMLParser):
+class _TableDataCellParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self._in_td = False
@@ -137,7 +137,7 @@ actions:
         defs_dir.mkdir(parents=True)
         jobs_dir.mkdir(parents=True)
         (defs_dir / "net.yaml").write_text(
-            """
+            r"""
 metadata:
   name: network-suite
 run:
@@ -190,7 +190,7 @@ actions:
             {"test_case_id": "ping-gateway", "result": "pass"}
         ]
         assert "LAVA cases: 1" in html
-        parser = _TableCellParser()
+        parser = _TableDataCellParser()
         parser.feed(html)
         assert parser.cells.count("ping-gateway") == 1
 
