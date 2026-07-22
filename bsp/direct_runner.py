@@ -62,11 +62,13 @@ _HTML_REPORT_TEMPLATE = """\
   .timeout-tag { font-size: 0.75rem; color: #e67e22; margin-left: 0.4rem; }
   code { font-size: 0.8rem; background: #f1f3f5; padding: 0.1rem 0.3rem;
          border-radius: 3px; word-break: break-all; }
-  .lava-signals { margin: 0.25rem 0 0.25rem 1.5rem; }
-  .lava-signals table { background: #fafbfc; font-size: 0.82rem; border: 1px solid #e0e0e0; border-radius: 4px; }
-  .lava-signals th { background: #eff1f3; padding: 0.3rem 0.75rem; font-size: 0.8rem; }
-  .lava-signals td { padding: 0.3rem 0.75rem; border-bottom: 1px solid #efefef; }
-  .lava-signals tr:last-child td { border-bottom: none; }
+  .case-details { margin: 0.25rem 0 0.25rem 1.5rem; }
+  .case-params { margin-bottom: 0.5rem; }
+  .case-params table, .lava-signals table { background: #fafbfc; font-size: 0.82rem; border: 1px solid #e0e0e0; border-radius: 4px; }
+  .case-params th, .lava-signals th { background: #eff1f3; padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+  .case-params td, .lava-signals td { padding: 0.3rem 0.75rem; border-bottom: 1px solid #efefef; }
+  .case-params tr:last-child td, .lava-signals tr:last-child td { border-bottom: none; }
+  .lava-signals { margin: 0.25rem 0 0.25rem 0; }
   .lava-label { font-size: 0.72rem; color: #555; font-style: italic; margin-bottom: 0.15rem; }
 </style>
 </head>
@@ -146,10 +148,30 @@ _HTML_REPORT_TEMPLATE = """\
         <td>{{ "%.2f"|format(case.duration) }}s</td>
         <td><code>{{ case.command | e }}</code></td>
       </tr>
-      {% if case.lava_signals %}
+      {% if case.params or case.lava_signals %}
       <tr>
         <td colspan="4" style="padding: 0 0 0.5rem 0; border-bottom: 1px solid #f0f0f0;">
-          <div class="lava-signals">
+          <div class="case-details">
+            {% if case.params %}
+            <div class="case-params">
+              <div class="lava-label">Parameters used by this step:</div>
+              <table>
+                <thead>
+                  <tr><th>NAME</th><th>VALUE</th></tr>
+                </thead>
+                <tbody>
+                {% for key, value in case.params | dictsort %}
+                  <tr>
+                    <td>{{ key | e }}</td>
+                    <td><code>{{ value | e }}</code></td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% endif %}
+            {% if case.lava_signals %}
+            <div class="lava-signals">
             <div class="lava-label">LAVA test cases reported by this step:</div>
             <table>
               <thead>
@@ -165,6 +187,8 @@ _HTML_REPORT_TEMPLATE = """\
               {% endfor %}
               </tbody>
             </table>
+            </div>
+            {% endif %}
           </div>
         </td>
       </tr>
@@ -213,6 +237,7 @@ class DirectTestCaseResult:
     status: str
     duration: float
     command: str
+    params: Dict[str, str] = field(default_factory=dict)
     log_path: Optional[str] = None
     timed_out: bool = False
     lava_signals: List["LavaSignalCase"] = field(default_factory=list)
@@ -1108,6 +1133,7 @@ class DirectTestRunner:
                     status=status,
                     duration=duration,
                     command=expanded,
+                    params=dict(sorted(merged_params.items())),
                     log_path=str(log_file),
                     timed_out=timed_out,
                     lava_signals=lava_signals,
@@ -1186,6 +1212,7 @@ class DirectTestRunner:
                             "status": c.status,
                             "duration": c.duration,
                             "command": c.command,
+                            "params": c.params,
                             "log_path": c.log_path,
                             "timed_out": c.timed_out,
                             "lava_signals": [

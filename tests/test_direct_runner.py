@@ -822,6 +822,7 @@ class TestReportGeneration:
                         status="PASS",
                         duration=0.5,
                         command="echo hello",
+                        params={"GREETING": "hello", "TARGET": "board"},
                     ),
                     DirectTestCaseResult(
                         name="step-2",
@@ -942,6 +943,10 @@ class TestReportGeneration:
         summary = _json.loads((tmp_path / "direct-test-summary.json").read_text(encoding="utf-8"))
         assert summary["preset"]["device"] == "epc-r9000"
         assert summary["preset"]["release"] == "scarthgap"
+        assert summary["suites"][0]["cases"][0]["params"] == {
+            "GREETING": "hello",
+            "TARGET": "board",
+        }
 
     def test_json_summary_omits_preset_key_when_no_info(self, tmp_path):
         import json as _json
@@ -1021,6 +1026,59 @@ class TestReportGeneration:
         summary = _json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
         assert summary["preset"]["device"] == "epc-r9000"
         assert summary["preset"]["release"] == "scarthgap"
+
+    def test_integration_reports_include_case_params(self, tmp_path):
+        import json as _json
+
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "param-suite.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+params:
+  GREETING: hello
+run:
+  steps:
+    - "echo ok"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/param-suite.yaml"],
+                    params={"TARGET": "board"},
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="integration",
+        )
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Parameters used by this step" in html
+        assert "GREETING" in html
+        assert "hello" in html
+        assert "TARGET" in html
+        assert "board" in html
+
+        summary = _json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
+        assert summary["suites"][0]["cases"][0]["params"] == {
+            "GREETING": "hello",
+            "TARGET": "board",
+        }
 
     def test_render_html_report_timed_out_case(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
@@ -1250,6 +1308,36 @@ class TestLavaSignalParsing:
         assert "download-a-file" in html
         assert "TEST_CASE_ID" in html
         assert "LAVA test cases" in html
+
+    def test_html_report_contains_case_params(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="param-suite",
+                status="PASS",
+                duration=1.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="PASS",
+                        duration=0.5,
+                        command="./run-tests.sh",
+                        params={"TARGET": "board-a", "GREETING": "hello"},
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="test",
+            backend="direct-local",
+            suites=suites,
+            passed=True,
+        )
+        assert "Parameters used by this step" in html
+        assert "TARGET" in html
+        assert "board-a" in html
+        assert "GREETING" in html
+        assert "hello" in html
 
     def test_html_report_marks_lava_failures_as_yellow_pass(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
