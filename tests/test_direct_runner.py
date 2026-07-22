@@ -161,7 +161,8 @@ actions:
         summary = (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert summary.count('"test_case_id": "ping-gateway"') == 1
-        assert html.count("ping-gateway") == 1
+        assert "LAVA cases: 1" in html
+        assert html.count("<td>ping-gateway</td>") == 1
 
     def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
         repo = tmp_path / "defs-repo"
