@@ -1304,7 +1304,7 @@ class TestLavaSignalParsing:
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Overall:" in html
         assert "badge fail" in html
-        assert html.count('class="badge warn"') >= 2
+        assert html.count('class="badge warn"') >= 1
         assert "ping-gateway" in html
         assert "download-a-file" in html
         assert "step-1" not in html

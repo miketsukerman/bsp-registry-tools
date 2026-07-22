@@ -1332,7 +1332,7 @@ class DirectTestRunner:
             failed_lava_cases += suite_lava_failed
 
         rendered_suites.sort(key=lambda suite: (not suite["has_issues"], suite["name"]))
-        failures.sort(key=lambda item: (item["suite_name"], item["step_name"]))
+        failures.sort(key=lambda item: (item["suite_name"], item["test_case_id"]))
 
         report = {
             "total_suites": len(rendered_suites),
