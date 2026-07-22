@@ -649,6 +649,35 @@ class TestSshTransport:
         assert "ProxyCommand=socat - FILE:/dev/ttyUSB0,raw,echo=0,b115200" in cmd_str
         assert "root@dut.local" in cmd_str
 
+    def test_stage_directory_cleans_remote_repo_before_copy(self):
+        cfg = DirectTransportConfig(
+            mode="ssh",
+            host="dut.local",
+            user="root",
+            port=2222,
+            strict_host_key_checking=True,
+        )
+        transport = _SshTransport(cfg)
+
+        with patch("bsp.direct_runner.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            transport.stage_directory(Path("/tmp/repo-b305ecb10ee5"), "/tmp/bsp-direct-tests")
+
+        assert mock_run.call_count == 2
+
+        prepare_cmd = mock_run.call_args_list[0][0][0]
+        prepare_cmd_str = " ".join(prepare_cmd)
+        assert "ssh" in prepare_cmd_str
+        assert "root@dut.local" in prepare_cmd_str
+        assert "mkdir -p /tmp/bsp-direct-tests" in prepare_cmd_str
+        assert "rm -rf /tmp/bsp-direct-tests/repo-b305ecb10ee5" in prepare_cmd_str
+
+        scp_cmd = mock_run.call_args_list[1][0][0]
+        scp_cmd_str = " ".join(scp_cmd)
+        assert "scp" in scp_cmd_str
+        assert "/tmp/repo-b305ecb10ee5" in scp_cmd_str
+        assert "root@dut.local:/tmp/bsp-direct-tests/" in scp_cmd_str
+
 
 class TestDirectRunnerBackendSelection:
     def test_direct_serial_uses_ssh_transport(self, tmp_path):

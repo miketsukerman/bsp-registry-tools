@@ -429,15 +429,21 @@ class _SshTransport(_BaseTransport):
         return self._run_subprocess(self._with_password_prefix(cmd), timeout=timeout)
 
     def stage_directory(self, local_dir: Path, remote_dir: str) -> None:
-        mkdir_cmd = [
+        remote_root = remote_dir.rstrip("/")
+        remote_repo_dir = f"{remote_root}/{local_dir.name}"
+
+        # Ensure staged repository content is fresh for each run.
+        # This prevents stale test output files from previous runs from being
+        # replayed by send-to-lava scripts that process accumulated result logs.
+        clean_cmd = [
             "ssh",
             *self._ssh_common_options(),
             self._target(),
-            f"mkdir -p {shlex.quote(remote_dir)}",
+            f"mkdir -p {shlex.quote(remote_root)} && rm -rf {shlex.quote(remote_repo_dir)}",
         ]
-        rc, _out, err = self._run_subprocess(self._with_password_prefix(mkdir_cmd))
+        rc, _out, err = self._run_subprocess(self._with_password_prefix(clean_cmd))
         if rc != 0:
-            raise RuntimeError(f"Failed to create remote directory '{remote_dir}': {err.strip()}")
+            raise RuntimeError(f"Failed to prepare remote staging directory '{remote_repo_dir}': {err.strip()}")
 
         scp_cmd = [
             "scp",
@@ -449,7 +455,7 @@ class _SshTransport(_BaseTransport):
             f"StrictHostKeyChecking={'yes' if self.config.strict_host_key_checking else 'no'}",
             *(["-o", f"UserKnownHostsFile={self.config.known_hosts_file}"] if self.config.known_hosts_file else []),
             str(local_dir),
-            f"{self._target()}:{remote_dir.rstrip('/')}/",
+            f"{self._target()}:{remote_root}/",
         ]
         rc, _out, err = self._run_subprocess(self._with_password_prefix(scp_cmd))
         if rc != 0:
