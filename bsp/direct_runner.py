@@ -993,6 +993,11 @@ class DirectTestRunner:
         def_params = definition.get("params") if isinstance(definition.get("params"), dict) else {}
         merged_params = {k: str(v) for k, v in def_params.items()}
         merged_params.update({k: str(v) for k, v in params.items()})
+        params_str = (
+            " [" + " ".join(f"{k}={v}" for k, v in sorted(merged_params.items())) + "]"
+            if merged_params
+            else ""
+        )
 
         steps = self._extract_steps(definition)
         suite_log_dir = output_root / suite_rel_path.parent / suite_rel_path.stem
@@ -1003,12 +1008,6 @@ class DirectTestRunner:
         suite_pass = True
 
         run_cwd = str(Path(repo_exec_root))
-
-        params_str = (
-            " [" + " ".join(f"{k}={v}" for k, v in sorted(merged_params.items())) + "]"
-            if merged_params
-            else ""
-        )
 
         for idx, raw_cmd in enumerate(steps, start=1):
             expanded = self._expand_vars(str(raw_cmd), merged_params)
