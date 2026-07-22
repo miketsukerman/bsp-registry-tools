@@ -250,6 +250,72 @@ actions:
         assert len(result.suites) == 1
         assert result.suites[0].name == "param-suite"
 
+    def test_lava_job_git_entry_uses_repository_ref_and_parameters(self, tmp_path):
+        job_repo = tmp_path / "job-repo"
+        job_dir = job_repo / "nested" / "jobs"
+        job_dir.mkdir(parents=True)
+
+        defs_repo = tmp_path / "defs-repo"
+        defs_dir = defs_repo / "automated" / "linux" / "context"
+        defs_dir.mkdir(parents=True)
+        out_file = tmp_path / "out" / "context.txt"
+        (defs_dir / "context.yaml").write_text(
+            f"""
+metadata:
+  name: context-suite
+run:
+  steps:
+    - "test ${{SOURCE_ONLY}} = base"
+    - "printf '%s\\n' '{{DISTRO_VER}}|{{CPU_MODEL}}' > {out_file}"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(defs_repo)
+        subprocess.run(["git", "branch", "-M", "main"], cwd=defs_repo, check=True, capture_output=True)
+
+        (job_dir / "job.yaml").write_text(
+            f"""
+actions:
+  - test:
+      definitions:
+        - repository: {defs_repo}
+          from: git
+          branch: main
+          path: automated/linux/context/context.yaml
+          parameters:
+            DISTRO_VER: ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)"
+            CPU_MODEL: Cortex-A53
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(job_repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=job_repo.as_uri(),
+                    paths=["nested/jobs/job.yaml"],
+                    params={"SOURCE_ONLY": "base"},
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="git-job",
+        )
+
+        assert result.passed is True
+        assert result.suites[0].name == "context-suite"
+        assert out_file.read_text(encoding="utf-8").strip() == (
+            ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)|Cortex-A53"
+        )
+
     def test_emits_step_progress_to_stdout(self, tmp_path, capsys):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"
