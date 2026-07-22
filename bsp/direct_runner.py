@@ -513,38 +513,27 @@ class DirectTestRunner:
                 repo_exec_root = Path(remote_source)
 
             for def_file in def_files:
-                entry_sources = self._build_test_definition_sources_from_job(
-                    self._load_definition(def_file),
-                    def_file.parent,
-                    source.params,
-                )
-                if entry_sources:
-                    for entry_source in entry_sources:
-                        entry_repo_dir = self._prepare_source_repo(entry_source)
-                        entry_files = self._resolve_definition_files(entry_repo_dir, entry_source.paths)
+                entry_definitions = self._extract_lava_job_test_definitions(self._load_definition(def_file))
+                if entry_definitions:
+                    for entry_path, entry_params in entry_definitions:
+                        entry_files = self._resolve_definition_files(repo_dir, [entry_path])
                         if not entry_files:
-                            source_id = entry_source.repo_url or entry_source.local_dir or "<unknown>"
                             raise RuntimeError(
                                 f"No test-definition YAML files found for LAVA job entry path "
-                                f"'{entry_source.paths[0] if entry_source.paths else '.'}' in source '{source_id}'."
+                                f"'{entry_path}' in '{def_file}'."
                             )
 
-                        entry_repo_exec_root = entry_repo_dir
-                        if isinstance(transport, _SshTransport):
-                            remote_root = cfg.transport.remote_workdir.rstrip("/")
-                            remote_source = f"{remote_root}/{entry_repo_dir.name}"
-                            transport.stage_directory(entry_repo_dir, remote_root)
-                            entry_repo_exec_root = Path(remote_source)
-
+                        merged_params = {k: str(v) for k, v in source.params.items()}
+                        merged_params.update({k: str(v) for k, v in entry_params.items()})
                         for entry_file in entry_files:
-                            rel = entry_file.relative_to(entry_repo_dir)
+                            rel = entry_file.relative_to(repo_dir)
                             suite_result = self._run_single_definition(
                                 transport=transport,
                                 suite_path=entry_file,
                                 suite_rel_path=rel,
-                                repo_local_root=entry_repo_dir,
-                                repo_exec_root=str(entry_repo_exec_root),
-                                params=entry_source.params,
+                                repo_local_root=repo_dir,
+                                repo_exec_root=str(repo_exec_root),
+                                params=merged_params,
                                 timeout=cfg.timeout,
                                 continue_on_failure=cfg.continue_on_failure,
                                 output_root=run_root,
@@ -675,6 +664,7 @@ class DirectTestRunner:
                 merged.update({k: str(v) for k, v in overrides.params.items()})
                 definitions[0].params = merged
 
+        job_timeout_seconds: Optional[int] = None
         # Each --test-job-path is a local LAVA job YAML file.  We parse the
         # file and create one TestDefinitionSource per test-definition entry:
         #   * entries with `from: git` and a `repository` URL are cloned from
@@ -701,13 +691,58 @@ class DirectTestRunner:
                     raise RuntimeError(
                         f"Failed to read LAVA job '{abs_job}': {exc}"
                     ) from exc
-                definitions.extend(
-                    self._build_test_definition_sources_from_job(
-                        raw,
-                        abs_job.parent,
-                        extra_params,
-                    )
-                )
+                for action in raw.get("actions", []):
+                    if not isinstance(action, dict):
+                        continue
+                    test_block = action.get("test")
+                    if not isinstance(test_block, dict):
+                        continue
+                    timeout_block = test_block.get("timeout")
+                    if isinstance(timeout_block, dict):
+                        minutes = timeout_block.get("minutes")
+                        if minutes is not None:
+                            try:
+                                seconds = int(minutes) * 60
+                            except (TypeError, ValueError):
+                                seconds = None
+                            if seconds is not None and seconds > 0:
+                                job_timeout_seconds = max(job_timeout_seconds or 0, seconds)
+                    for test_def in test_block.get("definitions", []):
+                        if not isinstance(test_def, dict):
+                            continue
+                        path = test_def.get("path")
+                        if not path:
+                            continue
+                        repository = test_def.get("repository")
+                        from_type = test_def.get("from", "git" if repository else "")
+                        params_raw = test_def.get("parameters", {})
+                        entry_params: Dict[str, str] = (
+                            {str(k): str(v) for k, v in params_raw.items()}
+                            if isinstance(params_raw, dict)
+                            else {}
+                        )
+                        merged_params = dict(extra_params)
+                        merged_params.update(entry_params)
+                        if from_type == "git" and repository:
+                            branch = test_def.get("branch", "")
+                            revision = test_def.get("revision", "")
+                            ref = revision or branch or ""
+                            definitions.append(
+                                TestDefinitionSource(
+                                    repo_url=str(repository),
+                                    ref=ref,
+                                    paths=[str(path)],
+                                    params=merged_params,
+                                )
+                            )
+                        else:
+                            definitions.append(
+                                TestDefinitionSource(
+                                    local_dir=str(abs_job.parent),
+                                    paths=[str(path)],
+                                    params=merged_params,
+                                )
+                            )
 
         if not definitions:
             raise RuntimeError(
@@ -739,6 +774,8 @@ class DirectTestRunner:
         timeout = base.timeout
         if overrides and overrides.timeout is not None:
             timeout = int(overrides.timeout)
+        elif overrides and overrides.local_job_paths and job_timeout_seconds is not None:
+            timeout = job_timeout_seconds
 
         output_dir = base.output_dir
         if overrides and overrides.output_dir is not None:
@@ -859,18 +896,12 @@ class DirectTestRunner:
                     commands.append(str(cmd))
         return commands
 
-    def _build_test_definition_sources_from_job(
-        self,
-        definition: Dict,
-        base_dir: Path,
-        extra_params: Optional[Dict[str, str]] = None,
-    ) -> List[TestDefinitionSource]:
+    def _extract_lava_job_test_definitions(self, definition: Dict) -> List[Tuple[str, Dict[str, str]]]:
         actions = definition.get("actions")
         if not isinstance(actions, list):
             return []
 
-        entries: List[TestDefinitionSource] = []
-        base_params = {str(k): str(v) for k, v in (extra_params or {}).items()}
+        entries: List[Tuple[str, Dict[str, str]]] = []
         seen_entries = set()
         for action in actions:
             if not isinstance(action, dict):
@@ -888,42 +919,13 @@ class DirectTestRunner:
                 path = test_def.get("path")
                 if not path:
                     continue
-                repository = test_def.get("repository")
-                from_type = test_def.get("from", "git" if repository else "")
                 params = test_def.get("parameters")
                 params_dict = {str(k): str(v) for k, v in params.items()} if isinstance(params, dict) else {}
-                merged_params = dict(base_params)
-                merged_params.update(params_dict)
-                branch = test_def.get("branch", "")
-                revision = test_def.get("revision", "")
-                ref = str(revision or branch or "")
-                entry_key = (
-                    str(repository or ""),
-                    ref,
-                    str(base_dir),
-                    str(path),
-                    tuple(sorted(merged_params.items())),
-                )
+                entry_key = (str(path), tuple(sorted(params_dict.items())))
                 if entry_key in seen_entries:
                     continue
                 seen_entries.add(entry_key)
-                if from_type == "git" and repository:
-                    entries.append(
-                        TestDefinitionSource(
-                            repo_url=str(repository),
-                            ref=ref,
-                            paths=[str(path)],
-                            params=merged_params,
-                        )
-                    )
-                else:
-                    entries.append(
-                        TestDefinitionSource(
-                            local_dir=str(base_dir),
-                            paths=[str(path)],
-                            params=merged_params,
-                        )
-                    )
+                entries.append((str(path), params_dict))
         return entries
 
     def _expand_vars(self, text: str, params: Dict[str, str]) -> str:

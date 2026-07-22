@@ -15,6 +15,7 @@ from bsp.direct_runner import (
     DirectTestSuiteResult,
     DirectTestCaseResult,
     LavaSignalCase,
+    _LocalTransport,
     _SshTransport,
 )
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
@@ -250,71 +251,55 @@ actions:
         assert len(result.suites) == 1
         assert result.suites[0].name == "param-suite"
 
-    def test_lava_job_git_entry_uses_repository_ref_and_parameters(self, tmp_path):
-        job_repo = tmp_path / "job-repo"
-        job_dir = job_repo / "nested" / "jobs"
-        job_dir.mkdir(parents=True)
-
-        defs_repo = tmp_path / "defs-repo"
-        defs_dir = defs_repo / "automated" / "linux" / "context"
+    def test_local_job_yaml_timeout_minutes_override_default_timeout(self, tmp_path):
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
         defs_dir.mkdir(parents=True)
-        out_file = tmp_path / "out" / "context.txt"
-        (defs_dir / "context.yaml").write_text(
-            f"""
+        (defs_dir / "smoke.yaml").write_text(
+            """
 metadata:
-  name: context-suite
+  name: smoke-suite
 run:
   steps:
-    - "test ${{SOURCE_ONLY}} = base"
-    - "printf '%s\\n' '{{DISTRO_VER}}|{{CPU_MODEL}}' > {out_file}"
+    - "echo hello"
 """,
             encoding="utf-8",
         )
-        _init_git_repo(defs_repo)
-        subprocess.run(["git", "branch", "-M", "main"], cwd=defs_repo, check=True, capture_output=True)
-
-        (job_dir / "job.yaml").write_text(
-            f"""
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
 actions:
   - test:
+      timeout:
+        minutes: 50
       definitions:
-        - repository: {defs_repo}
-          from: git
-          branch: main
-          path: automated/linux/context/context.yaml
-          parameters:
-            DISTRO_VER: ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)"
-            CPU_MODEL: Cortex-A53
+        - path: defs/smoke.yaml
 """,
             encoding="utf-8",
         )
-        _init_git_repo(job_repo)
 
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
-        cfg = DirectTestConfig(
-            definitions=[
-                TestDefinitionSource(
-                    repo_url=job_repo.as_uri(),
-                    paths=["nested/jobs/job.yaml"],
-                    params={"SOURCE_ONLY": "base"},
-                )
-            ],
-            timeout=20,
-        )
         resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+        seen_timeouts = []
 
-        result = runner.run(
-            resolved=resolved,
-            direct_config=cfg,
-            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
-            label="git-job",
-        )
+        def _fake_run(self, command, cwd, env=None, timeout=None):
+            seen_timeouts.append(timeout)
+            return 0, "ok\n", ""
+
+        with patch.object(_LocalTransport, "run", autospec=True, side_effect=_fake_run):
+            result = runner.run(
+                resolved=resolved,
+                direct_config=None,
+                overrides=DirectRunOverrides(
+                    backend="direct-local",
+                    local_job_paths=[str(job_file)],
+                    output_dir=str(tmp_path / "out"),
+                ),
+                label="local-job",
+            )
 
         assert result.passed is True
-        assert result.suites[0].name == "context-suite"
-        assert out_file.read_text(encoding="utf-8").strip() == (
-            ".*(scarthgap|styhead|walnascar|whinlatter|wrynose)|Cortex-A53"
-        )
+        assert seen_timeouts == [3000]
 
     def test_emits_step_progress_to_stdout(self, tmp_path, capsys):
         repo = tmp_path / "defs-repo"
