@@ -889,6 +889,7 @@ class DirectTestRunner:
             return []
 
         entries: List[Tuple[str, Dict[str, str]]] = []
+        seen_entries = set()
         for action in actions:
             if not isinstance(action, dict):
                 continue
@@ -907,6 +908,10 @@ class DirectTestRunner:
                     continue
                 params = test_def.get("parameters")
                 params_dict = {str(k): str(v) for k, v in params.items()} if isinstance(params, dict) else {}
+                entry_key = (str(path), tuple(sorted(params_dict.items())))
+                if entry_key in seen_entries:
+                    continue
+                seen_entries.add(entry_key)
                 entries.append((str(path), params_dict))
         return entries
 

@@ -104,6 +104,65 @@ actions:
         assert result.passed is True
         assert [suite.name for suite in result.suites] == ["smoke-suite", "net-suite"]
 
+    def test_duplicate_lava_job_definitions_run_once(self, tmp_path):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        jobs_dir = repo / "jobs"
+        defs_dir.mkdir(parents=True)
+        jobs_dir.mkdir(parents=True)
+        (defs_dir / "net.yaml").write_text(
+            """
+metadata:
+  name: network-suite
+run:
+  steps:
+    - "printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'"
+""",
+            encoding="utf-8",
+        )
+        (jobs_dir / "job.yaml").write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/net.yaml
+          parameters:
+            TARGET: net
+  - test:
+      definitions:
+        - path: defs/net.yaml
+          parameters:
+            TARGET: net
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[TestDefinitionSource(repo_url=repo.as_uri(), paths=["jobs/job.yaml"])],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="dedupe",
+        )
+
+        assert result.passed is True
+        assert len(result.suites) == 1
+        assert result.suites[0].name == "network-suite"
+        assert len(result.suites[0].cases) == 1
+        assert len(result.suites[0].cases[0].lava_signals) == 1
+
+        summary = (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert summary.count('"test_case_id": "ping-gateway"') == 1
+        assert html.count("ping-gateway") == 1
+
     def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"
