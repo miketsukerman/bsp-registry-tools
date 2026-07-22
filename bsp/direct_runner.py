@@ -69,7 +69,7 @@ _HTML_REPORT_TEMPLATE = """\
   .case-params td, .lava-signals td { padding: 0.3rem 0.75rem; border-bottom: 1px solid #efefef; }
   .case-params tr:last-child td, .lava-signals tr:last-child td { border-bottom: none; }
   .lava-signals { margin: 0.25rem 0 0.25rem 0; }
-  .lava-label { font-size: 0.72rem; color: #555; font-style: italic; margin-bottom: 0.15rem; }
+  .detail-label { font-size: 0.72rem; color: #555; font-style: italic; margin-bottom: 0.15rem; }
 </style>
 </head>
 <body>
@@ -154,7 +154,7 @@ _HTML_REPORT_TEMPLATE = """\
           <div class="case-details">
             {% if case.params %}
             <div class="case-params">
-              <div class="lava-label">Parameters used by this step:</div>
+              <div class="detail-label">Parameters used by this step:</div>
               <table>
                 <thead>
                   <tr><th>NAME</th><th>VALUE</th></tr>
@@ -172,7 +172,7 @@ _HTML_REPORT_TEMPLATE = """\
             {% endif %}
             {% if case.lava_signals %}
             <div class="lava-signals">
-            <div class="lava-label">LAVA test cases reported by this step:</div>
+            <div class="detail-label">LAVA test cases reported by this step:</div>
             <table>
               <thead>
                 <tr><th>TEST_CASE_ID</th><th>RESULT</th></tr>
