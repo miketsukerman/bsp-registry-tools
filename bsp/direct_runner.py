@@ -832,10 +832,30 @@ class DirectTestRunner:
         else:
             self._git(["clone", source.repo_url, str(repo_dir)], cwd=self._cache_root)
 
-        target_ref = source.ref or "HEAD"
-        self._git(["checkout", target_ref], cwd=repo_dir)
+        requested_ref = (source.ref or "").strip()
+        if not requested_ref:
+            # Follow the remote default branch tip when no ref is provided.
+            target_ref = "refs/remotes/origin/HEAD"
+        elif self._git_ref_exists(repo_dir, f"refs/remotes/origin/{requested_ref}"):
+            # Use the fetched remote-tracking ref so branch-based refs always
+            # resolve to the latest commit from origin.
+            target_ref = f"refs/remotes/origin/{requested_ref}"
+        else:
+            target_ref = requested_ref
+
+        self._git(["checkout", "--detach", target_ref], cwd=repo_dir)
 
         return repo_dir
+
+    def _git_ref_exists(self, cwd: Path, ref: str) -> bool:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc.returncode == 0
 
     def _git(self, args: List[str], cwd: Path) -> None:
         cmd = ["git", *args]

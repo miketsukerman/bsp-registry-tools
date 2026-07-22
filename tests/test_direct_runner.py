@@ -64,6 +64,71 @@ def _init_git_repo(repo_dir: Path) -> None:
     )
 
 
+def _git_commit_all(repo_dir: Path, message: str) -> None:
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            message,
+        ],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _git_output(repo_dir: Path, *args: str) -> str:
+    proc = subprocess.run(["git", *args], cwd=repo_dir, check=True, capture_output=True, text=True)
+    return proc.stdout.strip()
+
+
+class TestSourceRepoRefresh:
+    def test_refreshes_cached_repo_to_latest_remote_branch_commit(self, tmp_path):
+        remote_repo = tmp_path / "remote-defs"
+        remote_repo.mkdir()
+        tracked_file = remote_repo / "version.txt"
+        tracked_file.write_text("v1\n", encoding="utf-8")
+        _init_git_repo(remote_repo)
+        branch = _git_output(remote_repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        source = TestDefinitionSource(repo_url=str(remote_repo), ref=branch, paths=["."])
+
+        cached_repo = runner._prepare_source_repo(source)
+        assert (cached_repo / "version.txt").read_text(encoding="utf-8") == "v1\n"
+
+        tracked_file.write_text("v2\n", encoding="utf-8")
+        _git_commit_all(remote_repo, "update")
+
+        cached_repo = runner._prepare_source_repo(source)
+        assert (cached_repo / "version.txt").read_text(encoding="utf-8") == "v2\n"
+
+    def test_refreshes_cached_repo_when_no_ref_is_provided(self, tmp_path):
+        remote_repo = tmp_path / "remote-defs"
+        remote_repo.mkdir()
+        tracked_file = remote_repo / "version.txt"
+        tracked_file.write_text("v1\n", encoding="utf-8")
+        _init_git_repo(remote_repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        source = TestDefinitionSource(repo_url=str(remote_repo), paths=["."])
+
+        cached_repo = runner._prepare_source_repo(source)
+        assert (cached_repo / "version.txt").read_text(encoding="utf-8") == "v1\n"
+
+        tracked_file.write_text("v2\n", encoding="utf-8")
+        _git_commit_all(remote_repo, "update")
+
+        cached_repo = runner._prepare_source_repo(source)
+        assert (cached_repo / "version.txt").read_text(encoding="utf-8") == "v2\n"
+
+
 class TestDirectRunnerLocal:
     def test_runs_lava_job_test_definitions_section(self, tmp_path):
         repo = tmp_path / "defs-repo"
