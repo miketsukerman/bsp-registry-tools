@@ -142,7 +142,7 @@ metadata:
   name: network-suite
 run:
   steps:
-    - "printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'"
+    - "printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\n'"
 """,
             encoding="utf-8",
         )
