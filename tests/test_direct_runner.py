@@ -422,6 +422,51 @@ run:
         assert result.passed is True
         assert "[direct-test] ✅ lava-green step-1 (1/1) PASS in" in captured.out
 
+    def test_emits_params_in_step_log_lines(self, tmp_path, capsys):
+        """Merged params are shown in the running and result log lines."""
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "param-suite.yaml").write_text(
+            """
+metadata:
+  name: param-suite
+params:
+  GREETING: hello
+run:
+  steps:
+    - "echo ok"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/param-suite.yaml"],
+                    params={"TARGET": "board"},
+                )
+            ],
+            timeout=20,
+        )
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=cfg,
+            overrides=DirectRunOverrides(backend="direct-local", output_dir=str(tmp_path / "out")),
+            label="local",
+        )
+
+        captured = capsys.readouterr()
+        assert result.passed is True
+        assert "[GREETING=hello TARGET=board]" in captured.out
+        assert "[direct-test] ⠋ param-suite step-1 (1/1) [GREETING=hello TARGET=board] running" in captured.out
+        assert "[direct-test] ✅ param-suite step-1 (1/1) [GREETING=hello TARGET=board] PASS in" in captured.out
+
     def test_runs_definition_set_locally(self, tmp_path):
         repo = tmp_path / "defs-repo"
         defs_dir = repo / "defs"

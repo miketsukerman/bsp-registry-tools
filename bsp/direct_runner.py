@@ -1004,6 +1004,12 @@ class DirectTestRunner:
 
         run_cwd = str(Path(repo_exec_root))
 
+        params_str = (
+            " [" + " ".join(f"{k}={v}" for k, v in sorted(merged_params.items())) + "]"
+            if merged_params
+            else ""
+        )
+
         for idx, raw_cmd in enumerate(steps, start=1):
             expanded = self._expand_vars(str(raw_cmd), merged_params)
             step_name = f"step-{idx}"
@@ -1012,7 +1018,7 @@ class DirectTestRunner:
             spinner = _SPINNER_FRAMES[(idx - 1) % len(_SPINNER_FRAMES)]
 
             print(
-                f"[direct-test] {spinner} {suite_display_name} {step_name} ({idx}/{total_steps}) running",
+                f"[direct-test] {spinner} {suite_display_name} {step_name} ({idx}/{total_steps}){params_str} running",
                 flush=True,
             )
 
@@ -1064,7 +1070,7 @@ class DirectTestRunner:
                 suite_pass = False
 
             print(
-                f"[direct-test] {status_mark} {suite_display_name} {step_name} ({idx}/{total_steps}) "
+                f"[direct-test] {status_mark} {suite_display_name} {step_name} ({idx}/{total_steps}){params_str} "
                 f"{status}{status_suffix} in {duration:.2f}s",
                 flush=True,
             )
