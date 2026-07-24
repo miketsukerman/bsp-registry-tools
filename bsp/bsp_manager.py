@@ -3411,10 +3411,32 @@ class BspManager:
         )
 
     # ------------------------------------------------------------------
-    # Test (HIL via LAVA + Robot Framework)
+    # Test backends (LAVA + direct local/SSH/serial)
     # ------------------------------------------------------------------
 
-    def _test_resolved(
+    def _print_test_summary(self, backend_name: str, suites: List[dict], extra: str = "") -> None:
+        """Print a backend-neutral test summary table."""
+        if extra:
+            print(extra)
+        if not suites:
+            print(f"{backend_name}: no test suite results.")
+            return
+        print(f"\n{backend_name} Test Results:")
+        for suite in suites:
+            passed = bool(suite.get("passed", False))
+            status_icon = "✓" if passed else "✗"
+            suite_name = str(suite.get("name", "suite"))
+            total = int(suite.get("total", 0))
+            failures = int(suite.get("failures", 0))
+            duration = suite.get("duration")
+            duration_str = f" ({duration:.2f}s)" if isinstance(duration, (int, float)) else ""
+            print(
+                f"  {status_icon} Suite: {suite_name:<30} "
+                f"{'PASS' if passed else 'FAIL'}  "
+                f"({total - failures}/{total} passed){duration_str}"
+            )
+
+    def _test_resolved_lava(
         self,
         resolved: ResolvedConfig,
         testing_config=None,
@@ -3424,31 +3446,7 @@ class BspManager:
         wait: bool = False,
         label: str = "",
     ) -> bool:
-        """
-        Submit a LAVA HIL test job for the given ResolvedConfig.
-
-        Resolves LAVA settings from (in priority order):
-        1. CLI overrides (*lava_server*, *lava_token*, *artifact_url*)
-        2. Per-preset ``testing.lava`` block
-        3. Registry-level ``lava:`` block
-
-        Args:
-            resolved: Resolved build configuration (provides device, release,
-                      build path, and features).
-            testing_config: Optional :class:`~bsp.models.TestingConfig` from
-                            the BSP preset.  When ``None`` the caller must
-                            supply *lava_server* and a device_type via
-                            command-line flags.
-            lava_server: LAVA server URL override (CLI ``--lava-server``).
-            lava_token: LAVA authentication token override (CLI ``--lava-token``).
-            artifact_url: Artifact base URL override (CLI ``--artifact-url``).
-            wait: If ``True``, block until the job finishes and print results.
-            label: Descriptive label for log messages.
-
-        Returns:
-            ``True`` when the test run passed (or when *wait* is ``False``),
-            ``False`` on test failure.
-        """
+        """Run the LAVA backend test flow for a resolved configuration."""
         from .lava_client import LavaClient
         from .lava_job_builder import build_lava_job
 
@@ -3581,19 +3579,39 @@ class BspManager:
         suites = client.get_job_results(job_id)
         overall_pass = health == "Complete" and all(s.passed for s in suites)
 
-        # Print results table
-        print(f"\nLAVA Job {job_id} — Health: {health}")
-        if suites:
-            print("\nTest Results:")
+        if self.verbose:
+            logging.debug("Collected %d LAVA suite(s) for job %d.", len(suites), job_id)
             for suite in suites:
-                status_icon = "✓" if suite.passed else "✗"
-                print(
-                    f"  {status_icon} Suite: {suite.name:<30} "
-                    f"{'PASS' if suite.passed else 'FAIL'}  "
-                    f"({suite.total - suite.failures}/{suite.total} passed)"
+                logging.debug(
+                    "LAVA suite result: suite=%s status=%s (%d/%d passed)",
+                    suite.name,
+                    "PASS" if suite.passed else "FAIL",
+                    suite.total - suite.failures,
+                    suite.total,
                 )
-        else:
-            print("  (no test result data returned by LAVA)")
+                for case in suite.cases:
+                    logging.debug(
+                        "LAVA case result: suite=%s case=%s status=%s metadata=%s",
+                        suite.name,
+                        case.name,
+                        "PASS" if case.passed else "FAIL",
+                        case.metadata,
+                    )
+
+        summary_suites = [
+            {
+                "name": s.name,
+                "passed": s.passed,
+                "total": s.total,
+                "failures": s.failures,
+            }
+            for s in suites
+        ]
+        self._print_test_summary(
+            "LAVA",
+            summary_suites,
+            extra=f"\nLAVA Job {job_id} — Health: {health}",
+        )
 
         if not overall_pass:
             logging.error("HIL test run FAILED (job: %d).", job_id)
@@ -3602,6 +3620,189 @@ class BspManager:
 
         return overall_pass
 
+    def _test_resolved_direct(
+        self,
+        resolved: ResolvedConfig,
+        testing_config=None,
+        backend: str = "direct-local",
+        test_repo_url: Optional[str] = None,
+        test_repo_ref: Optional[str] = None,
+        test_definition_paths: Optional[List[str]] = None,
+        test_job_paths: Optional[List[str]] = None,
+        test_params: Optional[Dict[str, str]] = None,
+        direct_timeout: Optional[int] = None,
+        direct_output_dir: Optional[str] = None,
+        ssh_host: Optional[str] = None,
+        ssh_user: Optional[str] = None,
+        ssh_port: Optional[int] = None,
+        ssh_key: Optional[str] = None,
+        ssh_password: Optional[str] = None,
+        ssh_known_hosts_file: Optional[str] = None,
+        ssh_strict_host_key_checking: Optional[bool] = None,
+        ssh_remote_workdir: Optional[str] = None,
+        ssh_serial_device: Optional[str] = None,
+        ssh_serial_baudrate: Optional[int] = None,
+        label: str = "",
+    ) -> bool:
+        """Run the direct-local/direct-ssh/direct-serial backend test flow."""
+        from .direct_runner import DirectRunOverrides, DirectTestRunner
+
+        direct_cfg = testing_config.direct if (testing_config and testing_config.direct) else None
+        runner = DirectTestRunner(config_path=self.config_path)
+
+        overrides = DirectRunOverrides(
+            backend=backend,
+            repo_url=test_repo_url,
+            repo_ref=test_repo_ref,
+            definition_paths=test_definition_paths,
+            local_job_paths=test_job_paths,
+            params=test_params,
+            timeout=direct_timeout,
+            output_dir=direct_output_dir,
+            ssh_host=ssh_host,
+            ssh_user=ssh_user,
+            ssh_port=ssh_port,
+            ssh_key=ssh_key,
+            ssh_password=ssh_password,
+            ssh_known_hosts_file=ssh_known_hosts_file,
+            ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+            ssh_remote_workdir=ssh_remote_workdir,
+            ssh_serial_device=ssh_serial_device,
+            ssh_serial_baudrate=ssh_serial_baudrate,
+        )
+        try:
+            result = runner.run(
+                resolved=resolved,
+                direct_config=direct_cfg,
+                overrides=overrides,
+                label=label,
+            )
+        except Exception as exc:
+            logging.error("Direct test execution failed: %s", exc)
+            return False
+
+        summary_suites = [
+            {
+                "name": suite.name,
+                "passed": suite.status == "PASS",
+                "total": len(suite.cases),
+                "failures": sum(1 for c in suite.cases if c.status != "PASS"),
+                "duration": suite.duration,
+            }
+            for suite in result.suites
+        ]
+        if self.verbose:
+            logging.debug(
+                "Collected %d direct suite(s) for backend %s.",
+                len(result.suites),
+                result.backend,
+            )
+            for suite in result.suites:
+                passed_cases = sum(1 for case in suite.cases if case.status == "PASS")
+                logging.debug(
+                    "Direct suite result: suite=%s status=%s (%d/%d passed) duration=%.2fs log_dir=%s",
+                    suite.name,
+                    suite.status,
+                    passed_cases,
+                    len(suite.cases),
+                    suite.duration,
+                    suite.log_dir,
+                )
+                for case in suite.cases:
+                    logging.debug(
+                        "Direct case result: suite=%s case=%s status=%s duration=%.2fs log=%s command=%s",
+                        suite.name,
+                        case.name,
+                        case.status,
+                        case.duration,
+                        case.log_path,
+                        case.command,
+                    )
+        self._print_test_summary(f"Direct ({result.backend})", summary_suites)
+        return result.passed
+
+    def _test_resolved(
+        self,
+        resolved: ResolvedConfig,
+        testing_config=None,
+        lava_server: Optional[str] = None,
+        lava_token: Optional[str] = None,
+        artifact_url: Optional[str] = None,
+        wait: bool = False,
+        backend: Optional[str] = None,
+        test_repo_url: Optional[str] = None,
+        test_repo_ref: Optional[str] = None,
+        test_definition_paths: Optional[List[str]] = None,
+        test_job_paths: Optional[List[str]] = None,
+        test_params: Optional[Dict[str, str]] = None,
+        direct_timeout: Optional[int] = None,
+        direct_output_dir: Optional[str] = None,
+        ssh_host: Optional[str] = None,
+        ssh_user: Optional[str] = None,
+        ssh_port: Optional[int] = None,
+        ssh_key: Optional[str] = None,
+        ssh_password: Optional[str] = None,
+        ssh_known_hosts_file: Optional[str] = None,
+        ssh_strict_host_key_checking: Optional[bool] = None,
+        ssh_remote_workdir: Optional[str] = None,
+        ssh_serial_device: Optional[str] = None,
+        ssh_serial_baudrate: Optional[int] = None,
+        label: str = "",
+    ) -> bool:
+        """
+        Run test flow for the selected backend (LAVA, direct-local, direct-ssh, direct-serial).
+        """
+        selected_backend = backend
+        if selected_backend is None and testing_config is not None:
+            selected_backend = testing_config.backend
+        if not selected_backend:
+            selected_backend = "lava"
+        selected_backend = selected_backend.strip()
+        if selected_backend not in ("lava", "direct-local", "direct-ssh", "direct-serial"):
+            logging.error(
+                "Unsupported test backend '%s'. Supported values: lava, direct-local, direct-ssh, direct-serial.",
+                selected_backend,
+            )
+            return False
+
+        if selected_backend == "lava":
+            return self._test_resolved_lava(
+                resolved=resolved,
+                testing_config=testing_config,
+                lava_server=lava_server,
+                lava_token=lava_token,
+                artifact_url=artifact_url,
+                wait=wait,
+                label=label,
+            )
+
+        if wait:
+            logging.debug("--wait is ignored for direct backends (execution is synchronous).")
+
+        return self._test_resolved_direct(
+            resolved=resolved,
+            testing_config=testing_config,
+            backend=selected_backend,
+            test_repo_url=test_repo_url,
+            test_repo_ref=test_repo_ref,
+            test_definition_paths=test_definition_paths,
+            test_job_paths=test_job_paths,
+            test_params=test_params,
+            direct_timeout=direct_timeout,
+            direct_output_dir=direct_output_dir,
+            ssh_host=ssh_host,
+            ssh_user=ssh_user,
+            ssh_port=ssh_port,
+            ssh_key=ssh_key,
+            ssh_password=ssh_password,
+            ssh_known_hosts_file=ssh_known_hosts_file,
+            ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+            ssh_remote_workdir=ssh_remote_workdir,
+            ssh_serial_device=ssh_serial_device,
+            ssh_serial_baudrate=ssh_serial_baudrate,
+            label=label,
+        )
+
     def test_bsp(
         self,
         bsp_name: str,
@@ -3609,6 +3810,24 @@ class BspManager:
         lava_token: Optional[str] = None,
         artifact_url: Optional[str] = None,
         wait: bool = False,
+        backend: Optional[str] = None,
+        test_repo_url: Optional[str] = None,
+        test_repo_ref: Optional[str] = None,
+        test_definition_paths: Optional[List[str]] = None,
+        test_job_paths: Optional[List[str]] = None,
+        test_params: Optional[Dict[str, str]] = None,
+        direct_timeout: Optional[int] = None,
+        direct_output_dir: Optional[str] = None,
+        ssh_host: Optional[str] = None,
+        ssh_user: Optional[str] = None,
+        ssh_port: Optional[int] = None,
+        ssh_key: Optional[str] = None,
+        ssh_password: Optional[str] = None,
+        ssh_known_hosts_file: Optional[str] = None,
+        ssh_strict_host_key_checking: Optional[bool] = None,
+        ssh_remote_workdir: Optional[str] = None,
+        ssh_serial_device: Optional[str] = None,
+        ssh_serial_baudrate: Optional[int] = None,
     ) -> bool:
         """
         Submit a LAVA HIL test job for a BSP preset.
@@ -3639,6 +3858,24 @@ class BspManager:
                 lava_token=lava_token,
                 artifact_url=artifact_url,
                 wait=wait,
+                backend=backend,
+                test_repo_url=test_repo_url,
+                test_repo_ref=test_repo_ref,
+                test_definition_paths=test_definition_paths,
+                test_job_paths=test_job_paths,
+                test_params=test_params,
+                direct_timeout=direct_timeout,
+                direct_output_dir=direct_output_dir,
+                ssh_host=ssh_host,
+                ssh_user=ssh_user,
+                ssh_port=ssh_port,
+                ssh_key=ssh_key,
+                ssh_password=ssh_password,
+                ssh_known_hosts_file=ssh_known_hosts_file,
+                ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+                ssh_remote_workdir=ssh_remote_workdir,
+                ssh_serial_device=ssh_serial_device,
+                ssh_serial_baudrate=ssh_serial_baudrate,
                 label=f"{preset.name} - {preset.description}",
             )
 
@@ -3651,6 +3888,24 @@ class BspManager:
         lava_token: Optional[str] = None,
         artifact_url: Optional[str] = None,
         wait: bool = False,
+        backend: Optional[str] = None,
+        test_repo_url: Optional[str] = None,
+        test_repo_ref: Optional[str] = None,
+        test_definition_paths: Optional[List[str]] = None,
+        test_job_paths: Optional[List[str]] = None,
+        test_params: Optional[Dict[str, str]] = None,
+        direct_timeout: Optional[int] = None,
+        direct_output_dir: Optional[str] = None,
+        ssh_host: Optional[str] = None,
+        ssh_user: Optional[str] = None,
+        ssh_port: Optional[int] = None,
+        ssh_key: Optional[str] = None,
+        ssh_password: Optional[str] = None,
+        ssh_known_hosts_file: Optional[str] = None,
+        ssh_strict_host_key_checking: Optional[bool] = None,
+        ssh_remote_workdir: Optional[str] = None,
+        ssh_serial_device: Optional[str] = None,
+        ssh_serial_baudrate: Optional[int] = None,
     ) -> bool:
         """
         Submit a LAVA HIL test job by specifying device, release, and features.
@@ -3686,6 +3941,24 @@ class BspManager:
             lava_token=lava_token,
             artifact_url=artifact_url,
             wait=wait,
+            backend=backend,
+            test_repo_url=test_repo_url,
+            test_repo_ref=test_repo_ref,
+            test_definition_paths=test_definition_paths,
+            test_job_paths=test_job_paths,
+            test_params=test_params,
+            direct_timeout=direct_timeout,
+            direct_output_dir=direct_output_dir,
+            ssh_host=ssh_host,
+            ssh_user=ssh_user,
+            ssh_port=ssh_port,
+            ssh_key=ssh_key,
+            ssh_password=ssh_password,
+            ssh_known_hosts_file=ssh_known_hosts_file,
+            ssh_strict_host_key_checking=ssh_strict_host_key_checking,
+            ssh_remote_workdir=ssh_remote_workdir,
+            ssh_serial_device=ssh_serial_device,
+            ssh_serial_baudrate=ssh_serial_baudrate,
             label=f"{device_slug}/{release_slug}",
         )
 
