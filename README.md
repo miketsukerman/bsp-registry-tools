@@ -1015,40 +1015,98 @@ bsp build imx8mp-adv-scarthgap --flash /dev/sdb
 
 ---
 
-#### `test` — Submit a LAVA HIL test job
+#### `test` — Run test suites via LAVA or direct execution
 
-Submits a LAVA job for hardware-in-the-loop testing.  By default the job is submitted and the URL is printed; use `--wait` to block until it completes.
+Runs BSP tests with one of four backends:
+
+- `lava` (existing/default behavior)
+- `direct-local` (run Lava-Test definitions on the local host)
+- `direct-ssh` (run Lava-Test definitions on a remote target via SSH)
+- `direct-serial` (run Lava-Test definitions over a serial-backed SSH ProxyCommand transport)
 
 ```bash
-bsp test <bsp_name> [--wait] [--lava-server URL] [--lava-token TOKEN] [--artifact-url URL]
-bsp test --device <device> --release <release> [--feature FEATURE...] [--wait] ...
+bsp test <bsp_name> [--backend BACKEND] [OPTIONS]
+bsp test --device <device> --release <release> [--feature FEATURE...] [--backend BACKEND] [OPTIONS]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--wait` | Block until the LAVA job completes and print per-suite results |
-| `--lava-server URL` | LAVA server base URL (overrides registry `lava.server`) |
-| `--lava-token TOKEN` | LAVA API authentication token (overrides registry `lava.token`) |
-| `--artifact-url URL` | Base URL where built image artifacts are accessible to the LAVA lab |
+| `--backend {lava,direct-local,direct-ssh,direct-serial}` | Backend override (`testing.backend` / `lava` by default) |
+| `--wait` | LAVA only: block until the submitted job completes |
+| `--lava-server URL` / `--lava-token TOKEN` / `--artifact-url URL` | LAVA backend overrides |
+| `--test-repo-url URL` / `--test-repo-ref REF` | Direct backend test-definition Git source override |
+| `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable). LAVA job YAML files are also accepted; suites are read from `actions[].test.definitions[].path`. |
+| `--test-job-path PATH` | Local LAVA job YAML file (repeatable). For entries with `from: git` and `repository`, the referenced Git repository is cloned and the test definition is run from there. Entries without a `repository` are resolved relative to the job file's directory. No `--test-repo-url` is required. |
+| `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
+| `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
+| `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
+| `--ssh-known-hosts-file` / `--ssh-no-strict-host-key-checking` | SSH host key verification controls |
+| `--ssh-remote-workdir PATH` | Remote staging directory for `direct-ssh` / `direct-serial` runs |
+| `--ssh-serial-device /dev/ttyUSBX` / `--ssh-serial-baudrate BAUD` | Serial transport settings (required for `direct-serial`, optional for `direct-ssh`) |
+| `-v` / `--verbose` | Emit detailed per-suite and per-case test execution logs |
 
 **Examples:**
 
 ```bash
-# Submit a LAVA job for a pre-built image and exit immediately
-bsp test poky-qemuarm64-scarthgap
-
-# Submit and wait for the job to complete
+# LAVA backend (default)
 bsp test poky-qemuarm64-scarthgap --wait
 
-# Override LAVA settings from the CLI
-bsp test poky-qemuarm64-scarthgap --wait \
-  --lava-server https://lava.ci.example.com \
-  --lava-token $LAVA_TOKEN \
-  --artifact-url http://minio.example.com/builds
+# Direct local run from GitHub test definitions
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-local \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-repo-ref main \
+  --test-definition-path automated/linux \
+  --test-param BOARD_IP=192.168.1.10
 
-# Component-based (no preset needed)
-bsp test --device qemuarm64 --release scarthgap --wait
+# Direct local run from a remote LAVA job YAML (uses actions[].test.definitions paths)
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-local \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-definition-path automated/linux/modular-bsp/jobs/rsb3720-modbsp.yaml
+
+# Direct local run from a local LAVA job YAML (repositories in the YAML are cloned automatically)
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-local \
+  --test-job-path /path/to/local/jobs/rsb3720-modbsp.yaml
+
+# Direct SSH run on DUT
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-ssh \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-definition-path smoke.yaml \
+  --ssh-host 10.0.0.42 \
+  --ssh-user root \
+  --ssh-key ~/.ssh/id_ed25519
+
+# Direct serial run
+bsp test poky-qemuarm64-scarthgap \
+  --backend direct-serial \
+  --test-repo-url https://github.com/Linaro/test-definitions.git \
+  --test-definition-path smoke.yaml \
+  --ssh-serial-device /dev/ttyUSB0 \
+  --ssh-serial-baudrate 115200
 ```
+
+When `--verbose` is enabled, test execution logs include per-suite and per-case outcomes:
+
+- **LAVA backend**: logs each suite and case result after `--wait` completes.
+- **Direct backends**: logs each suite/case status, execution duration, command, and generated per-step log file path.
+
+Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including:
+
+- `direct-test-report.html` with aggregate KPIs, suite quick navigation, and a LAVA test-case-ID-focused reader view grouped by suite
+- `direct-test-summary.json` for machine-readable summary data
+- per-step log files linked from the HTML report
+
+When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
+
+`--test-job-path` accepts a local LAVA job YAML and automatically resolves each `actions[].test.definitions[]` entry:
+
+- Entries with `from: git` and a `repository` URL are cloned (or updated from cache) and the definition at `path` is executed from that cloned repository. The optional `branch` / `revision` fields select the checkout ref.
+- Entries without a `repository` (local-path style) are resolved relative to the job file's parent directory.
+
+This means the job YAML fully drives which repositories are used and no separate `--test-repo-url` is required.
 
 #### `remotes` — Manage named remote registries
 

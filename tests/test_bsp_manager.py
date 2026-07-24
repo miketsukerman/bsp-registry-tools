@@ -2,11 +2,13 @@
 Tests for BspManager registry operations (v2.0 schema).
 """
 
+import logging
 import pytest
 import json
 import shlex
 import subprocess
 import yaml
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from bsp import BspManager, BspPreset, Docker, V2Resolver
@@ -4423,6 +4425,170 @@ class TestLavaEnvVarExpansion:
                 if mock_client_cls.called:
                     server_arg = mock_client_cls.call_args[1]["server"]
                     assert "$ENV{TEST_LAVA_SERVER}" in server_arg
+
+
+class TestTestBackendDispatch:
+    def test_dispatches_to_lava_backend(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset("test-bsp")
+
+        with patch.object(manager, "_test_resolved_lava", return_value=True) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=False) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=preset.testing if preset else None,
+                    backend="lava",
+                )
+
+        assert passed is True
+        mock_lava.assert_called_once()
+        mock_direct.assert_not_called()
+
+    def test_dispatches_to_direct_backend_from_testing_config(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.backend = "direct-local"
+        testing_config.direct = MagicMock()
+
+        with patch.object(manager, "_test_resolved_lava", return_value=False) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=True) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=testing_config,
+                )
+
+        assert passed is True
+        mock_lava.assert_not_called()
+        mock_direct.assert_called_once()
+
+    def test_dispatches_to_direct_serial_backend_from_testing_config(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.backend = "direct-serial"
+        testing_config.direct = MagicMock()
+
+        with patch.object(manager, "_test_resolved_lava", return_value=False) as mock_lava:
+            with patch.object(manager, "_test_resolved_direct", return_value=True) as mock_direct:
+                passed = manager._test_resolved(
+                    resolved=resolved,
+                    testing_config=testing_config,
+                )
+
+        assert passed is True
+        mock_lava.assert_not_called()
+        mock_direct.assert_called_once_with(
+            resolved=resolved,
+            testing_config=testing_config,
+            backend="direct-serial",
+            test_repo_url=None,
+            test_repo_ref=None,
+            test_definition_paths=None,
+            test_job_paths=None,
+            test_params=None,
+            direct_timeout=None,
+            direct_output_dir=None,
+            ssh_host=None,
+            ssh_user=None,
+            ssh_port=None,
+            ssh_key=None,
+            ssh_password=None,
+            ssh_known_hosts_file=None,
+            ssh_strict_host_key_checking=None,
+            ssh_remote_workdir=None,
+            ssh_serial_device=None,
+            ssh_serial_baudrate=None,
+            label="",
+        )
+
+
+class TestVerboseTestExecutionLogging:
+    def test_direct_backend_logs_case_results_in_verbose_mode(self, registry_file, caplog):
+        manager = BspManager(config_path=str(registry_file), verbose=True)
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.direct = MagicMock()
+
+        direct_result = SimpleNamespace(
+            backend="direct-local",
+            passed=True,
+            suites=[
+                SimpleNamespace(
+                    name="smoke",
+                    status="PASS",
+                    duration=1.23,
+                    log_dir="/tmp/logs/smoke",
+                    cases=[
+                        SimpleNamespace(
+                            name="step-1",
+                            status="PASS",
+                            duration=0.5,
+                            log_path="/tmp/logs/smoke/step-1.log",
+                            command="echo ok",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        caplog.set_level(logging.DEBUG)
+        with patch("bsp.direct_runner.DirectTestRunner.run", return_value=direct_result):
+            assert manager._test_resolved_direct(
+                resolved=resolved,
+                testing_config=testing_config,
+                backend="direct-local",
+            ) is True
+
+        assert "Direct suite result: suite=smoke status=PASS (1/1 passed)" in caplog.text
+        assert "Direct case result: suite=smoke case=step-1 status=PASS" in caplog.text
+
+    def test_lava_backend_logs_case_results_in_verbose_mode(
+        self,
+        registry_with_lava_env_vars_file,
+        monkeypatch,
+        caplog,
+    ):
+        monkeypatch.setenv("TEST_LAVA_SERVER", "https://lava.example.com")
+        monkeypatch.setenv("TEST_LAVA_TOKEN", "token")
+        monkeypatch.setenv("TEST_LAVA_USER", "user")
+        monkeypatch.setenv("TEST_ARTIFACT_URL", "https://artifacts.example.com")
+        monkeypatch.setenv("TEST_BOARD_IP", "10.0.0.1")
+
+        manager = BspManager(config_path=str(registry_with_lava_env_vars_file), verbose=True)
+        manager.initialize()
+        resolved, preset = manager.resolver.resolve_preset("qemuarm64-scarthgap")
+
+        mock_client = MagicMock()
+        mock_client.submit_job.return_value = 123
+        mock_client.job_url.return_value = "https://lava.example.com/scheduler/job/123"
+        mock_client.wait_for_job.return_value = "Complete"
+        mock_client.get_job_results.return_value = [
+            SimpleNamespace(
+                name="smoke",
+                passed=True,
+                total=1,
+                failures=0,
+                cases=[SimpleNamespace(name="boot", passed=True, metadata={"measurement": "ok"})],
+            )
+        ]
+
+        caplog.set_level(logging.DEBUG)
+        with patch("bsp.lava_job_builder.build_lava_job", return_value="job: yaml"):
+            with patch("bsp.lava_client.LavaClient", return_value=mock_client):
+                assert manager._test_resolved_lava(
+                    resolved=resolved,
+                    testing_config=preset.testing,
+                    wait=True,
+                    label="qemuarm64-scarthgap",
+                ) is True
+
+        assert "LAVA suite result: suite=smoke status=PASS (1/1 passed)" in caplog.text
+        assert "LAVA case result: suite=smoke case=boot status=PASS" in caplog.text
 
 
 # =============================================================================
