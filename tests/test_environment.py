@@ -30,6 +30,12 @@ class TestEnvironmentManager:
             manager = EnvironmentManager(vars_)
             assert manager.get_value("DL_DIR") == "/home/testuser/downloads"
 
+    def test_expand_tilde_in_value(self):
+        vars_ = [EnvironmentVariable(name="DL_DIR", value="~/yocto/downloads")]
+        manager = EnvironmentManager(vars_)
+        expected = os.path.expanduser("~/yocto/downloads")
+        assert manager.get_value("DL_DIR") == expected
+
     def test_expand_env_var_missing_warns(self, caplog):
         vars_ = [EnvironmentVariable(name="TEST_VAR", value="$ENV{NONEXISTENT_VAR_12345}/path")]
         with caplog.at_level(logging.WARNING):
