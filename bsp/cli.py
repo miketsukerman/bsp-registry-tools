@@ -20,7 +20,7 @@ from .completions import (
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
 from .models import ArchiveConfig, YoctoCacheConfig
-from .registry_fetcher import DEFAULT_BRANCH, RegistryFetcher
+from .registry_fetcher import DEFAULT_BRANCH, DEFAULT_REMOTE_URL, RegistryFetcher
 from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION, get_installed_package_version
 
@@ -317,8 +317,18 @@ def main() -> int:
         parser.add_argument("--local", action="store_true",
                             help="Force local registry lookup only (do not use remote)")
 
+        # GUI shortcut: `bsp gui` launches the TUI launcher
+        parser.add_argument(
+            '--gui',
+            action='store_true',
+            help='Launch the interactive GUI (requires the [gui] extra)'
+        )
+
         # Create subparsers for different commands
-        subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=True)
+        subparsers = parser.add_subparsers(dest='command', help='Command to execute', required=False)
+
+        # GUI subcommand (alias for --gui flag)
+        subparsers.add_parser('gui', help='Launch the interactive GUI launcher')
 
         # ----------------------------------------------------------------
         # Build command
@@ -374,7 +384,7 @@ def main() -> int:
             help="Checkout and validate build configuration without building (fast)"
         )
         build_parser.add_argument(
-            "--deploy",
+"--deploy",
             action="store_true",
             dest="deploy_after_build",
             help="Deploy artifacts to cloud storage after a successful build"
@@ -830,7 +840,7 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
-        # Deploy command
+# Deploy command
         # ----------------------------------------------------------------
         deploy_parser = subparsers.add_parser(
             "deploy", help="Deploy build artifacts to cloud storage"
@@ -946,6 +956,10 @@ def main() -> int:
             default=True,
             help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
         )
+
+        # ----------------------------------------------------------------
+        # Gather command
+        # ----------------------------------------------------------------
         gather_parser = subparsers.add_parser(
             "gather",
             help="Download BSP build artifacts from cloud storage"
@@ -1540,6 +1554,20 @@ def main() -> int:
             pass
 
         args = parser.parse_args()
+
+        # --gui flag or 'bsp gui' subcommand → launch TUI
+        if getattr(args, 'gui', False) or args.command == 'gui':
+            from .gui import launch_gui
+            return launch_gui(
+                registry_path=args.registry,
+                remotes=args.remote,
+                branch=args.branch if args.branch != DEFAULT_BRANCH else None,
+                no_update=not args.update,
+            )
+
+        if not args.command:
+            parser.print_help()
+            return 1
 
         # Setup logging based on verbosity
         log_level = logging.DEBUG if args.verbose else logging.WARNING
