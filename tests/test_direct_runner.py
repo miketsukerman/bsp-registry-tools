@@ -2125,3 +2125,276 @@ actions:
                     output_dir=str(tmp_path / "out"),
                 ),
             )
+
+
+class TestSuiteFilter:
+    """Tests for --test-suite (suites=...) filtering of LAVA job entries."""
+
+    @staticmethod
+    def _write_job_with_named_suites(base):
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+        for suite in ("alpha", "beta", "gamma"):
+            (defs_dir / f"{suite}.yaml").write_text(
+                f"""
+metadata:
+  name: {suite}-suite
+run:
+  steps:
+    - "echo {suite}-ok"
+""",
+                encoding="utf-8",
+            )
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/alpha.yaml
+          name: adv-alpha
+        - path: defs/beta.yaml
+          name: adv-beta
+        - path: defs/gamma.yaml
+          name: adv-gamma
+""",
+            encoding="utf-8",
+        )
+        return job_file
+
+    def test_single_suite_selected(self, tmp_path):
+        """Only the requested suite from the job YAML is executed."""
+        job_file = self._write_job_with_named_suites(tmp_path / "project")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                suites=["adv-beta"],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="suite-filter",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["beta-suite"]
+
+    def test_multiple_suites_selected(self, tmp_path):
+        """--test-suite is repeatable and selects each matching entry."""
+        job_file = self._write_job_with_named_suites(tmp_path / "project")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                suites=["adv-alpha", "adv-gamma"],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="suite-filter",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["alpha-suite", "gamma-suite"]
+
+    def test_no_filter_runs_all_suites(self, tmp_path):
+        """Without --test-suite every job entry still runs (regression guard)."""
+        job_file = self._write_job_with_named_suites(tmp_path / "project")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="suite-filter",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["alpha-suite", "beta-suite", "gamma-suite"]
+
+    def test_unmatched_suite_lists_available_names(self, tmp_path):
+        """An unmatched --test-suite raises an error listing available suites."""
+        job_file = self._write_job_with_named_suites(tmp_path / "project")
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        with pytest.raises(RuntimeError) as exc_info:
+            runner.run(
+                resolved=resolved,
+                direct_config=None,
+                overrides=DirectRunOverrides(
+                    backend="direct-local",
+                    local_job_paths=[str(job_file)],
+                    suites=["missing"],
+                    output_dir=str(tmp_path / "out"),
+                ),
+            )
+
+        message = str(exc_info.value)
+        assert "No test suites matched" in message
+        assert "adv-alpha" in message
+        assert "adv-beta" in message
+        assert "adv-gamma" in message
+
+    def test_filter_skips_unselected_git_repositories(self, tmp_path):
+        """Only the git repository of the selected suite is cloned."""
+        remote_repo = tmp_path / "remote-defs"
+        (remote_repo / "tests").mkdir(parents=True)
+        (remote_repo / "tests" / "remote.yaml").write_text(
+            """
+metadata:
+  name: remote-suite
+run:
+  steps:
+    - "echo remote-ok"
+""",
+            encoding="utf-8",
+        )
+        _init_git_repo(remote_repo)
+
+        job_file = tmp_path / "job.yaml"
+        job_file.write_text(
+            f"""
+actions:
+  - test:
+      definitions:
+        - repository: {remote_repo}
+          from: git
+          path: tests/remote.yaml
+          name: adv-remote
+        - repository: {tmp_path / "does-not-exist"}
+          from: git
+          path: tests/other.yaml
+          name: adv-other
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                suites=["adv-remote"],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="suite-filter-git",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["remote-suite"]
+
+    def test_entry_name_used_when_definition_has_no_metadata_name(self, tmp_path):
+        """The LAVA entry name becomes the suite name when metadata.name is absent."""
+        base = tmp_path / "project"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "context.yaml").write_text(
+            """
+run:
+  steps:
+    - "echo context-ok"
+""",
+            encoding="utf-8",
+        )
+        job_file = base / "job.yaml"
+        job_file.write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/context.yaml
+          name: adv-context
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+        output_dir = tmp_path / "out"
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=None,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                local_job_paths=[str(job_file)],
+                suites=["adv-context"],
+                output_dir=str(output_dir),
+            ),
+            label="suite-name",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["adv-context"]
+
+        summary = json.loads((output_dir / "direct-test-summary.json").read_text(encoding="utf-8"))
+        assert [s["name"] for s in summary["suites"]] == ["adv-context"]
+
+    def test_filter_applies_to_job_yaml_from_definition_paths(self, tmp_path):
+        """Job YAMLs reached via --test-definition-path honour the suite filter."""
+        base = tmp_path / "repo"
+        defs_dir = base / "defs"
+        defs_dir.mkdir(parents=True)
+        for suite in ("one", "two"):
+            (defs_dir / f"{suite}.yaml").write_text(
+                f"""
+metadata:
+  name: {suite}-suite
+run:
+  steps:
+    - "echo {suite}-ok"
+""",
+                encoding="utf-8",
+            )
+        (base / "job.yaml").write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/one.yaml
+          name: adv-one
+        - path: defs/two.yaml
+          name: adv-two
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=DirectTestConfig(
+                definitions=[TestDefinitionSource(local_dir=str(base), paths=["job.yaml"])],
+            ),
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                suites=["adv-two"],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="suite-filter-defpath",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["two-suite"]

@@ -1162,6 +1162,7 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--test-repo-url URL` / `--test-repo-ref REF` | Direct backend test-definition Git source override |
 | `--test-definition-path PATH` | Direct backend definition file/dir/glob (repeatable). LAVA job YAML files are also accepted; suites are read from `actions[].test.definitions[].path`. |
 | `--test-job-path PATH` | Local LAVA job YAML file (repeatable). For entries with `from: git` and `repository`, the referenced Git repository is cloned and the test definition is run from there. Entries without a `repository` are resolved relative to the job file's directory. No `--test-repo-url` is required. |
+| `--test-suite NAME` | Direct backends only: run only the named test suite(s) (repeatable). Matches `actions[].test.definitions[].name` in the LAVA job YAML, falling back to the definition's `metadata.name` / file stem for plain test definitions. |
 | `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
 | `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
 | `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
@@ -1194,6 +1195,15 @@ bsp test poky-qemuarm64-scarthgap \
 bsp test poky-qemuarm64-scarthgap \
   --backend direct-local \
   --test-job-path /path/to/local/jobs/rsb3720-modbsp.yaml
+
+# Run a single suite from a local LAVA job YAML over SSH
+bsp test modular-bsp-rsb3720-6g-wrynose \
+  --backend direct-ssh \
+  --test-job-path vendors/advantech-europe/nxp/test/jobs/rsb3720-6g-modbsp.yaml \
+  --ssh-host 192.168.3.195 \
+  --ssh-user root \
+  --ssh-no-strict-host-key-checking \
+  --test-suite adv-context
 
 # Direct SSH run on DUT
 bsp test poky-qemuarm64-scarthgap \
@@ -1232,6 +1242,20 @@ When `--test-definition-path` points to a LAVA job YAML, direct backends execute
 - Entries without a `repository` (local-path style) are resolved relative to the job file's parent directory.
 
 This means the job YAML fully drives which repositories are used and no separate `--test-repo-url` is required.
+
+Use `--test-suite NAME` to run only some of the entries in a job YAML. The value is matched exactly against the entry's `name` field, so a job containing:
+
+```yaml
+  - test:
+      definitions:
+        - repository: https://github.com/miketsukerman/modular-bsp-test-definitions.git
+          from: git
+          branch: main
+          path: automated/linux/context/context.yaml
+          name: adv-context
+```
+
+can be narrowed with `--test-suite adv-context`. The flag is repeatable, only the repositories of the selected entries are cloned/staged, and when nothing matches the error message lists the available suite names. `--test-suite` applies to direct backends only and is ignored (with a warning) for the LAVA backend.
 
 #### `remotes` — Manage named remote registries
 
