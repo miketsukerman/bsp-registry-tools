@@ -4,7 +4,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 
 ## Overview
 
-`bsp-registry-tools` provides a command-line interface and Python API for managing Advantech Board Support Packages (BSPs). It uses YAML-based registry files to define BSP configurations, build environments, and Docker containers, making reproducible Yocto builds straightforward.
+`bsp-registry-tools` provides a command-line interface, an interactive GUI launcher, and a Python API for managing Advantech Board Support Packages (BSPs). It uses YAML-based registry files to define BSP configurations, build environments, and Docker containers, making reproducible Yocto builds straightforward.
 
 ### Key Features
 
@@ -20,12 +20,12 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📂 **Registry splitting** — compose a registry from multiple files using the `include` directive
 - 🌍 **HTTP server mode** — expose the full BSP registry via REST and GraphQL APIs
 - ☁️ **Cloud artifact deployment** — upload Yocto build artifacts to Azure Blob Storage or AWS S3 with `bsp deploy`
+- 🚀 **Interactive TUI launcher** (`bsp-explorer`) — visual alternative to the CLI
 - ⬇️ **Cloud artifact gathering** — download previously uploaded artifacts from Azure Blob Storage or AWS S3 with `bsp gather`
 - 🧪 **HIL test triggering** — submit [LAVA](https://lava.readthedocs.io/) test jobs with Robot Framework suites after a build
 - 🔒 **CRA vulnerability scanning** — scan built images for CVEs and generate SBOMs (CycloneDX/SPDX) with `bsp scan` ([Trivy](https://trivy.dev/) / Syft+Grype)
 - 💾 **SD card / block device flashing** — write Yocto WIC images to an SD card or USB drive with `bsp flash` ([bmap-tools](https://github.com/intel/bmap-tools) for fast, verified flashing)
 - 🔤 **Shell tab completions** — Bash/Zsh/Fish/tcsh completions for commands, presets, devices, releases, and features
-
 
 ## Installation
 
@@ -39,6 +39,12 @@ To also install the optional HTTP server dependencies:
 
 ```bash
 pip install "bsp-registry-tools[server]"
+```
+
+### With GUI support
+
+```bash
+pip install 'bsp-registry-tools[gui]
 ```
 
 ### From Source
@@ -59,6 +65,7 @@ pip install ".[server]"
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
+- *(optional)* [textual](https://textual.textualize.io/) >= 8.0.0 — required for `bsp-explorer` GUI
 - [requests](https://requests.readthedocs.io/) >= 2.28.0 *(for LAVA HIL test integration)*
 - [Jinja2](https://jinja.palletsprojects.com/) >= 3.1.0 *(for LAVA job template rendering)*
 
@@ -336,7 +343,37 @@ bsp build poky-qemuarm64-scarthgap
 bsp shell poky-qemuarm64-scarthgap
 ```
 
-### 5. Submit a HIL Test Job
+### 5. Launch the Interactive GUI
+
+```bash
+# Install the GUI extra first
+pip install 'bsp-registry-tools[gui]'
+
+# Then launch the TUI launcher
+bsp-explorer
+
+# Or via the main CLI
+bsp gui
+bsp --gui
+
+# Serve the TUI in a browser (Textual web server)
+bsp-explorer-web
+
+# Load multiple remote registries in one GUI session
+bsp-explorer \
+  --remote https://github.com/my-org/bsp-registry.git@main@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@release@name=partner
+```
+
+**Terminal** (`bsp-explorer`):
+
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
+**Browser** (`bsp-explorer-web`):
+
+![BSP Registry Explorer Web](docs/screenshots/bsp-explorer-web.svg)
+
+### 6. Submit a HIL Test Job
 
 ```bash
 # Submit a LAVA test job for a pre-built image and wait for results
@@ -346,19 +383,95 @@ bsp test poky-qemuarm64-scarthgap --wait
 bsp build poky-qemuarm64-scarthgap --test --wait
 ```
 
+## GUI Launcher (`bsp-explorer`)
+
+`bsp-explorer` is a Terminal User Interface (TUI) that provides a visual, interactive
+alternative to the CLI — similar in spirit to the
+[Advantech BSP Launcher](https://docs.aim-linux.advantech.com/docs/utility/bsplauncher/).
+
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **BSP tree** | Vendor → Device → Release → BSP preset hierarchy with filter/search support |
+| **BSP details** | Select a BSP to view its description, device, release, features, and build path |
+| **Build environment** | Shows the Docker container, named environment, and resolved variables |
+| **Build artifacts** | Automatically scans the Yocto deploy directory for `.wic` images and kernel images (`uImage`, `zImage`, `Image`, `fitImage`) — updated after each successful build |
+| **Build** | Opens a dialog to choose build options (clean, checkout-only), then streams output to the log (`b`). Output is saved to a timestamped log file (`bsp-build-YYYYMMDD-HHMMSS.log`) in the build folder |
+| **Shell** | Exits the TUI and launches an interactive `bsp shell` session in the restored terminal (`s`) |
+| **Flash** | Auto-discovers removable drives (USB, SD card, eMMC), selects a flash image, then writes it to the target device using `bmaptool` or `dd` (`f`) |
+| **Deploy** | Uploads build artifacts to cloud storage (Azure/AWS) when artifacts are available (`d`) |
+| **Export** | Export KAS configuration and stream output to the log panel (`e`) |
+| **Cancel** | Terminates a running build (kills the entire process group) (`x`) |
+| **Refresh** | Reload the registry (pull latest from remote if applicable) (`r`) |
+| **Output log** | Real-time streaming of command output in a scrollable panel |
+| **Keyboard-first** | Full keyboard navigation; footer shows all available shortcuts |
+| **Registry info** | Top bar displays the active registry URL and branch |
+
+### Launching options
+
+```bash
+# Use the default (remote) registry
+bsp-explorer
+
+# Use a local registry file
+bsp-explorer --registry ./bsp-registry.yaml
+
+# Use a custom remote registry
+bsp-explorer --remote https://github.com/my-org/bsp-registry.git --branch dev
+
+# Use multiple remotes (same format as the main CLI)
+bsp-explorer \
+  --remote https://github.com/my-org/bsp-registry.git@dev@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@main@name=partner
+
+# Skip the remote update (faster, offline)
+bsp-explorer --no-update
+
+# Serve the TUI in a web browser (requires Textual's web extra)
+bsp-explorer-web
+
+# Web mode supports multiple remotes too
+bsp-explorer-web \
+  --remote https://github.com/my-org/bsp-registry.git@dev@name=myorg \
+  --remote https://github.com/vendor/partner-registry.git@main@name=partner
+```
+
+**TUI in terminal** (`bsp-explorer`):
+
+![BSP Registry Explorer TUI](docs/screenshots/bsp-launcher-tui.svg)
+
+**TUI in browser** (`bsp-explorer-web`):
+
+![BSP Registry Explorer Web](docs/screenshots/bsp-explorer-web.svg)
+
+### CLI vs GUI comparison
+
+| Capability | CLI (`bsp`) | GUI (`bsp-explorer`) |
+|-----------|-------------|----------------------|
+| List BSPs | `bsp list` | Visual table, keyboard-navigable |
+| Build BSP | `bsp build <name>` | Select row → press `b` |
+| Shell access | `bsp shell <name>` | Shows equivalent CLI command |
+| Export config | `bsp export <name>` | Select row → press `e` |
+| List containers | `bsp containers` | Press `c` |
+| Real-time output | stdout/stderr | Integrated scrollable log panel |
+| Scriptable / CI | ✅ Yes | ❌ Requires a terminal |
 ## CLI Reference
 
 ```
 usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
            [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
-           [--local]
-           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
+           [--local] [--gui]
+           {gui,build,list,containers,tree,export,shell,server,deploy,gather,test,flash,remotes} ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
+  {gui,build,list,containers,tree,export,shell,server,deploy,gather,test,flash,remotes}
                         Command to execute
+    gui                 Launch the interactive GUI launcher
     build               Build an image for BSP
     list                List available BSPs and components
     containers          List available containers
@@ -369,6 +482,7 @@ positional arguments:
     deploy              Deploy build artifacts to cloud storage
     gather              Download BSP build artifacts from cloud storage
     test                Submit a LAVA HIL test job for a BSP
+    flash               Flash a build image to a block device (SD card / eMMC)
     remotes             Manage named remote BSP registry sources
 
 options:
@@ -383,6 +497,7 @@ options:
   --update              Update the cached registry clone before use (default)
   --no-update           Skip updating the cached registry clone
   --local               Force local registry lookup only (do not use remote)
+  --gui                 Launch the interactive GUI (requires the [gui] extra)
 ```
 
 ### Registry Resolution Priority
@@ -655,6 +770,8 @@ bsp build poky-qemuarm64-scarthgap --test --wait \
   --artifact-url http://files.example.com/builds
 ```
 
+When a build is triggered via the `bsp-explorer` GUI, the full output is saved to a timestamped log file inside the BSP's build directory (e.g. `build/poky-qemuarm64-scarthgap/bsp-build-20260406-205840.log`). Each build creates a new log file, so previous build logs are preserved.
+
 #### `fetch` — Fetch all sources for a BSP
 
 ```bash
@@ -846,6 +963,12 @@ to Azure Blob Storage or AWS S3.  Optionally also upload Yocto build caches
 ```bash
 bsp deploy <bsp_name> [OPTIONS]
 bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
+#### `flash` — Flash a build image to a block device
+
+Writes the most recently built `.wic` (or `.img`) image from the BSP's deploy directory to an SD card or eMMC target. Uses `bmaptool` for efficient sparse writes when a `.bmap` sidecar is present, or falls back to `dd`.
+
+```bash
+bsp flash <bsp_name> --target <device> [--image <path>]
 ```
 
 | Option | Description |
@@ -860,6 +983,8 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--no-deploy-cache-downloads` | Skip the DL_DIR upload (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip the SSTATE_DIR upload (use with `--deploy-cache`) |
 | `--dry-run` | List what would be uploaded without uploading (no credentials required) |
+| `--target TARGET`, `-t TARGET` | Target block device (e.g. `/dev/sda`, `/dev/mmcblk0`) |
+| `--image IMAGE`, `-i IMAGE` | Path to the image file to flash (auto-selected from deploy dir if omitted) |
 
 ---
 
@@ -1530,6 +1655,13 @@ suites: list[LavaTestSuite] = client.get_job_results(job_id)
 ```
 
 
+# Flash to USB drive (auto-selects the latest .wic image)
+bsp flash poky-qemuarm64-scarthgap --target /dev/sda
+
+# Flash a specific image file
+bsp flash poky-qemuarm64-scarthgap --target /dev/mmcblk0 --image path/to/image.wic
+```
+
 ## Registry Configuration Reference
 
 The BSP registry is a YAML file following **schema v2.2**.  See [docs/registry-v2.md](docs/registry-v2.md) for the full reference.  For the HTTP server reference, see [docs/server.md](docs/server.md).  Key top-level sections:
@@ -2101,8 +2233,10 @@ pytest tests/test_bsp.py::TestEnvironmentManager -v
 bsp-registry-tools/
 ├── bsp/
 │   ├── __init__.py           # Public API exports
-│   ├── cli.py                # CLI entry point
-│   ├── bsp_manager.py        # Main BSP coordinator
+│   ├── cli.py                # CLI entry point (bsp command)
+│   ├── cli_runner.py         # Module runner shim for GUI subprocesses
+│   ├── gui.py                # Interactive TUI launcher (bsp-explorer / bsp-explorer-web commands)
+│   ├── bsp_manager.py        # Main BSP coordinator (build, shell, flash, export)
 │   ├── registry_fetcher.py   # Remote registry clone/update
 │   ├── remotes_manager.py    # Persistent named-remote CRUD (bsp remotes)
 │   ├── kas_manager.py        # KAS build system integration
@@ -2138,6 +2272,8 @@ bsp-registry-tools/
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
 │   ├── server.md             # HTTP server (REST + GraphQL) reference
 │   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
+│   └── screenshots/          # TUI screenshots
+│   └── screenshots/          # TUI and web screenshots (bsp-launcher-tui.svg, bsp-explorer-web.svg)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
@@ -2211,7 +2347,7 @@ python -m build
 
 | Class | Description |
 |-------|-------------|
-| `BspManager` | Main coordinator for BSP operations |
+| `BspManager` | Main coordinator for BSP operations (build, shell, export, flash) |
 | `KasManager` | Handles KAS build system operations |
 | `EnvironmentManager` | Manages build environment variables with `$ENV{}` expansion |
 | `PathResolver` | Utility for path resolution and validation |
