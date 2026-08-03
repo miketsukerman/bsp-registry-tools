@@ -13,7 +13,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, TemplateError
@@ -311,6 +311,7 @@ class DirectRunOverrides:
     repo_ref: Optional[str] = None
     definition_paths: Optional[List[str]] = None
     local_job_paths: Optional[List[str]] = None
+    suites: Optional[List[str]] = None
     params: Optional[Dict[str, str]] = None
     timeout: Optional[int] = None
     output_dir: Optional[str] = None
@@ -521,6 +522,10 @@ class DirectTestRunner:
         overall_pass = True
         suites: List[DirectTestSuiteResult] = []
 
+        suite_filter = self._suite_filter(overrides)
+        available_names: List[str] = []
+        selected_any = False
+
         for source_index, source in enumerate(cfg.definitions):
             repo_dir = self._prepare_source_repo(source)
             def_files = self._resolve_definition_files(repo_dir, source.paths)
@@ -541,7 +546,12 @@ class DirectTestRunner:
             for def_file in def_files:
                 entry_definitions = self._extract_lava_job_test_definitions(self._load_definition(def_file))
                 if entry_definitions:
-                    for entry_path, entry_params in entry_definitions:
+                    for entry_path, entry_params, entry_name in entry_definitions:
+                        if entry_name:
+                            available_names.append(entry_name)
+                        if suite_filter is not None and entry_name not in suite_filter:
+                            continue
+
                         entry_files = self._resolve_definition_files(repo_dir, [entry_path])
                         if not entry_files:
                             raise RuntimeError(
@@ -553,6 +563,7 @@ class DirectTestRunner:
                         merged_params.update({k: str(v) for k, v in entry_params.items()})
                         for entry_file in entry_files:
                             rel = entry_file.relative_to(repo_dir)
+                            selected_any = True
                             suite_result = self._run_single_definition(
                                 transport=transport,
                                 suite_path=entry_file,
@@ -563,13 +574,21 @@ class DirectTestRunner:
                                 timeout=cfg.timeout,
                                 continue_on_failure=cfg.continue_on_failure,
                                 output_root=run_root,
+                                suite_name_override=entry_name,
                             )
                             suites.append(suite_result)
                             if suite_result.status != "PASS":
                                 overall_pass = False
                     continue
 
+                if suite_filter is not None:
+                    plain_name = source.name or self._definition_suite_name(def_file)
+                    available_names.append(plain_name)
+                    if plain_name not in suite_filter:
+                        continue
+
                 rel = def_file.relative_to(repo_dir)
+                selected_any = True
                 suite_result = self._run_single_definition(
                     transport=transport,
                     suite_path=def_file,
@@ -580,10 +599,14 @@ class DirectTestRunner:
                     timeout=cfg.timeout,
                     continue_on_failure=cfg.continue_on_failure,
                     output_root=run_root,
+                    suite_name_override=source.name,
                 )
                 suites.append(suite_result)
                 if suite_result.status != "PASS":
                     overall_pass = False
+
+        if suite_filter is not None and not selected_any:
+            raise RuntimeError(self._no_matching_suites_message(suite_filter, available_names))
 
         if isinstance(transport, _SshTransport):
             remote_root = cfg.transport.remote_workdir.rstrip("/")
@@ -653,6 +676,39 @@ class DirectTestRunner:
                 f"Failed to render Jinja2 job template '{template_path}': {exc}"
             ) from exc
 
+    @staticmethod
+    def _suite_filter(overrides: Optional[DirectRunOverrides]) -> Optional[Set[str]]:
+        """Return the set of requested suite names, or ``None`` when unfiltered."""
+        if not overrides or not overrides.suites:
+            return None
+        names = {str(name).strip() for name in overrides.suites if str(name).strip()}
+        return names or None
+
+    @staticmethod
+    def _no_matching_suites_message(suite_filter: Set[str], available: List[str]) -> str:
+        requested = ", ".join(sorted(suite_filter))
+        unique_available = sorted({name for name in available if name})
+        if unique_available:
+            return (
+                f"No test suites matched --test-suite ({requested}). "
+                f"Available suites: {', '.join(unique_available)}."
+            )
+        return (
+            f"No test suites matched --test-suite ({requested}). "
+            "No named test suites were found in the selected test definitions."
+        )
+
+    def _definition_suite_name(self, path: Path) -> str:
+        """Return the effective suite name of a plain Lava-Test definition file."""
+        try:
+            definition = self._load_definition(path)
+        except RuntimeError:
+            return path.stem
+        metadata = definition.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("name"):
+            return str(metadata["name"])
+        return path.stem
+
     def _merged_config(
         self,
         direct_config: Optional[DirectTestConfig],
@@ -669,6 +725,7 @@ class DirectTestRunner:
                 paths=list(s.paths),
                 params=dict(s.params),
                 local_dir=s.local_dir,
+                name=s.name,
             )
             for s in base.definitions
         ]
@@ -691,6 +748,9 @@ class DirectTestRunner:
                 definitions[0].params = merged
 
         job_timeout_seconds: Optional[int] = None
+        suite_filter = self._suite_filter(overrides)
+        job_suite_names: List[str] = []
+        job_definitions_added = False
         # Each --test-job-path is a local LAVA job YAML file.  We parse the
         # file and create one TestDefinitionSource per test-definition entry:
         #   * entries with `from: git` and a `repository` URL are cloned from
@@ -741,6 +801,11 @@ class DirectTestRunner:
                             continue
                         repository = test_def.get("repository")
                         from_type = test_def.get("from", "git" if repository else "")
+                        entry_name = str(test_def.get("name") or "")
+                        if entry_name:
+                            job_suite_names.append(entry_name)
+                        if suite_filter is not None and entry_name not in suite_filter:
+                            continue
                         params_raw = test_def.get("parameters", {})
                         entry_params: Dict[str, str] = (
                             {str(k): str(v) for k, v in params_raw.items()}
@@ -749,6 +814,7 @@ class DirectTestRunner:
                         )
                         merged_params = dict(extra_params)
                         merged_params.update(entry_params)
+                        job_definitions_added = True
                         if from_type == "git" and repository:
                             branch = test_def.get("branch", "")
                             revision = test_def.get("revision", "")
@@ -759,6 +825,7 @@ class DirectTestRunner:
                                     ref=ref,
                                     paths=[str(path)],
                                     params=merged_params,
+                                    name=entry_name,
                                 )
                             )
                         else:
@@ -767,8 +834,17 @@ class DirectTestRunner:
                                     local_dir=str(abs_job.parent),
                                     paths=[str(path)],
                                     params=merged_params,
+                                    name=entry_name,
                                 )
                             )
+
+        if suite_filter is not None and job_suite_names and not job_definitions_added:
+            raise RuntimeError(self._no_matching_suites_message(suite_filter, job_suite_names))
+
+        if suite_filter is not None and job_definitions_added:
+            # A LAVA job file selected the suites explicitly; drop registry-level
+            # sources so only the requested suites run.
+            definitions = [d for d in definitions if d.name in suite_filter]
 
         if not definitions:
             raise RuntimeError(
@@ -942,12 +1018,12 @@ class DirectTestRunner:
                     commands.append(str(cmd))
         return commands
 
-    def _extract_lava_job_test_definitions(self, definition: Dict) -> List[Tuple[str, Dict[str, str]]]:
+    def _extract_lava_job_test_definitions(self, definition: Dict) -> List[Tuple[str, Dict[str, str], str]]:
         actions = definition.get("actions")
         if not isinstance(actions, list):
             return []
 
-        entries: List[Tuple[str, Dict[str, str]]] = []
+        entries: List[Tuple[str, Dict[str, str], str]] = []
         seen_entries = set()
         for action in actions:
             if not isinstance(action, dict):
@@ -967,11 +1043,12 @@ class DirectTestRunner:
                     continue
                 params = test_def.get("parameters")
                 params_dict = {str(k): str(v) for k, v in params.items()} if isinstance(params, dict) else {}
-                entry_key = (str(path), tuple(sorted(params_dict.items())))
+                name = str(test_def.get("name") or "")
+                entry_key = (str(path), tuple(sorted(params_dict.items())), name)
                 if entry_key in seen_entries:
                     continue
                 seen_entries.add(entry_key)
-                entries.append((str(path), params_dict))
+                entries.append((str(path), params_dict, name))
         return entries
 
     def _expand_vars(self, text: str, params: Dict[str, str]) -> str:
@@ -1024,10 +1101,11 @@ class DirectTestRunner:
         timeout: int,
         continue_on_failure: bool,
         output_root: Path,
+        suite_name_override: str = "",
     ) -> DirectTestSuiteResult:
         definition = self._load_definition(suite_path)
         metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
-        suite_name = metadata.get("name") or suite_path.stem
+        suite_name = metadata.get("name") or suite_name_override or suite_path.stem
         suite_display_name = str(suite_name)
 
         def_params = definition.get("params") if isinstance(definition.get("params"), dict) else {}

@@ -3920,6 +3920,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
         direct_output_dir: Optional[str] = None,
@@ -3947,6 +3948,7 @@ class BspManager:
             repo_ref=test_repo_ref,
             definition_paths=test_definition_paths,
             local_job_paths=test_job_paths,
+            suites=test_suites,
             params=test_params,
             timeout=direct_timeout,
             output_dir=direct_output_dir,
@@ -4025,6 +4027,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
         direct_output_dir: Optional[str] = None,
@@ -4057,6 +4060,10 @@ class BspManager:
             return False
 
         if selected_backend == "lava":
+            if test_suites:
+                logging.warning(
+                    "--test-suite is only supported by direct backends and is ignored for the LAVA backend."
+                )
             return self._test_resolved_lava(
                 resolved=resolved,
                 testing_config=testing_config,
@@ -4078,6 +4085,7 @@ class BspManager:
             test_repo_ref=test_repo_ref,
             test_definition_paths=test_definition_paths,
             test_job_paths=test_job_paths,
+            test_suites=test_suites,
             test_params=test_params,
             direct_timeout=direct_timeout,
             direct_output_dir=direct_output_dir,
@@ -4106,6 +4114,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
         direct_output_dir: Optional[str] = None,
@@ -4154,6 +4163,7 @@ class BspManager:
                 test_repo_ref=test_repo_ref,
                 test_definition_paths=test_definition_paths,
                 test_job_paths=test_job_paths,
+                test_suites=test_suites,
                 test_params=test_params,
                 direct_timeout=direct_timeout,
                 direct_output_dir=direct_output_dir,
@@ -4184,6 +4194,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
         direct_output_dir: Optional[str] = None,
@@ -4237,6 +4248,7 @@ class BspManager:
             test_repo_ref=test_repo_ref,
             test_definition_paths=test_definition_paths,
             test_job_paths=test_job_paths,
+            test_suites=test_suites,
             test_params=test_params,
             direct_timeout=direct_timeout,
             direct_output_dir=direct_output_dir,
