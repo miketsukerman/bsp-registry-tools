@@ -292,6 +292,17 @@ bsp test <bsp_name> --wait \
     --lava-server https://lava.example.com \
     --lava-token $LAVA_TOKEN \
     --artifact-url http://files.example.com/builds
+
+# Direct execution on a DUT from a local LAVA job YAML
+bsp test <bsp_name> --backend direct-ssh \
+    --test-job-path jobs/rsb3720-modbsp.yaml \
+    --ssh-host 192.168.3.195 --ssh-user root
+
+# Run only selected suites from the job YAML (actions[].test.definitions[].name)
+bsp test <bsp_name> --backend direct-ssh \
+    --test-job-path jobs/rsb3720-modbsp.yaml \
+    --ssh-host 192.168.3.195 --ssh-user root \
+    --test-suite adv-context
 ```
 
 ---

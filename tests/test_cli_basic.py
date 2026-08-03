@@ -515,6 +515,48 @@ class TestTestCommand:
         assert kwargs.get("ssh_serial_device") == "/dev/ttyUSB0"
         assert kwargs.get("ssh_serial_baudrate") == 9600
 
+    def test_test_command_forwards_test_suite_flag(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-ssh",
+            "--test-job-path", "/tmp/jobs/rsb3720-modbsp.yaml",
+            "--test-suite", "adv-context",
+            "--test-suite", "adv-smoke",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("test_job_paths") == ["/tmp/jobs/rsb3720-modbsp.yaml"]
+        assert kwargs.get("test_suites") == ["adv-context", "adv-smoke"]
+
+    def test_test_by_components_forwards_test_suite_flag(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test",
+            "--device", "test-device", "--release", "test-release",
+            "--backend", "direct-local",
+            "--test-suite", "adv-context",
+        ]):
+            with patch.object(BspManager, "test_by_components", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("test_suites") == ["adv-context"]
+
+    def test_test_command_test_suite_defaults_to_none(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-local",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("test_suites") is None
+
     def test_test_command_rejects_invalid_test_param(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file), "test", "test-bsp",
