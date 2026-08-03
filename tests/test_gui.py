@@ -738,6 +738,7 @@ class TestRegistryUnavailableReporting:
         label_calls = [c.args[0] for c in widgets["#registry-label"].update.call_args_list]
         return statuses, logs, label_calls
 
+    @pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
     def test_populate_does_not_claim_empty_registry_when_unavailable(self):
         statuses, logs, label_calls = self._populate_with_error("Registry unavailable")
 
@@ -747,6 +748,7 @@ class TestRegistryUnavailableReporting:
         assert statuses == ["Registry unavailable"]
         assert any("unavailable" in text for text in label_calls), label_calls
 
+    @pytest.mark.skipif(not TEXTUAL_AVAILABLE, reason="textual not installed")
     def test_populate_reports_empty_registry_when_loaded_but_empty(self):
         """A genuinely empty registry still reports 'No BSPs found in registry'."""
         app = self._make_minimal_app()
