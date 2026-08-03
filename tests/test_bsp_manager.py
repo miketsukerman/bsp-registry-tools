@@ -4489,6 +4489,7 @@ class TestTestBackendDispatch:
             test_repo_ref=None,
             test_definition_paths=None,
             test_job_paths=None,
+            test_suites=None,
             test_params=None,
             direct_timeout=None,
             direct_output_dir=None,

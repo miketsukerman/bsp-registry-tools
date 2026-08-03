@@ -936,12 +936,17 @@ class TestDefinitionSource:
         local_dir: Absolute path to a local directory to use directly as the
                    definition root (skips git cloning). When set, ``repo_url``
                    and ``ref`` are ignored.
+        name: Optional test-suite name. For sources derived from a LAVA job
+              YAML this is the ``actions[].test.definitions[].name`` value; it
+              is used both for ``--test-suite`` filtering and as the reported
+              suite name.
     """
     repo_url: str = ""
     ref: str = ""
     paths: List[str] = field(default_factory=empty_list)
     params: Dict[str, str] = field(default_factory=empty_dict)
     local_dir: str = ""
+    name: str = ""
 
 
 @dataclass

@@ -363,6 +363,44 @@ class RemotesCompleter:
 
 
 
+class TestSuitesCompleter:
+    """Complete LAVA job test-suite names for ``--test-suite``.
+
+    Suite names are read from ``actions[].test.definitions[].name`` of the
+    ``--test-job-path`` files already present on the command line.
+    """
+
+    def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
+        try:
+            import yaml  # local import keeps completion startup cheap
+
+            names: List[str] = []
+            seen = set()
+            for job_path in getattr(parsed_args, "test_job_paths", None) or []:
+                path = Path(str(job_path)).expanduser()
+                if not path.is_file() or path.suffix.lower() in (".jinja2", ".j2"):
+                    continue
+                raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                if not isinstance(raw, dict):
+                    continue
+                for action in raw.get("actions", []) or []:
+                    if not isinstance(action, dict):
+                        continue
+                    test_block = action.get("test")
+                    if not isinstance(test_block, dict):
+                        continue
+                    for test_def in test_block.get("definitions", []) or []:
+                        if not isinstance(test_def, dict):
+                            continue
+                        name = str(test_def.get("name") or "")
+                        if name and name not in seen:
+                            seen.add(name)
+                            names.append(name)
+            return [n for n in names if n.startswith(prefix)]
+        except (Exception, SystemExit):  # pylint: disable=broad-except
+            return []
+
+
 class ScanToolCompleter:
     """Complete scanner backend names for ``--tool`` / ``--scan-tool``."""
 

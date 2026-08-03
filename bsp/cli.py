@@ -16,6 +16,7 @@ from .completions import (
     PresetsCompleter,
     ReleasesCompleter,
     RemotesCompleter,
+    TestSuitesCompleter,
     VendorReleaseCompleter,
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
@@ -1676,6 +1677,16 @@ def main() -> int:
                  "No --test-repo-url is required when using this option."
         )
         test_parser.add_argument(
+            "--test-suite",
+            action="append",
+            dest="test_suites",
+            metavar="NAME",
+            help="Run only the named test suite(s) (repeatable). Matches "
+                 "actions[].test.definitions[].name in the LAVA job YAML "
+                 "(falls back to the definition's metadata.name / file stem "
+                 "for plain test definitions). Direct backends only."
+        ).completer = TestSuitesCompleter()
+        test_parser.add_argument(
             "--test-param",
             action="append",
             dest="test_params",
@@ -2407,6 +2418,7 @@ def main() -> int:
             test_repo_ref = getattr(args, "test_repo_ref", None)
             test_definition_paths = getattr(args, "test_definition_paths", None)
             test_job_paths = getattr(args, "test_job_paths", None)
+            test_suites = getattr(args, "test_suites", None)
             direct_timeout = getattr(args, "direct_timeout", None)
             direct_output_dir = getattr(args, "direct_output_dir", None)
             ssh_host = getattr(args, "ssh_host", None)
@@ -2439,6 +2451,7 @@ def main() -> int:
                     test_repo_ref=test_repo_ref,
                     test_definition_paths=test_definition_paths,
                     test_job_paths=test_job_paths,
+                    test_suites=test_suites,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,
@@ -2467,6 +2480,7 @@ def main() -> int:
                     test_repo_ref=test_repo_ref,
                     test_definition_paths=test_definition_paths,
                     test_job_paths=test_job_paths,
+                    test_suites=test_suites,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,
