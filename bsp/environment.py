@@ -80,6 +80,9 @@ class EnvironmentManager:
         # Also expand any standard environment variables (for backward compatibility)
         expanded_value = os.path.expandvars(expanded_value)
 
+        # Expand ~ and ~user home-directory shortcuts
+        expanded_value = os.path.expanduser(expanded_value)
+
         return expanded_value
 
     def _build_environment_dict(self) -> Dict[str, str]:
