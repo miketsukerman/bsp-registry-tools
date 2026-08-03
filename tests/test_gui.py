@@ -647,6 +647,132 @@ class TestMultipleRemotesSupport:
         assert any("cached" in m.lower() for m in log_msgs), (
             f"expected cached-copy warning, got: {log_msgs}"
         )
+        assert app._registry_error is None, "successful load must not flag an error"
+
+
+# =============================================================================
+# Registry-unavailable reporting
+# =============================================================================
+
+class TestRegistryUnavailableReporting:
+    """A registry that cannot be fetched must not be reported as 'empty'."""
+
+    def _make_minimal_app(self):
+        from bsp.gui import BspLauncherApp
+
+        app = BspLauncherApp.__new__(BspLauncherApp)
+        app._remote = None
+        app._remotes = []
+        app._branch = None
+        app._no_update = False
+        app._registry_path = None
+        app._stored_remotes = None
+        app._active_remote_specs = []
+        app._running_process = None
+        app._registry_error = None
+        app._is_loading = False
+        app._load_lock = __import__("threading").Lock()
+        app.call_from_thread = lambda fn, *a, **kw: fn(*a, **kw)
+        app._log = lambda msg: None
+        app._set_status = lambda msg: None
+        app._set_cancel_button = lambda *, disabled: None
+        return app
+
+    def test_fetch_failure_records_registry_error_and_names_remote(self):
+        from bsp.remotes_manager import RemoteEntry
+
+        app = self._make_minimal_app()
+        log_msgs = []
+        app._log = lambda msg: log_msgs.append(msg)
+        app._populate_bsp_tree = lambda path: None
+
+        remote = RemoteEntry(
+            name="advantech-europe",
+            url="https://github.com/test.git",
+            branch="main",
+        )
+
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=[remote]):
+            with patch("bsp.registry_fetcher.RegistryFetcher.fetch_registry", side_effect=SystemExit(1)):
+                with patch("bsp.registry_fetcher.RegistryFetcher._is_cloned", return_value=False):
+                    app._load_registry()
+
+        assert app._registry_error == "Registry unavailable"
+        assert any("https://github.com/test.git" in m for m in log_msgs), (
+            f"error message should name the unreachable remote, got: {log_msgs}"
+        )
+
+    def test_no_remotes_records_registry_error(self):
+        app = self._make_minimal_app()
+        app._populate_bsp_tree = lambda path: None
+
+        with patch("bsp.remotes_manager.RemotesManager.ensure_default_remote", return_value=[]):
+            app._load_registry()
+
+        assert app._registry_error == "No registry configured"
+
+    def _populate_with_error(self, error):
+        """Run _populate_bsp_tree with UI widgets stubbed; return (status, logs, label)."""
+        app = self._make_minimal_app()
+        app._registry_error = error
+        app._registry_source = "default-remote"
+        app._bsp_manager = None
+        app._tree_data = None
+
+        widgets = {}
+
+        def fake_query_one(selector, _type=None):
+            return widgets.setdefault(selector, MagicMock())
+
+        app.query_one = fake_query_one
+        statuses, logs = [], []
+        app._set_status = lambda msg: statuses.append(msg)
+        app._log = lambda msg: logs.append(msg)
+
+        type(app).sub_title = ""
+        try:
+            app._populate_bsp_tree("")
+        finally:
+            del type(app).sub_title
+
+        label_calls = [c.args[0] for c in widgets["#registry-label"].update.call_args_list]
+        return statuses, logs, label_calls
+
+    def test_populate_does_not_claim_empty_registry_when_unavailable(self):
+        statuses, logs, label_calls = self._populate_with_error("Registry unavailable")
+
+        assert not any("No BSPs found in registry" in m for m in logs), (
+            f"must not report an empty registry when it could not be loaded: {logs}"
+        )
+        assert statuses == ["Registry unavailable"]
+        assert any("unavailable" in text for text in label_calls), label_calls
+
+    def test_populate_reports_empty_registry_when_loaded_but_empty(self):
+        """A genuinely empty registry still reports 'No BSPs found in registry'."""
+        app = self._make_minimal_app()
+        app._registry_error = None
+        app._registry_source = "local-auto"
+        app._tree_data = None
+
+        empty_manager = MagicMock()
+        empty_manager.registries = [("local", MagicMock())]
+        empty_manager._iter_registries.return_value = []
+        app._bsp_manager = empty_manager
+
+        widgets = {}
+        app.query_one = lambda selector, _type=None: widgets.setdefault(selector, MagicMock())
+        statuses, logs = [], []
+        app._set_status = lambda msg: statuses.append(msg)
+        app._log = lambda msg: logs.append(msg)
+
+        type(app).sub_title = ""
+        try:
+            app._populate_bsp_tree("/tmp/bsp-registry.yaml")
+        finally:
+            del type(app).sub_title
+
+        assert statuses == ["No BSPs found in registry"]
+        assert any("No BSPs found in registry" in m for m in logs), logs
 
 
 # =============================================================================
