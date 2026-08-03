@@ -926,6 +926,10 @@ if TEXTUAL_AVAILABLE:
             self._stored_remotes: Optional[list] = None
             self._active_remote_specs: List = []
             self._registry_source: str = "unknown"
+            # Short reason why the registry could not be loaded at all, or None
+            # when a registry was loaded successfully.  Used to distinguish
+            # "registry unavailable" from "registry loaded but contains no BSPs".
+            self._registry_error: Optional[str] = None
 
         # ── Compose ──────────────────────────────────────────────
 
@@ -1027,6 +1031,7 @@ if TEXTUAL_AVAILABLE:
                 self._stored_remotes = None
                 self._active_remote_specs = []
                 self._registry_source = "unknown"
+                self._registry_error = None
 
                 if registry_path is not None:
                     self._registry_source = "registry"
@@ -1078,6 +1083,7 @@ if TEXTUAL_AVAILABLE:
                             "stored-remotes" if len(stored_remotes) > 1 else "default-remote"
                         )
                         if not specs:
+                            self._registry_error = "No registry configured"
                             self.call_from_thread(
                                 self._log,
                                 "[yellow]No registry configured — pass --registry for a "
@@ -1111,11 +1117,13 @@ if TEXTUAL_AVAILABLE:
                                         "unavailable?) — using cached copy.[/yellow]",
                                     )
                                 else:
+                                    self._registry_error = "Registry unavailable"
                                     self.call_from_thread(
                                         self._log,
-                                        "[yellow]Could not fetch remote registry — check "
-                                        "your network connection or pass --registry for a "
-                                        "local file.[/yellow]",
+                                        f"[yellow]Could not fetch remote registry "
+                                        f"{spec.url} @ {spec.branch} — check your network "
+                                        f"connection, or pass --registry to use a local "
+                                        f"file.[/yellow]",
                                     )
                                     self.call_from_thread(self._populate_bsp_tree, "")
                                     return
@@ -1137,6 +1145,7 @@ if TEXTUAL_AVAILABLE:
                                             "unavailable?) — using cached copies.[/yellow]",
                                         )
                                     except SystemExit:
+                                        self._registry_error = "Registry unavailable"
                                         self.call_from_thread(
                                             self._log,
                                             "[yellow]Could not fetch remote registries — "
@@ -1146,6 +1155,7 @@ if TEXTUAL_AVAILABLE:
                                         self.call_from_thread(self._populate_bsp_tree, "")
                                         return
                                 else:
+                                    self._registry_error = "Registry unavailable"
                                     self.call_from_thread(
                                         self._log,
                                         "[yellow]Could not fetch remote registries.[/yellow]",
@@ -1153,6 +1163,7 @@ if TEXTUAL_AVAILABLE:
                                     self.call_from_thread(self._populate_bsp_tree, "")
                                     return
                             if not registry_pairs:
+                                self._registry_error = "No registries available"
                                 self.call_from_thread(
                                     self._log,
                                     "[yellow]No registries available — pass --registry "
@@ -1170,12 +1181,14 @@ if TEXTUAL_AVAILABLE:
                 self.call_from_thread(self._populate_bsp_tree, registry_path)
 
             except SystemExit:
+                self._registry_error = "Error: registry load failed"
                 self.call_from_thread(self._populate_bsp_tree, "")
                 self.call_from_thread(
                     self._log, "[red]Failed to load registry (see logs for details)[/red]"
                 )
                 self.call_from_thread(self._set_status, "Error: registry load failed")
             except Exception as exc:
+                self._registry_error = f"Error: {exc}"
                 self.call_from_thread(self._populate_bsp_tree, "")
                 self.call_from_thread(
                     self._log, f"[red]Error loading registry: {exc}[/red]"
@@ -1190,12 +1203,17 @@ if TEXTUAL_AVAILABLE:
 
             In multi-registry mode (when multiple remotes are configured), each
             registry contributes its own vendors, devices, releases, and presets.
+
+            When ``self._registry_error`` is set the registry could not be
+            loaded at all; the tree then shows that reason rather than
+            reporting an empty registry.
             """
             from .models import Device as DeviceModel
             from .registry_fetcher import DEFAULT_REMOTE_URL, DEFAULT_BRANCH
 
             tree = self.query_one("#bsp-tree", Tree)
             tree.clear()
+            tree.root.label = "Vendors"
 
             # Build registry label and subtitle
             is_multi = self._bsp_manager and len(self._bsp_manager.registries) > 1
@@ -1222,14 +1240,26 @@ if TEXTUAL_AVAILABLE:
                 subtitle = f"{DEFAULT_REMOTE_URL} @ {DEFAULT_BRANCH}"
                 source_label = "remote"
 
-            registry_label_text = f"Registry: {registry_path} ({source_label})"
+            if self._registry_error or not registry_path:
+                registry_label_text = f"Registry: unavailable ({source_label})"
+            else:
+                registry_label_text = f"Registry: {registry_path} ({source_label})"
             label = self.query_one("#registry-label", Label)
             label.update(registry_label_text)
             self.sub_title = subtitle
 
+            if self._registry_error:
+                # The registry could not be loaded at all.  The reason has
+                # already been logged by the loader, so only reflect it in the
+                # status bar and tree instead of claiming the registry is empty.
+                tree.root.label = self._registry_error
+                self._set_status(self._registry_error)
+                return
+
             if not self._bsp_manager:
-                self._set_status("No BSPs found in registry")
-                self._log("[yellow]No BSPs found in registry[/yellow]")
+                tree.root.label = "No registry loaded"
+                self._set_status("No registry loaded")
+                self._log("[yellow]No registry loaded[/yellow]")
                 return
 
             # Collect vendor/device/release metadata and presets from ALL registries
@@ -2251,6 +2281,7 @@ else:
             self._stored_remotes = None
             self._active_remote_specs = []
             self._registry_source = "unknown"
+            self._registry_error = None
 
         def _call_from_thread(self, fn, *args, **kwargs) -> None:
             call_from_thread = getattr(self, "call_from_thread", None)
@@ -2277,6 +2308,7 @@ else:
                 self._stored_remotes = None
                 self._active_remote_specs = []
                 self._registry_source = "unknown"
+                self._registry_error = None
 
                 if registry_path is not None:
                     self._registry_source = "registry"
@@ -2330,6 +2362,7 @@ else:
                         _log = getattr(self, "_log", None)
                         _populate = getattr(self, "_populate_bsp_tree", None)
                         if not specs:
+                            self._registry_error = "No registry configured"
                             if callable(_log):
                                 self._call_from_thread(
                                     _log,
@@ -2366,12 +2399,14 @@ else:
                                             "unavailable?) — using cached copy.[/yellow]",
                                         )
                                 else:
+                                    self._registry_error = "Registry unavailable"
                                     if callable(_log):
                                         self._call_from_thread(
                                             _log,
-                                            "[yellow]Could not fetch remote registry — check "
-                                            "your network connection or pass --registry for a "
-                                            "local file.[/yellow]",
+                                            f"[yellow]Could not fetch remote registry "
+                                            f"{spec.url} @ {spec.branch} — check your network "
+                                            f"connection, or pass --registry to use a local "
+                                            f"file.[/yellow]",
                                         )
                                     if callable(_populate):
                                         self._call_from_thread(_populate, "")
@@ -2395,6 +2430,7 @@ else:
                                                 "unavailable?) — using cached copies.[/yellow]",
                                             )
                                     except SystemExit:
+                                        self._registry_error = "Registry unavailable"
                                         if callable(_log):
                                             self._call_from_thread(
                                                 _log,
@@ -2406,6 +2442,7 @@ else:
                                             self._call_from_thread(_populate, "")
                                         return
                                 else:
+                                    self._registry_error = "Registry unavailable"
                                     if callable(_log):
                                         self._call_from_thread(
                                             _log,
@@ -2415,6 +2452,7 @@ else:
                                         self._call_from_thread(_populate, "")
                                     return
                             if not registry_pairs:
+                                self._registry_error = "No registries available"
                                 if callable(_log):
                                     self._call_from_thread(
                                         _log,
@@ -2434,6 +2472,7 @@ else:
                 if callable(populate):
                     self._call_from_thread(populate, registry_path)
             except SystemExit:
+                self._registry_error = "Error: registry load failed"
                 populate = getattr(self, "_populate_bsp_tree", None)
                 if callable(populate):
                     self._call_from_thread(populate, "")
@@ -2446,6 +2485,7 @@ else:
                 if callable(status):
                     self._call_from_thread(status, "Error: registry load failed")
             except Exception as exc:
+                self._registry_error = f"Error: {exc}"
                 populate = getattr(self, "_populate_bsp_tree", None)
                 if callable(populate):
                     self._call_from_thread(populate, "")
