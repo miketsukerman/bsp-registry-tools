@@ -452,6 +452,13 @@ deploy:
     sign_urls: true
     sas_expiry: "2038-01-19T03:14:06Z"
     root_index: true
+    tree: true
+    collapse_depth: 1
+    search: true
+    filters: true
+    show_dates: true
+    exclude:
+      - "cache/*"
 ```
 
 ### `index` fields
@@ -463,12 +470,39 @@ deploy:
 | `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
 | `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
 | `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+| `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
+| `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
+| `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
+| `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
+| `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
+| `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
 
-The page is self-contained (no external assets), lists one row per artifact
-(name, human-readable size, short SHA-256, link), links to `manifest.json`, and
-carries no-cache `<meta>` tags so browsers never show stale, expired links.
-`*.html` blobs are excluded so the index never lists itself, and every
-interpolated value is HTML-escaped.
+The page is self-contained (no external assets, no CDN JavaScript, no server),
+so it loads from a private container through a single signed URL.  It lists
+every artifact with its human-readable size, last-modified timestamp and short
+SHA-256, links to `manifest.json`, and carries no-cache `<meta>` tags so
+browsers never show stale, expired links.
+
+In the default tree view the remote directory structure below the indexed
+prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
+keep their folders and identically named files in different directories stay
+distinct.  The inlined vanilla-JavaScript renderer provides:
+
+- **fold / unfold** of directories, with per-directory file counts and
+  aggregated sizes, plus *Expand all* / *Collapse all* buttons;
+- **search** by substring or simple glob against the full relative path,
+  auto-expanding the ancestors of every match;
+- **file-type filter chips** built from the extensions actually present;
+- **sorting** by name, size or last-modified within each directory level;
+- **shareable state** — the active query, type filter and expanded folders are
+  mirrored into the URL hash.
+
+A `<noscript>` fallback renders the same artifacts as the plain flat table, and
+`--flat` (or `tree: false`) selects that table unconditionally.  Only
+`index.html` pages are skipped, so genuine HTML build artifacts such as reports
+remain listed.  Every interpolated value is HTML-escaped and the embedded JSON
+data island is escaped so a hostile blob name cannot break out of its
+`<script>` element.
 
 The index is **fully regenerated** on every run from the current artifact set
 (or, for `bsp deploy index`, from the live container listing) — it is never appended
@@ -686,12 +720,19 @@ bsp deploy index <container> [--prefix PREFIX] [--root] [OPTIONS]
 | `--account-url URL` | Azure storage account URL |
 | `--no-sign-urls` | Emit relative links instead of signed URLs (CDN / custom domain) |
 | `--sas-expiry ISO8601` | Expiry for generated signed URLs (default `2038-01-19T03:14:06Z`) |
+| `--tree` / `--flat` | Render the collapsible directory tree (default) or the legacy flat table |
+| `--collapse-depth N` | Directory depth expanded by default in the tree view (default `1`) |
+| `--exclude PATTERN` | Glob pattern of paths to omit from the index (repeatable) |
+| `--no-search` | Omit the interactive search box and file-type filter chips |
 | `--dry-run` | Show what would be generated without uploading (no credentials needed) |
 
 ```bash
 bsp deploy index bsp-artifacts --root
 bsp deploy index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
 bsp deploy index bsp-artifacts --dry-run
+bsp deploy index bsp-artifacts --prefix acme/myboard --collapse-depth 2
+bsp deploy index bsp-artifacts --exclude 'cache/*' --exclude '*.sig'
+bsp deploy index bsp-artifacts --flat --no-search
 ```
 
 ### `bsp gather`
@@ -1300,6 +1341,13 @@ deploy:
     sign_urls: true
     sas_expiry: "2038-01-19T03:14:06Z"
     root_index: true
+    tree: true
+    collapse_depth: 1
+    search: true
+    filters: true
+    show_dates: true
+    exclude:
+      - "cache/*"
 ```
 
 ### `index` fields
@@ -1311,12 +1359,39 @@ deploy:
 | `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
 | `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
 | `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+| `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
+| `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
+| `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
+| `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
+| `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
+| `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
 
-The page is self-contained (no external assets), lists one row per artifact
-(name, human-readable size, short SHA-256, link), links to `manifest.json`, and
-carries no-cache `<meta>` tags so browsers never show stale, expired links.
-`*.html` blobs are excluded so the index never lists itself, and every
-interpolated value is HTML-escaped.
+The page is self-contained (no external assets, no CDN JavaScript, no server),
+so it loads from a private container through a single signed URL.  It lists
+every artifact with its human-readable size, last-modified timestamp and short
+SHA-256, links to `manifest.json`, and carries no-cache `<meta>` tags so
+browsers never show stale, expired links.
+
+In the default tree view the remote directory structure below the indexed
+prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
+keep their folders and identically named files in different directories stay
+distinct.  The inlined vanilla-JavaScript renderer provides:
+
+- **fold / unfold** of directories, with per-directory file counts and
+  aggregated sizes, plus *Expand all* / *Collapse all* buttons;
+- **search** by substring or simple glob against the full relative path,
+  auto-expanding the ancestors of every match;
+- **file-type filter chips** built from the extensions actually present;
+- **sorting** by name, size or last-modified within each directory level;
+- **shareable state** — the active query, type filter and expanded folders are
+  mirrored into the URL hash.
+
+A `<noscript>` fallback renders the same artifacts as the plain flat table, and
+`--flat` (or `tree: false`) selects that table unconditionally.  Only
+`index.html` pages are skipped, so genuine HTML build artifacts such as reports
+remain listed.  Every interpolated value is HTML-escaped and the embedded JSON
+data island is escaped so a hostile blob name cannot break out of its
+`<script>` element.
 
 The index is **fully regenerated** on every run from the current artifact set
 (or, for `bsp deploy index`, from the live container listing) — it is never appended

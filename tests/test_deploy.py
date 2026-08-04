@@ -1537,6 +1537,12 @@ class TestIndexConfigModel:
         assert cfg.sign_urls is True
         assert cfg.root_index is True
         assert cfg.sas_expiry == "2038-01-19T03:14:06Z"
+        assert cfg.tree is True
+        assert cfg.collapse_depth == 1
+        assert cfg.search is True
+        assert cfg.filters is True
+        assert cfg.exclude == []
+        assert cfg.show_dates is True
 
     def test_deploy_config_index_default_none(self, default_deploy_config):
         assert default_deploy_config.index is None
@@ -1745,6 +1751,186 @@ class TestIndexGeneration:
         assert "manifest.json" in html_text
         assert html_text.count("<tr><td><a href=") == 1
 
+
+class TestIndexTree:
+    """Directory-preserving tree model and renderer."""
+
+    def _deployer(self, backend=None, **index_kwargs):
+        from bsp.models import IndexConfig
+        cfg = DeployConfig(
+            container="c",
+            index=IndexConfig(enabled=True, root_index=False, **index_kwargs),
+        )
+        return ArtifactDeployer(cfg, backend or _SigningBackend())
+
+    def test_build_tree_nests_directories(self):
+        from bsp.deployer import build_index_tree
+        tree = build_index_tree([
+            {"path": "images/a.wic", "size_bytes": 10},
+            {"path": "images/deep/b.wic", "size_bytes": 5},
+            {"path": "top.txt", "size_bytes": 1},
+        ])
+        assert tree["file_count"] == 3
+        assert tree["size_bytes"] == 16
+        names = [c["name"] for c in tree["children"]]
+        assert names == ["images", "top.txt"]
+        images = tree["children"][0]
+        assert images["type"] == "dir"
+        assert images["file_count"] == 2
+        assert images["size_bytes"] == 15
+        deep = [c for c in images["children"] if c["type"] == "dir"][0]
+        assert deep["path"] == "images/deep"
+        assert deep["children"][0]["path"] == "images/deep/b.wic"
+
+    def test_build_tree_keeps_same_named_files_distinct(self):
+        from bsp.deployer import build_index_tree, flatten_index_tree
+        tree = build_index_tree([
+            {"path": "a/img.wic", "size_bytes": 1},
+            {"path": "b/img.wic", "size_bytes": 2},
+        ])
+        paths = sorted(f["path"] for f in flatten_index_tree(tree))
+        assert paths == ["a/img.wic", "b/img.wic"]
+
+    def test_rebuild_index_preserves_structure(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {
+            "p/images/a.wic": Path("a"),
+            "p/sdk/deep/b.sh": Path("b"),
+            "p/manifest.json": Path("m"),
+            "p/index.html": Path("i"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        ArtifactDeployer(cfg, backend).rebuild_index("p")
+        html_text = backend.contents["p/index.html"]
+        assert '"path": "images/a.wic"' in html_text
+        assert '"path": "sdk/deep/b.sh"' in html_text
+        assert '"name": "index.html"' not in html_text
+        assert "manifest.json" in html_text
+
+    def test_relative_hrefs_keep_directory_component(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {"p/images/a.wic": Path("a")}
+        cfg = DeployConfig(
+            container="c", index=IndexConfig(enabled=True, sign_urls=False)
+        )
+        ArtifactDeployer(cfg, backend).rebuild_index("p")
+        html_text = backend.contents["p/index.html"]
+        assert '"href": "images/a.wic"' in html_text
+
+    def test_exclude_patterns_drop_paths(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {
+            "p/images/a.wic": Path("a"),
+            "p/cache/downloads.tar.gz": Path("c"),
+        }
+        cfg = DeployConfig(
+            container="c",
+            index=IndexConfig(enabled=True, exclude=["cache/*"]),
+        )
+        ArtifactDeployer(cfg, backend).rebuild_index("p")
+        html_text = backend.contents["p/index.html"]
+        assert "a.wic" in html_text
+        assert "downloads.tar.gz" not in html_text
+
+    def test_tree_page_has_controls_and_data_island(self, tmp_path):
+        deployer = self._deployer()
+        result = _make_result(tmp_path)
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert 'id="bsp-index-data" type="application/json"' in html_text
+        assert 'id="bsp-search"' in html_text
+        assert 'aria-expanded' in html_text
+        assert 'id="bsp-expand"' in html_text
+        assert "<noscript>" in html_text
+
+    def test_no_search_controls_when_disabled(self, tmp_path):
+        deployer = self._deployer(search=False, filters=False)
+        result = _make_result(tmp_path)
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert 'id="bsp-search"' not in html_text
+        assert 'id="bsp-chips"' not in html_text
+
+    def test_flat_mode_matches_legacy_table(self, tmp_path):
+        deployer = self._deployer(tree=False)
+        result = _make_result(tmp_path)
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert "bsp-index-data" not in html_text
+        assert html_text.count("<tr><td><a href=") == 2
+
+    def test_json_island_escapes_markup(self):
+        deployer = self._deployer()
+        entries = [{
+            "name": "</script><script>alert(1)</script>",
+            "path": "</script><script>alert(1)</script>",
+            "href": "a\"b",
+            "size_bytes": 1,
+            "sha256": "",
+        }]
+        from bsp.deployer import build_index_tree
+        html_text = deployer.generate_index_html(
+            entries, title="t", tree=build_index_tree(entries)
+        )
+        assert "</script><script>alert(1)" not in html_text
+        assert "\\u003c/script\\u003e" in html_text
+        assert 'href="a&quot;b"' in html_text
+
+    def test_soft_limit_warning(self, caplog):
+        from bsp.models import IndexConfig
+        import logging as _logging
+        backend = _SigningBackend()
+        backend.uploaded = {f"p/f{i}.bin": Path("x") for i in range(5001)}
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        with caplog.at_level(_logging.WARNING):
+            ArtifactDeployer(cfg, backend).rebuild_index("p")
+        assert any("soft limit" in r.message for r in caplog.records)
+
+    def test_root_index_tree_is_navigable(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {
+            "acme/board/scarthgap/2026-01-01/a.wic": Path("a"),
+            "acme/board/scarthgap/2026-02-01/b.wic": Path("b"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        ArtifactDeployer(cfg, backend)._upload_root_index()
+        html_text = backend.contents["index.html"]
+        assert '"name": "acme"' in html_text
+        assert '"path": "acme/board/scarthgap/2026-02-01/index.html"' in html_text
+
+
+class TestDetailedListing:
+    def test_base_fallback_reports_unknown_metadata(self):
+        backend = _FakeBackend()
+        backend.uploaded = {"p/a.wic": Path("a")}
+        records = backend.list_artifacts_detailed("p")
+        assert records == [
+            {"path": "p/a.wic", "size": None, "last_modified": None, "etag": None}
+        ]
+
+    def test_detailed_listing_used_for_sizes(self):
+        from bsp.models import IndexConfig
+
+        class _Detailed(_SigningBackend):
+            def list_artifacts_detailed(self, prefix):
+                return [{
+                    "path": "p/a.wic", "size": 2048,
+                    "last_modified": "2026-01-01T00:00:00+00:00", "etag": "e",
+                }]
+
+        backend = _Detailed()
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        ArtifactDeployer(cfg, backend).rebuild_index("p")
+        html_text = backend.contents["p/index.html"]
+        assert '"size_bytes": 2048' in html_text
+        assert "2026-01-01T00:00:00+00:00" in html_text
+
+
+class TestIndexMisc:
     def test_human_size(self):
         from bsp.deployer import human_size
         assert human_size(512) == "512 B"
@@ -1878,6 +2064,51 @@ class TestIndexCli:
         out = capsys.readouterr().out
         assert "deploy" in out
         assert "\n    index" not in out
+
+    def test_index_tree_flags(self, capsys):
+        self._help("deploy", "index")
+        out = capsys.readouterr().out
+        assert "--flat" in out
+        assert "--collapse-depth" in out
+        assert "--exclude" in out
+        assert "--no-search" in out
+
+    def test_index_command_forwards_tree_options(self):
+        import bsp.cli as cli
+        args = MagicMock()
+        args.container = "c"
+        args.deploy_provider = "azure"
+        args.dry_run = True
+        args.index_sign_urls = True
+        args.index_sas_expiry = None
+        args.index_root = False
+        args.index_prefix = "p"
+        args.index_account_url = None
+        args.index_tree = False
+        args.index_collapse_depth = 3
+        args.index_search = False
+        args.index_exclude = ["cache/*"]
+
+        captured = {}
+
+        class _Deployer:
+            def __init__(self, cfg, backend):
+                captured["cfg"] = cfg
+
+            def rebuild_index(self, prefix, index_config=None):
+                captured["index_config"] = index_config
+                return None
+
+        with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
+                patch("bsp.storage.create_backend", return_value=object()):
+            assert cli._run_index_command(args) == 0
+
+        cfg = captured["index_config"]
+        assert cfg.tree is False
+        assert cfg.collapse_depth == 3
+        assert cfg.search is False
+        assert cfg.filters is False
+        assert cfg.exclude == ["cache/*"]
 
     def test_rewrite_deploy_index_argv(self):
         from bsp.cli import _rewrite_deploy_index_argv
