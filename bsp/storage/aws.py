@@ -4,7 +4,7 @@ AWS S3 backend for cloud artifact deployment.
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .base import CloudStorageBackend
 
@@ -108,6 +108,27 @@ class AwsStorageBackend(CloudStorageBackend):
             for obj in page.get("Contents", []):
                 keys.append(obj["Key"])
         return keys
+
+    def list_artifacts_detailed(self, remote_prefix: str) -> List[Dict]:
+        """List objects under *remote_prefix* together with size and timestamps."""
+        if self.dry_run:
+            self.logger.info(
+                "[dry-run] Would list s3://%s/%s", self.bucket_name, remote_prefix
+            )
+            return []
+
+        paginator = self._s3.get_paginator("list_objects_v2")
+        records: List[Dict] = []
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=remote_prefix):
+            for obj in page.get("Contents", []):
+                last_modified = obj.get("LastModified")
+                records.append({
+                    "path": obj["Key"],
+                    "size": obj.get("Size"),
+                    "last_modified": last_modified.isoformat() if last_modified else None,
+                    "etag": (obj.get("ETag") or "").strip('"') or None,
+                })
+        return records
 
     def get_signed_url(self, remote_path: str, expiry=None) -> str:
         """

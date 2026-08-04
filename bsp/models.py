@@ -1176,12 +1176,29 @@ class IndexConfig:
                     capped at 7 days and clamped automatically.
         root_index: When ``True`` (default) a container-root ``index.html``
                     listing every prefix is generated as well.
+        tree: When ``True`` (default) the page renders a collapsible tree
+              that preserves the remote directory structure.  Set to
+              ``False`` for the legacy flat table.
+        collapse_depth: Directory depth expanded by default in the tree
+                        view (``1`` expands only the top level).
+        search: Show the search / filter box in the tree view.
+        filters: Show the file-type filter chips in the tree view.
+        exclude: Glob patterns (matched against the path relative to the
+                 indexed prefix) omitted from the index.
+        show_dates: Include a last-modified column when the storage backend
+                    provides timestamps.
     """
     enabled: bool = False
     title: str = "{vendor} {device} — {release}"
     sign_urls: bool = True
     sas_expiry: str = "2038-01-19T03:14:06Z"
     root_index: bool = True
+    tree: bool = True
+    collapse_depth: int = 1
+    search: bool = True
+    filters: bool = True
+    exclude: List[str] = field(default_factory=list)
+    show_dates: bool = True
 
 
 @dataclass
