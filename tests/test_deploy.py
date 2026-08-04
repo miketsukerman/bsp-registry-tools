@@ -1844,9 +1844,9 @@ class TestAzureSignedUrls:
 class TestIndexCli:
     """CLI wiring tests (the parser is built inside ``bsp.cli.main``)."""
 
-    def _help(self, command):
+    def _help(self, *command):
         from bsp.cli import main
-        with patch.object(sys, "argv", ["bsp", command, "--help"]):
+        with patch.object(sys, "argv", ["bsp", *command, "--help"]):
             try:
                 main()
             except SystemExit:
@@ -1864,11 +1864,31 @@ class TestIndexCli:
         assert "--update-index" in out
 
     def test_index_subcommand_help(self, capsys):
-        self._help("index")
+        self._help("deploy", "index")
         out = capsys.readouterr().out
+        assert "bsp deploy index" in out
         assert "--prefix" in out
         assert "--root" in out
         assert "--no-sign-urls" in out
+
+    def test_index_not_a_top_level_command(self, capsys):
+        self._help()
+        out = capsys.readouterr().out
+        assert "deploy" in out
+        assert "\n    index" not in out
+
+    def test_rewrite_deploy_index_argv(self):
+        from bsp.cli import _rewrite_deploy_index_argv
+        assert _rewrite_deploy_index_argv(
+            ["deploy", "index", "cont", "--root"]
+        ) == ["index", "cont", "--root"]
+        assert _rewrite_deploy_index_argv(
+            ["-v", "--registry", "deploy", "deploy", "index", "cont"]
+        ) == ["-v", "--registry", "deploy", "index", "cont"]
+        assert _rewrite_deploy_index_argv(
+            ["deploy", "mybsp"]
+        ) == ["deploy", "mybsp"]
+        assert _rewrite_deploy_index_argv(["index", "cont"]) == ["index", "cont"]
 
     def test_collect_deploy_overrides_index(self):
         from bsp.cli import _collect_deploy_overrides

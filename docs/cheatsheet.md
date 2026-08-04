@@ -218,8 +218,8 @@ bsp deploy <bsp_name> --no-update-index                # never publish an index.
 bsp deploy <bsp_name> --dry-run                        # preview without uploading
 
 # Rebuild the SAS-signed HTML index without a build (e.g. from a cron job)
-bsp index <container> --root
-bsp index <container> --prefix <vendor>/<device>/<release>/<date>
+bsp deploy index <container> --root
+bsp deploy index <container> --prefix <vendor>/<device>/<release>/<date>
 ```
 
 ---
