@@ -1149,6 +1149,42 @@ class ArchiveConfig:
 
 
 @dataclass
+class IndexConfig:
+    """
+    Configuration for the generated browsable HTML index of uploaded
+    artifacts.
+
+    The index is a self-contained ``index.html`` page uploaded next to the
+    artifacts.  When ``sign_urls`` is enabled each artifact is linked through
+    a read-only signed URL (an Azure SAS URL or an S3 presigned URL) so the
+    page can be browsed without any cloud credentials and without enabling
+    anonymous public access on the storage account.
+
+    Attributes:
+        enabled: Master switch.  When ``False`` (default) no index is
+                 generated or uploaded, preserving backward compatibility.
+        title: Page title template.  Supports the same placeholders as
+               :attr:`DeployConfig.prefix`: ``{device}``, ``{release}``,
+               ``{distro}``, ``{vendor}``, ``{date}`` and ``{datetime}``.
+        sign_urls: When ``True`` (default) artifact links are signed
+                   read-only URLs.  Set to ``False`` when a CDN / Front Door
+                   or custom domain fronts the container; relative links are
+                   emitted instead.
+        sas_expiry: Expiry timestamp for generated signed URLs in ISO-8601
+                    form (default ``"2038-01-19T03:14:06Z"``, the 32-bit
+                    ``time_t`` limit).  Azure user-delegation SAS tokens are
+                    capped at 7 days and clamped automatically.
+        root_index: When ``True`` (default) a container-root ``index.html``
+                    listing every prefix is generated as well.
+    """
+    enabled: bool = False
+    title: str = "{vendor} {device} — {release}"
+    sign_urls: bool = True
+    sas_expiry: str = "2038-01-19T03:14:06Z"
+    root_index: bool = True
+
+
+@dataclass
 class DeployConfig:
     """
     Cloud storage deployment configuration for build artifacts.
@@ -1198,6 +1234,16 @@ class DeployConfig:
                      build caches (``DL_DIR`` / ``SSTATE_DIR``).  When
                      ``None`` (default) or ``enabled: false`` cache handling
                      is skipped entirely, preserving backward compatibility.
+        index: Optional configuration for generating a browsable HTML index
+               (``index.html``) of the uploaded artifacts.  When ``None``
+               (default) or ``enabled: false`` no index is generated::
+
+                   index:
+                     enabled: true
+                     title: "{vendor} {device} — {release}"
+                     sign_urls: true
+                     sas_expiry: "2038-01-19T03:14:06Z"
+                     root_index: true
     """
     provider: str = "azure"
     container: Optional[str] = None
@@ -1224,6 +1270,7 @@ class DeployConfig:
     region: Optional[str] = None
     profile: Optional[str] = None
     yocto_cache: Optional["YoctoCacheConfig"] = None
+    index: Optional["IndexConfig"] = None
 
 
 @dataclass

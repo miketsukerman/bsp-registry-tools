@@ -2,12 +2,21 @@
 Azure Blob Storage backend for cloud artifact deployment.
 """
 
+import datetime
 import logging
+import mimetypes
 import os
 from pathlib import Path
 from typing import List, Optional
 
 from .base import CloudStorageBackend
+
+#: Far-future SAS expiry (32-bit ``time_t`` limit) used by default for
+#: account-key signed URLs.
+DEFAULT_SAS_EXPIRY = "2038-01-19T03:14:06Z"
+
+#: Azure caps user-delegation key lifetimes at 7 days.
+MAX_USER_DELEGATION_DAYS = 7
 
 _INSTALL_HINT = (
     "Install the Azure extras to use this backend:\n"
@@ -58,6 +67,7 @@ class AzureStorageBackend(CloudStorageBackend):
         super().__init__(dry_run=dry_run)
         self.container_name = container_name
         self._client = None
+        self._account_key: Optional[str] = None
 
         if dry_run:
             # Skip SDK imports / credential resolution in dry-run mode
@@ -75,6 +85,7 @@ class AzureStorageBackend(CloudStorageBackend):
         )
         if conn_str:
             self._client = BlobServiceClient.from_connection_string(conn_str)
+            self._account_key = self._parse_account_key(conn_str)
         else:
             url = account_url or os.environ.get("AZURE_STORAGE_ACCOUNT_URL")
             if not url:
@@ -102,10 +113,37 @@ class AzureStorageBackend(CloudStorageBackend):
 
         self.logger.info("Uploading %s → azure://%s/%s", local_path, self.container_name, remote_path)
         container_client = self._client.get_container_client(self.container_name)
+        kwargs = {}
+        content_settings = self._content_settings_for(remote_path)
+        if content_settings is not None:
+            kwargs["content_settings"] = content_settings
         with open(local_path, "rb") as data:
-            container_client.upload_blob(name=remote_path, data=data, overwrite=True)
+            container_client.upload_blob(
+                name=remote_path, data=data, overwrite=True, **kwargs
+            )
 
         return self.get_upload_url(remote_path)
+
+    def _content_settings_for(self, remote_path: str):
+        """
+        Build ``ContentSettings`` for *remote_path*.
+
+        Text-ish assets (``index.html``, ``manifest.json``) get their guessed
+        MIME type so browsers render them.  Everything else is forced to
+        ``application/octet-stream`` with **no** ``content_encoding``: for
+        ``*.wic.gz`` ``mimetypes`` reports ``content_encoding="gzip"``, which
+        makes browsers transparently decompress the image on download and
+        corrupt it.
+        """
+        try:
+            from azure.storage.blob import ContentSettings  # type: ignore[import]
+        except ImportError:  # pragma: no cover - SDK guaranteed present here
+            return None
+
+        content_type, _encoding = mimetypes.guess_type(remote_path)
+        if content_type in ("text/html", "application/json", "text/plain"):
+            return ContentSettings(content_type=content_type)
+        return ContentSettings(content_type="application/octet-stream")
 
     def download_file(self, remote_path: str, local_path: Path) -> None:
         """Download blob *remote_path* from the configured container to *local_path*."""
@@ -130,6 +168,95 @@ class AzureStorageBackend(CloudStorageBackend):
             blob.name
             for blob in container_client.list_blobs(name_starts_with=remote_prefix)
         ]
+
+    # ------------------------------------------------------------------
+    # Signed (SAS) URLs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_account_key(connection_string: str) -> Optional[str]:
+        """Extract ``AccountKey`` from a connection string (never logged)."""
+        for part in connection_string.split(";"):
+            key, _, value = part.partition("=")
+            if key.strip() == "AccountKey":
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _parse_expiry(expiry) -> datetime.datetime:
+        """Normalize *expiry* (ISO-8601 string or datetime) to an aware UTC datetime."""
+        if expiry is None:
+            expiry = DEFAULT_SAS_EXPIRY
+        if isinstance(expiry, datetime.datetime):
+            dt = expiry
+        else:
+            text = str(expiry).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            dt = datetime.datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(datetime.timezone.utc)
+
+    def get_signed_url(self, remote_path: str, expiry=None) -> str:
+        """
+        Return a read-only SAS URL for *remote_path*.
+
+        A **user-delegation SAS** is preferred when the backend is
+        authenticated with ``DefaultAzureCredential``; Azure caps the
+        delegation key lifetime at 7 days, so longer expiries are clamped
+        (with a warning) rather than rejected.  When an account key is
+        available (connection string) an **account-key SAS** is generated
+        instead, which supports arbitrary expiry.
+
+        Args:
+            remote_path: Blob name inside the configured container.
+            expiry: Expiry as an ISO-8601 string or ``datetime``.  Defaults
+                    to :data:`DEFAULT_SAS_EXPIRY`.
+
+        Returns:
+            Fully-qualified HTTPS URL including the SAS token, or a
+            ``"dry-run:<remote_path>"`` placeholder in dry-run mode.
+        """
+        if self.dry_run or self._client is None:
+            return f"dry-run:{remote_path}"
+
+        from azure.storage.blob import BlobSasPermissions, generate_blob_sas  # type: ignore[import]
+
+        expiry_dt = self._parse_expiry(expiry)
+        base_url = self.get_upload_url(remote_path)
+        account_name = self._client.account_name
+
+        sas_kwargs = dict(
+            account_name=account_name,
+            container_name=self.container_name,
+            blob_name=remote_path,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry_dt,
+            https_only=True,
+        )
+
+        if self._account_key:
+            token = generate_blob_sas(account_key=self._account_key, **sas_kwargs)
+        else:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            max_expiry = now + datetime.timedelta(days=MAX_USER_DELEGATION_DAYS)
+            if expiry_dt > max_expiry:
+                self.logger.warning(
+                    "Requested SAS expiry %s exceeds the Azure user-delegation "
+                    "limit of %d days; clamping to %s.",
+                    expiry_dt.isoformat(), MAX_USER_DELEGATION_DAYS,
+                    max_expiry.isoformat(),
+                )
+                expiry_dt = max_expiry
+                sas_kwargs["expiry"] = expiry_dt
+            start = now - datetime.timedelta(minutes=5)
+            delegation_key = self._client.get_user_delegation_key(start, expiry_dt)
+            token = generate_blob_sas(
+                user_delegation_key=delegation_key, **sas_kwargs
+            )
+
+        return f"{base_url}?{token}"
 
     def get_upload_url(self, remote_path: str) -> str:
         """Return the blob URL for *remote_path*."""

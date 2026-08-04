@@ -21,6 +21,10 @@ _INSTALL_HINT = (
 )
 
 
+#: AWS caps presigned URL lifetimes at 7 days.
+_MAX_PRESIGN_SECONDS = 7 * 24 * 3600
+
+
 class AwsStorageBackend(CloudStorageBackend):
     """
     Cloud storage backend for AWS S3.
@@ -104,6 +108,30 @@ class AwsStorageBackend(CloudStorageBackend):
             for obj in page.get("Contents", []):
                 keys.append(obj["Key"])
         return keys
+
+    def get_signed_url(self, remote_path: str, expiry=None) -> str:
+        """
+        Return a read-only presigned HTTPS URL for *remote_path*.
+
+        Args:
+            remote_path: Object key inside the configured bucket.
+            expiry: Lifetime in seconds (S3 presigned URLs are capped at
+                    7 days).  Defaults to 7 days.
+
+        Returns:
+            Presigned URL, or a ``"dry-run:<remote_path>"`` placeholder in
+            dry-run mode.
+        """
+        if self.dry_run or self._s3 is None:
+            return f"dry-run:{remote_path}"
+
+        expires_in = int(expiry) if expiry is not None else _MAX_PRESIGN_SECONDS
+        expires_in = min(expires_in, _MAX_PRESIGN_SECONDS)
+        return self._s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket_name, "Key": remote_path},
+            ExpiresIn=expires_in,
+        )
 
     def get_upload_url(self, remote_path: str) -> str:
         """Return the S3 URI for *remote_path*."""
