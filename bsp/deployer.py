@@ -697,6 +697,18 @@ FACET_LABELS = {
     "date": "Upload date",
 }
 
+#: Title used when no facet value is known, so the generated page never shows
+#: a placeholder-only heading such as ``unknown unknown — unknown``.
+DEFAULT_INDEX_TITLE = "BSP Registry Binary Artifacts"
+
+
+def _title_needs_facets(template: str) -> bool:
+    """Return ``True`` when *template* references any facet placeholder."""
+    return any(
+        f"{{{name}}}" in template
+        for name in ("device", "release", "distro", "vendor", "preset")
+    )
+
 #: Sidecar file storing the facet values of a deployed prefix so later index
 #: rebuilds do not have to guess them from the prefix layout.
 INDEX_META_NAME = "index-meta.json"
@@ -1430,10 +1442,15 @@ class ArtifactDeployer:
         Expand the ``IndexConfig.title`` template.
 
         Supports the same placeholders as :meth:`compose_remote_prefix` plus
-        ``{preset}``.
+        ``{preset}``.  When none of the facet values are known the configured
+        template would expand to a meaningless placeholder-only heading, so
+        :data:`DEFAULT_INDEX_TITLE` is returned instead.
         """
         cfg = index_config or self.config.index or IndexConfig()
         now = datetime.datetime.now(datetime.timezone.utc)
+        if not any((device, release, distro, vendor, preset)):
+            if _title_needs_facets(cfg.title):
+                return DEFAULT_INDEX_TITLE
         try:
             return cfg.title.format(
                 device=device or "unknown",
@@ -2051,7 +2068,7 @@ class ArtifactDeployer:
 
         html_text = self.generate_index_html(
             entries,
-            title="Build artifacts",
+            title=DEFAULT_INDEX_TITLE,
             metadata={"prefixes": len(entries)},
             tree=build_index_tree(entries),
             index_config=cfg,
