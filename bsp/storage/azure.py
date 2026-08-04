@@ -7,7 +7,7 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .base import CloudStorageBackend
 
@@ -168,6 +168,25 @@ class AzureStorageBackend(CloudStorageBackend):
             blob.name
             for blob in container_client.list_blobs(name_starts_with=remote_prefix)
         ]
+
+    def list_artifacts_detailed(self, remote_prefix: str) -> List[Dict]:
+        """List blobs under *remote_prefix* together with size and timestamps."""
+        if self.dry_run:
+            self.logger.info(
+                "[dry-run] Would list azure://%s/%s", self.container_name, remote_prefix
+            )
+            return []
+        container_client = self._client.get_container_client(self.container_name)
+        records: List[Dict] = []
+        for blob in container_client.list_blobs(name_starts_with=remote_prefix):
+            last_modified = getattr(blob, "last_modified", None)
+            records.append({
+                "path": blob.name,
+                "size": getattr(blob, "size", None),
+                "last_modified": last_modified.isoformat() if last_modified else None,
+                "etag": getattr(blob, "etag", None),
+            })
+        return records
 
     # ------------------------------------------------------------------
     # Signed (SAS) URLs

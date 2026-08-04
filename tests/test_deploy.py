@@ -1603,13 +1603,15 @@ class TestIndexGeneration:
         )
         assert "<code>bbbbbbbbbbbb</code>" in html_text
 
-    def test_html_files_excluded(self, tmp_path):
+    def test_only_index_pages_excluded(self, tmp_path):
         deployer = self._deployer()
-        result = _make_result(tmp_path, names=("image.wic", "old-index.html"))
+        result = _make_result(tmp_path, names=("image.wic", "index.html", "report.html"))
         deployer._upload_index(result, "p")
         html_text = deployer.backend.contents["p/index.html"]
-        assert "old-index.html" not in html_text
         assert "image.wic" in html_text
+        # genuine HTML build artifacts stay listed, only index pages are skipped
+        assert "report.html" in html_text
+        assert '"name": "index.html"' not in html_text
 
     def test_html_escaping(self):
         deployer = self._deployer()

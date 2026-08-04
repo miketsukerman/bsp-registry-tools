@@ -80,6 +80,27 @@ class CloudStorageBackend(ABC):
     # Concrete helpers
     # ------------------------------------------------------------------
 
+    def list_artifacts_detailed(self, remote_prefix: str) -> List[Dict]:
+        """
+        List objects under *remote_prefix* together with their metadata.
+
+        Backends that can cheaply provide object metadata override this.  The
+        base implementation falls back to :meth:`list_artifacts` and reports
+        unknown metadata as ``None``, so third-party backends keep working.
+
+        Args:
+            remote_prefix: Path prefix inside the container or bucket.
+
+        Returns:
+            One dict per object with the keys ``path`` (full remote path),
+            ``size`` (bytes or ``None``), ``last_modified`` (ISO-8601 string
+            or ``None``) and ``etag`` (string or ``None``).
+        """
+        return [
+            {"path": path, "size": None, "last_modified": None, "etag": None}
+            for path in self.list_artifacts(remote_prefix)
+        ]
+
     def get_upload_url(self, remote_path: str) -> str:
         """
         Return a human-readable URL for a remote path.
