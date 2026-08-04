@@ -29,7 +29,7 @@ caches without running a full build.
   - [`bsp deploy`](#bsp-deploy)
   - [`bsp build --deploy`](#bsp-build---deploy)
   - [`bsp gather`](#bsp-gather)
-  - [`bsp index`](#bsp-index)
+  - [`bsp deploy index`](#bsp-deploy-index)
 - [Dry-run mode](#dry-run-mode)
 - [Artifact manifest](#artifact-manifest)
 - [Partial failures](#partial-failures)
@@ -471,7 +471,7 @@ carries no-cache `<meta>` tags so browsers never show stale, expired links.
 interpolated value is HTML-escaped.
 
 The index is **fully regenerated** on every run from the current artifact set
-(or, for `bsp index`, from the live container listing) — it is never appended
+(or, for `bsp deploy index`, from the live container listing) — it is never appended
 to, so links are always fresh.
 
 ---
@@ -500,7 +500,7 @@ Trade-offs to be aware of:
 - Anyone holding a link can download that blob until the SAS expires — treat
   the links as bearer tokens.
 - User-delegation links expire after at most 7 days; schedule
-  `bsp index <container> --root` (for example from a nightly job) to re-sign
+  `bsp deploy index <container> --root` (for example from a nightly job) to re-sign
   them.
 - Signed links are not written to logs, and the account key / connection string
   is never logged or embedded in the page.
@@ -669,13 +669,13 @@ bsp build poky-qemuarm64-scarthgap \
 bsp build poky-qemuarm64-scarthgap --deploy --deploy-cache
 ```
 
-### `bsp index`
+### `bsp deploy index`
 
 Rebuild the browsable HTML index straight from the live container listing —
 no build required.  This is the command to schedule when signed URLs expire.
 
 ```
-bsp index <container> [--prefix PREFIX] [--root] [OPTIONS]
+bsp deploy index <container> [--prefix PREFIX] [--root] [OPTIONS]
 ```
 
 | Option | Description |
@@ -689,9 +689,9 @@ bsp index <container> [--prefix PREFIX] [--root] [OPTIONS]
 | `--dry-run` | Show what would be generated without uploading (no credentials needed) |
 
 ```bash
-bsp index bsp-artifacts --root
-bsp index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
-bsp index bsp-artifacts --dry-run
+bsp deploy index bsp-artifacts --root
+bsp deploy index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
+bsp deploy index bsp-artifacts --dry-run
 ```
 
 ### `bsp gather`
@@ -1319,7 +1319,7 @@ carries no-cache `<meta>` tags so browsers never show stale, expired links.
 interpolated value is HTML-escaped.
 
 The index is **fully regenerated** on every run from the current artifact set
-(or, for `bsp index`, from the live container listing) — it is never appended
+(or, for `bsp deploy index`, from the live container listing) — it is never appended
 to, so links are always fresh.
 
 ---
@@ -1348,7 +1348,7 @@ Trade-offs to be aware of:
 - Anyone holding a link can download that blob until the SAS expires — treat
   the links as bearer tokens.
 - User-delegation links expire after at most 7 days; schedule
-  `bsp index <container> --root` (for example from a nightly job) to re-sign
+  `bsp deploy index <container> --root` (for example from a nightly job) to re-sign
   them.
 - Signed links are not written to logs, and the account key / connection string
   is never logged or embedded in the page.

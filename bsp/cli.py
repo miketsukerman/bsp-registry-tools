@@ -82,6 +82,34 @@ def _collect_deploy_overrides(args) -> dict:
     return overrides
 
 
+#: Global options that consume a following value, used when scanning argv.
+_GLOBAL_VALUE_OPTIONS = {"--registry", "-r", "--remote", "--branch"}
+
+
+def _rewrite_deploy_index_argv(argv):
+    """
+    Normalize ``bsp deploy index ...`` into the internal ``index`` subcommand.
+
+    ``deploy`` takes an optional ``bsp_name`` positional, which argparse cannot
+    combine with nested subparsers.  The ``index`` command is therefore kept as
+    a top-level (hidden) subparser and the ``deploy`` prefix is stripped here.
+    """
+    argv = list(argv)
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in _GLOBAL_VALUE_OPTIONS:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        if token == "deploy" and i + 1 < len(argv) and argv[i + 1] == "index":
+            del argv[i]
+        break
+    return argv
+
+
 def _run_index_command(args) -> int:
     """
     Rebuild the browsable HTML index for a storage container.
@@ -927,7 +955,14 @@ def main() -> int:
 # Deploy command
         # ----------------------------------------------------------------
         deploy_parser = subparsers.add_parser(
-            "deploy", help="Deploy build artifacts to cloud storage"
+            "deploy",
+            help="Deploy build artifacts to cloud storage",
+            epilog=(
+                "Subcommands:\n"
+                "  index  Rebuild the browsable HTML index of a storage container\n"
+                "         (see `bsp deploy index --help`)"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         deploy_parser.add_argument(
             "bsp_name",
@@ -1058,11 +1093,12 @@ def main() -> int:
         )
 
         # ----------------------------------------------------------------
-        # Index command
+        # Index command (invoked as `bsp deploy index`)
         # ----------------------------------------------------------------
         index_parser = subparsers.add_parser(
             "index",
-            help="Rebuild the browsable HTML index of a storage container"
+            prog="bsp deploy index",
+            description="Rebuild the browsable HTML index of a storage container"
         )
         index_parser.add_argument(
             "container",
@@ -1717,7 +1753,7 @@ def main() -> int:
         except ImportError:
             pass
 
-        args = parser.parse_args()
+        args = parser.parse_args(_rewrite_deploy_index_argv(sys.argv[1:]))
 
         # --gui flag or 'bsp gui' subcommand → launch TUI
         if getattr(args, 'gui', False) or args.command == 'gui':
