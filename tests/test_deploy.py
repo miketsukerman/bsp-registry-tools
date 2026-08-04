@@ -2167,6 +2167,81 @@ class TestIndexCli:
         assert _run_index_command(args) == 0
         assert "[dry-run]" in capsys.readouterr().out
 
+    def _signed_index_args(self, root=False):
+        args = MagicMock()
+        args.container = "c"
+        args.deploy_provider = "azure"
+        args.dry_run = False
+        args.index_prefix = "a/b"
+        args.index_root = root
+        args.index_sign_urls = True
+        args.index_sas_expiry = None
+        args.index_account_url = None
+        return args
+
+    def _run_with_backend(self, args, backend):
+        import bsp.cli as cli
+
+        class _Deployer:
+            def __init__(self, cfg, be):
+                pass
+
+            def rebuild_index(self, prefix, index_config=None):
+                return "https://acct.blob.core.windows.net/c/a/b/index.html"
+
+            def _upload_root_index(self, index_config=None):
+                return "https://acct.blob.core.windows.net/c/index.html"
+
+        with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
+                patch("bsp.storage.create_backend", return_value=backend):
+            return cli._run_index_command(args)
+
+    def test_index_command_prints_signed_url(self, capsys):
+        class _Backend:
+            dry_run = False
+
+            def get_signed_url(self, remote_path, expiry=None):
+                return f"https://acct.blob.core.windows.net/c/{remote_path}?sig=TOKEN"
+
+        assert self._run_with_backend(self._signed_index_args(True), _Backend()) == 0
+        out = capsys.readouterr().out
+        assert "index.html → https://acct.blob.core.windows.net/c/a/b/index.html?sig=TOKEN" in out
+        assert "index.html (root) → https://acct.blob.core.windows.net/c/index.html?sig=TOKEN" in out
+
+    def test_index_command_falls_back_when_signing_unsupported(self, capsys):
+        class _Backend:
+            dry_run = False
+
+            def get_signed_url(self, remote_path, expiry=None):
+                raise NotImplementedError
+
+        assert self._run_with_backend(self._signed_index_args(), _Backend()) == 0
+        out = capsys.readouterr().out
+        assert "index.html → https://acct.blob.core.windows.net/c/a/b/index.html" in out
+        assert "sig=" not in out
+
+    def test_index_command_falls_back_when_signing_fails(self, capsys):
+        class _Backend:
+            dry_run = False
+
+            def get_signed_url(self, remote_path, expiry=None):
+                raise RuntimeError("boom")
+
+        assert self._run_with_backend(self._signed_index_args(), _Backend()) == 0
+        assert "a/b/index.html" in capsys.readouterr().out
+
+    def test_index_command_no_signing_prints_plain_url(self, capsys):
+        class _Backend:
+            dry_run = False
+
+            def get_signed_url(self, remote_path, expiry=None):
+                raise AssertionError("should not be called")
+
+        args = self._signed_index_args()
+        args.index_sign_urls = False
+        assert self._run_with_backend(args, _Backend()) == 0
+        assert "sig=" not in capsys.readouterr().out
+
 
 # =============================================================================
 # Faceted filtering and styling of the generated index

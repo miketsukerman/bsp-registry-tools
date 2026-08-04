@@ -110,6 +110,31 @@ def _rewrite_deploy_index_argv(argv):
     return argv
 
 
+def _index_display_url(backend, remote_path: str, index_cfg, fallback: str) -> str:
+    """
+    Return the URL to print for an uploaded index page.
+
+    When URL signing is enabled the plain blob URL returned by the upload is
+    not directly openable for private containers, so a read-only signed URL
+    (including the access token) is requested from the backend instead.  Any
+    failure falls back to the plain upload URL.
+    """
+    if not getattr(index_cfg, "sign_urls", False) or getattr(
+        backend, "dry_run", False
+    ):
+        return fallback
+    try:
+        signed = backend.get_signed_url(
+            remote_path, expiry=getattr(index_cfg, "sas_expiry", None)
+        )
+    except NotImplementedError:
+        return fallback
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Failed to sign index URL for %s: %s", remote_path, exc)
+        return fallback
+    return signed or fallback
+
+
 def _run_index_command(args) -> int:
     """
     Rebuild the browsable HTML index for a storage container.
@@ -173,12 +198,16 @@ def _run_index_command(args) -> int:
     prefix = getattr(args, "index_prefix", None) or ""
     url = deployer.rebuild_index(prefix, index_config=index_cfg)
     if url:
-        print(f"index.html → {url}")
+        remote = f"{prefix.strip('/')}/index.html" if prefix.strip("/") else "index.html"
+        print(f"index.html → {_index_display_url(backend, remote, index_cfg, url)}")
 
     if index_cfg.root_index and prefix:
         root_url = deployer._upload_root_index(index_config=index_cfg)
         if root_url:
-            print(f"index.html (root) → {root_url}")
+            print(
+                "index.html (root) → "
+                f"{_index_display_url(backend, 'index.html', index_cfg, root_url)}"
+            )
 
     return 0
 
