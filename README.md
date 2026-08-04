@@ -979,6 +979,8 @@ bsp flash <bsp_name> --target <device> [--image <path>]
 | `--pattern PATTERN` | Glob pattern for artifacts to upload (repeatable; overrides registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name before uploading (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--update-index` | Regenerate and upload a browsable, SAS-signed `index.html` after a successful deploy |
+| `--no-update-index` | Never generate an `index.html`, even when enabled in the registry |
 | `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage |
 | `--no-deploy-cache-downloads` | Skip the DL_DIR upload (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip the SSTATE_DIR upload (use with `--deploy-cache`) |
