@@ -455,7 +455,6 @@ deploy:
     tree: true
     collapse_depth: 1
     search: true
-    filters: true
     show_dates: true
     facets: [preset, machine, release, date]
     theme: auto
@@ -475,7 +474,6 @@ deploy:
 | `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
 | `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
 | `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
-| `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
 | `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
 | `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
 | `facets`     | list   | `[preset, machine, release, date]` | Facet groups shown in the filter bar.  Supported names: `preset`, `machine`, `release`, `distro`, `vendor`, `date`.  An empty list disables faceted filtering. |
@@ -513,7 +511,6 @@ distinct.  The inlined vanilla-JavaScript renderer provides:
   aggregated sizes, plus *Expand all* / *Collapse all* buttons;
 - **search** by substring or simple glob against the full relative path,
   auto-expanding the ancestors of every match;
-- **file-type filter chips** built from the extensions actually present;
 - **sorting** by name, size or last-modified within each directory level;
 - **shareable state** — the active query, type filter and expanded folders are
   mirrored into the URL hash.
@@ -744,7 +741,7 @@ bsp deploy index <container> [--prefix PREFIX] [--root] [OPTIONS]
 | `--tree` / `--flat` | Render the collapsible directory tree (default) or the legacy flat table |
 | `--collapse-depth N` | Directory depth expanded by default in the tree view (default `1`) |
 | `--exclude PATTERN` | Glob pattern of paths to omit from the index (repeatable) |
-| `--no-search` | Omit the interactive search box and file-type filter chips |
+| `--no-search` | Omit the interactive search box |
 | `--dry-run` | Show what would be generated without uploading (no credentials needed) |
 
 ```bash
@@ -1365,7 +1362,6 @@ deploy:
     tree: true
     collapse_depth: 1
     search: true
-    filters: true
     show_dates: true
     facets: [preset, machine, release, date]
     theme: auto
@@ -1385,7 +1381,6 @@ deploy:
 | `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
 | `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
 | `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
-| `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
 | `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
 | `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
 | `facets`     | list   | `[preset, machine, release, date]` | Facet groups shown in the filter bar.  Supported names: `preset`, `machine`, `release`, `distro`, `vendor`, `date`.  An empty list disables faceted filtering. |
@@ -1423,7 +1418,6 @@ distinct.  The inlined vanilla-JavaScript renderer provides:
   aggregated sizes, plus *Expand all* / *Collapse all* buttons;
 - **search** by substring or simple glob against the full relative path,
   auto-expanding the ancestors of every match;
-- **file-type filter chips** built from the extensions actually present;
 - **sorting** by name, size or last-modified within each directory level;
 - **shareable state** — the active query, type filter and expanded folders are
   mirrored into the URL hash.

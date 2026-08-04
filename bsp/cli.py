@@ -163,7 +163,6 @@ def _run_index_command(args) -> int:
             defaults.collapse_depth if collapse_depth is None else collapse_depth
         ),
         search=getattr(args, "index_search", True),
-        filters=getattr(args, "index_search", True),
         exclude=getattr(args, "index_exclude", None) or [],
         facets=(
             []
@@ -1258,7 +1257,7 @@ def main() -> int:
             action="store_false",
             dest="index_search",
             default=True,
-            help="Omit the interactive search box and file-type filter chips"
+            help="Omit the interactive search box"
         )
         index_parser.add_argument(
             "--dry-run",

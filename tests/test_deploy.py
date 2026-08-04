@@ -1541,7 +1541,6 @@ class TestIndexConfigModel:
         assert cfg.tree is True
         assert cfg.collapse_depth == 1
         assert cfg.search is True
-        assert cfg.filters is True
         assert cfg.exclude == []
         assert cfg.show_dates is True
 
@@ -1848,12 +1847,12 @@ class TestIndexTree:
         assert "<noscript>" in html_text
 
     def test_no_search_controls_when_disabled(self, tmp_path):
-        deployer = self._deployer(search=False, filters=False)
+        deployer = self._deployer(search=False)
         result = _make_result(tmp_path)
         deployer._upload_index(result, "p")
         html_text = deployer.backend.contents["p/index.html"]
         assert 'id="bsp-search"' not in html_text
-        assert 'id="bsp-chips"' not in html_text
+        assert 'data-ext=' not in html_text
 
     def test_flat_mode_matches_legacy_table(self, tmp_path):
         deployer = self._deployer(tree=False)
@@ -2108,7 +2107,6 @@ class TestIndexCli:
         assert cfg.tree is False
         assert cfg.collapse_depth == 3
         assert cfg.search is False
-        assert cfg.filters is False
         assert cfg.exclude == ["cache/*"]
 
     def test_rewrite_deploy_index_argv(self):
