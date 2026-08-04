@@ -214,14 +214,12 @@ _INDEX_JS = r"""
   var container = document.getElementById('bsp-tree');
   var emptyEl = document.getElementById('bsp-empty');
   var searchEl = document.getElementById('bsp-search');
-  var chipsEl = document.getElementById('bsp-chips');
   var facetsEl = document.getElementById('bsp-facets');
   var summaryEl = document.getElementById('bsp-summary');
   var fromEl = document.getElementById('bsp-date-from');
   var toEl = document.getElementById('bsp-date-to');
   var open = {};
   var query = '';
-  var ext = '';
   var selected = {};
   var dateFrom = '';
   var dateTo = '';
@@ -270,12 +268,6 @@ _INDEX_JS = r"""
     return { test: function (value) { return value.toLowerCase().indexOf(needle) >= 0; } };
   }
 
-  function extensionOf(path) {
-    var name = path.split('/').pop();
-    var dot = name.indexOf('.');
-    return dot > 0 ? name.slice(dot).toLowerCase() : '';
-  }
-
   function facetValues(node, key) {
     var facets = node.facets || {};
     var value = facets[key];
@@ -317,7 +309,6 @@ _INDEX_JS = r"""
   }
 
   function fileVisible(node, match) {
-    if (ext && extensionOf(node.path).indexOf(ext) < 0) { return false; }
     if (match && !match.test(node.path)) { return false; }
     if (!facetsVisible(node)) { return false; }
     if (!dateVisible(node)) { return false; }
@@ -343,7 +334,7 @@ _INDEX_JS = r"""
   }
 
   function filtersActive() {
-    if (query || ext || dateFrom || dateTo) { return true; }
+    if (query || dateFrom || dateTo) { return true; }
     for (var i = 0; i < facetDefs.length; i++) {
       if (selectedValues(facetDefs[i].key).length) { return true; }
     }
@@ -464,7 +455,6 @@ _INDEX_JS = r"""
   function syncHash() {
     var parts = [];
     if (query) { parts.push('q=' + encodeURIComponent(query)); }
-    if (ext) { parts.push('ext=' + encodeURIComponent(ext)); }
     facetDefs.forEach(function (def) {
       var values = selectedValues(def.key);
       if (values.length) {
@@ -492,7 +482,6 @@ _INDEX_JS = r"""
       var key = pair.slice(0, idx);
       var value = decodeURIComponent(pair.slice(idx + 1));
       if (key === 'q') { query = value; if (searchEl) { searchEl.value = value; } }
-      else if (key === 'ext') { ext = value; }
       else if (key === 'from') { dateFrom = value; if (fromEl) { fromEl.value = value; } }
       else if (key === 'to') { dateTo = value; if (toEl) { toEl.value = value; } }
       else if (known[key]) {
@@ -565,13 +554,6 @@ _INDEX_JS = r"""
     var stats = { files: 0, bytes: 0 };
     var count = renderDir(tree, 0, container, stats);
     if (emptyEl) { emptyEl.hidden = count !== 0; }
-    if (chipsEl) {
-      Array.prototype.forEach.call(chipsEl.querySelectorAll('.chip'), function (chip) {
-        var active = (chip.getAttribute('data-ext') || '') === ext;
-        chip.classList.toggle('active', active);
-        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
-      });
-    }
     refreshFacetChips();
     if (summaryEl) {
       summaryEl.textContent = stats.files + (stats.files === 1 ? ' file' : ' files')
@@ -623,14 +605,6 @@ _INDEX_JS = r"""
     searchEl.addEventListener('input', function () {
       clearTimeout(timer);
       timer = setTimeout(function () { query = searchEl.value.trim(); render(); }, 150);
-    });
-  }
-  if (chipsEl) {
-    chipsEl.addEventListener('click', function (event) {
-      var chip = event.target.closest('.chip');
-      if (!chip) { return; }
-      ext = chip.getAttribute('data-ext') || '';
-      render();
     });
   }
   if (facetsEl) {
@@ -710,13 +684,6 @@ def _json_for_html(payload) -> str:
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
     )
-
-
-def _artifact_extension(path: str) -> str:
-    """Return the (possibly compound) extension of *path*, e.g. ``".tar.gz"``."""
-    name = (path or "").rsplit("/", 1)[-1]
-    dot = name.find(".")
-    return name[dot:].lower() if dot > 0 else ""
 
 
 #: Facet groups that may be offered in the generated index filter bar, in the
@@ -1619,7 +1586,6 @@ class ArtifactDeployer:
                 "options": {
                     "collapseDepth": max(0, int(cfg.collapse_depth or 0)),
                     "search": bool(cfg.search),
-                    "filters": bool(cfg.filters),
                     "showDates": bool(show_dates),
                     "sizeBars": True,
                 },
@@ -1687,7 +1653,7 @@ class ArtifactDeployer:
         entries: List[Dict],
         facet_groups: Optional[List[Dict]] = None,
     ) -> List[str]:
-        """Render the search box, facet bar, type filter chips and buttons."""
+        """Render the search box, facet bar and buttons."""
         esc = html.escape
         lines = ['  <div class="controls">']
         if cfg.search:
@@ -1742,23 +1708,6 @@ class ArtifactDeployer:
                     )
                 lines.append("    </details>")
             lines.append("  </div>")
-        if cfg.filters:
-            extensions = sorted({
-                _artifact_extension(str(e.get("path") or e.get("name", "")))
-                for e in entries
-            } - {""})
-            if extensions:
-                lines.append('  <div class="chips" id="bsp-chips">')
-                lines.append(
-                    '    <button type="button" class="chip active" '
-                    'aria-pressed="true" data-ext="">all</button>'
-                )
-                for ext in extensions:
-                    lines.append(
-                        f'    <button type="button" class="chip" aria-pressed="false" '
-                        f'data-ext="{esc(ext, quote=True)}">{esc(ext)}</button>'
-                    )
-                lines.append("  </div>")
         return lines
 
     def _upload_html(self, html_text: str, remote_path: str) -> Optional[str]:
