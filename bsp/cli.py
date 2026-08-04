@@ -140,6 +140,14 @@ def _run_index_command(args) -> int:
         search=getattr(args, "index_search", True),
         filters=getattr(args, "index_search", True),
         exclude=getattr(args, "index_exclude", None) or [],
+        facets=(
+            []
+            if getattr(args, "index_no_facets", False) is True
+            else [str(f) for f in (getattr(args, "index_facets", None) or [])]
+            or defaults.facets
+        ),
+        theme=str(getattr(args, "index_theme", None) or defaults.theme),
+        accent=str(getattr(args, "index_accent", None) or ""),
     )
     deploy_cfg = DeployConfig(provider=provider, container=container, index=index_cfg)
 
@@ -1186,6 +1194,35 @@ def main() -> int:
             dest="index_exclude",
             metavar="PATTERN",
             help="Glob pattern of paths to omit from the index (repeatable)"
+        )
+        index_parser.add_argument(
+            "--facet",
+            action="append",
+            dest="index_facets",
+            choices=["preset", "machine", "release", "distro", "vendor", "date"],
+            metavar="NAME",
+            help="Facet group to offer in the filter bar (repeatable; "
+                 "default: preset, machine, release, date)"
+        )
+        index_parser.add_argument(
+            "--no-facets",
+            action="store_true",
+            dest="index_no_facets",
+            help="Disable the faceted filter bar"
+        )
+        index_parser.add_argument(
+            "--theme",
+            choices=["auto", "light", "dark"],
+            dest="index_theme",
+            default=IndexConfig().theme,
+            help="Colour scheme of the generated page (default: auto)"
+        )
+        index_parser.add_argument(
+            "--accent",
+            dest="index_accent",
+            default="",
+            metavar="CSS_COLOR",
+            help="Accent colour used by the generated page"
         )
         index_parser.add_argument(
             "--no-search",

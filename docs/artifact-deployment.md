@@ -457,6 +457,8 @@ deploy:
     search: true
     filters: true
     show_dates: true
+    facets: [preset, machine, release, date]
+    theme: auto
     exclude:
       - "cache/*"
 ```
@@ -476,12 +478,31 @@ deploy:
 | `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
 | `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
 | `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
+| `facets`     | list   | `[preset, machine, release, date]` | Facet groups shown in the filter bar.  Supported names: `preset`, `machine`, `release`, `distro`, `vendor`, `date`.  An empty list disables faceted filtering. |
+| `theme`      | string | `"auto"` | Colour scheme: `auto` (follows `prefers-color-scheme`), `light` or `dark`. |
+| `accent`     | string | `""`    | CSS colour used as the page accent (e.g. `"#0366d6"`).  Empty keeps the built-in accent. |
 
 The page is self-contained (no external assets, no CDN JavaScript, no server),
-so it loads from a private container through a single signed URL.  It lists
+so it loads from a private container through a single signed URL.  It ships a
+design-token stylesheet with automatic dark mode, a sticky header holding the
+title, a clickable prefix breadcrumb and the filter bar, per-type artifact
+icons, click-to-copy SHA-256 values, keyboard-navigable tree rows and a live
+"N files · M total" summary.  It lists
 every artifact with its human-readable size, last-modified timestamp and short
 SHA-256, links to `manifest.json`, and carries no-cache `<meta>` tags so
 browsers never show stale, expired links.
+
+Above the tree a faceted filter bar offers multi-select chips for the BSP
+preset, machine, Yocto release and upload date (with `Today` / `Last 7 days` /
+`Last 30 days` / `Older` buckets and a `From`–`To` date range).  Values are
+ANDed across groups and ORed within a group, chip counts update live, and every
+active facet is encoded in the URL fragment so a filtered view can be
+bookmarked or shared.  Facet values are recorded at deploy time in an
+`index-meta.json` sidecar next to `manifest.json`, so `bsp deploy index`
+rebuilds and the container-root index keep them; when the sidecar is missing
+they are recovered by inverting the configured `prefix` template.  The
+container-root index lists one row per build prefix with its facets, newest
+first, and is filtered by the same bar.
 
 In the default tree view the remote directory structure below the indexed
 prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
@@ -1346,6 +1367,8 @@ deploy:
     search: true
     filters: true
     show_dates: true
+    facets: [preset, machine, release, date]
+    theme: auto
     exclude:
       - "cache/*"
 ```
@@ -1365,12 +1388,31 @@ deploy:
 | `filters`    | bool   | `true`  | Show the file-type filter chips derived from the extensions actually present. |
 | `exclude`    | list   | `[]`    | Glob patterns (matched against the path relative to the indexed prefix, or against the bare file name) omitted from the index. |
 | `show_dates` | bool   | `true`  | Show last-modified timestamps when the storage backend provides them. |
+| `facets`     | list   | `[preset, machine, release, date]` | Facet groups shown in the filter bar.  Supported names: `preset`, `machine`, `release`, `distro`, `vendor`, `date`.  An empty list disables faceted filtering. |
+| `theme`      | string | `"auto"` | Colour scheme: `auto` (follows `prefers-color-scheme`), `light` or `dark`. |
+| `accent`     | string | `""`    | CSS colour used as the page accent (e.g. `"#0366d6"`).  Empty keeps the built-in accent. |
 
 The page is self-contained (no external assets, no CDN JavaScript, no server),
-so it loads from a private container through a single signed URL.  It lists
+so it loads from a private container through a single signed URL.  It ships a
+design-token stylesheet with automatic dark mode, a sticky header holding the
+title, a clickable prefix breadcrumb and the filter bar, per-type artifact
+icons, click-to-copy SHA-256 values, keyboard-navigable tree rows and a live
+"N files · M total" summary.  It lists
 every artifact with its human-readable size, last-modified timestamp and short
 SHA-256, links to `manifest.json`, and carries no-cache `<meta>` tags so
 browsers never show stale, expired links.
+
+Above the tree a faceted filter bar offers multi-select chips for the BSP
+preset, machine, Yocto release and upload date (with `Today` / `Last 7 days` /
+`Last 30 days` / `Older` buckets and a `From`–`To` date range).  Values are
+ANDed across groups and ORed within a group, chip counts update live, and every
+active facet is encoded in the URL fragment so a filtered view can be
+bookmarked or shared.  Facet values are recorded at deploy time in an
+`index-meta.json` sidecar next to `manifest.json`, so `bsp deploy index`
+rebuilds and the container-root index keep them; when the sidecar is missing
+they are recovered by inverting the configured `prefix` template.  The
+container-root index lists one row per build prefix with its facets, newest
+first, and is filtered by the same bar.
 
 In the default tree view the remote directory structure below the indexed
 prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)

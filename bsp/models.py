@@ -1187,6 +1187,15 @@ class IndexConfig:
                  indexed prefix) omitted from the index.
         show_dates: Include a last-modified column when the storage backend
                     provides timestamps.
+        facets: Facet groups offered in the filter bar.  Supported names are
+                ``"preset"``, ``"machine"``, ``"release"``, ``"distro"``,
+                ``"vendor"`` and ``"date"``.  An empty list disables faceted
+                filtering (the free-text search and the file-type chips are
+                controlled by ``search`` / ``filters``).
+        theme: Colour scheme of the generated page: ``"auto"`` (default,
+               follows ``prefers-color-scheme``), ``"light"`` or ``"dark"``.
+        accent: Optional CSS colour used as the page accent (e.g.
+                ``"#0366d6"``).  Empty keeps the built-in accent.
     """
     enabled: bool = False
     title: str = "{vendor} {device} — {release}"
@@ -1199,6 +1208,11 @@ class IndexConfig:
     filters: bool = True
     exclude: List[str] = field(default_factory=list)
     show_dates: bool = True
+    facets: List[str] = field(
+        default_factory=lambda: ["preset", "machine", "release", "date"]
+    )
+    theme: str = "auto"
+    accent: str = ""
 
 
 @dataclass

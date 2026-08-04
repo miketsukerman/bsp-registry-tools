@@ -12,6 +12,7 @@ Covers:
 - BspManager deploy methods (mocked)
 """
 
+import datetime
 import json
 import os
 import sys
@@ -2165,3 +2166,242 @@ class TestIndexCli:
         args.index_account_url = None
         assert _run_index_command(args) == 0
         assert "[dry-run]" in capsys.readouterr().out
+
+
+# =============================================================================
+# Faceted filtering and styling of the generated index
+# =============================================================================
+
+
+class _DownloadingBackend(_SigningBackend):
+    """Signing backend that can serve back previously uploaded content."""
+
+    def download_file(self, remote_path, local_path):
+        if remote_path not in self.contents:
+            raise FileNotFoundError(remote_path)
+        Path(local_path).write_text(self.contents[remote_path])
+
+
+class TestPrefixFacetParsing:
+    def test_default_template_roundtrip(self):
+        from bsp.deployer import parse_prefix_facets
+        facets = parse_prefix_facets(
+            "{vendor}/{device}/{release}/{date}",
+            "acme/board/scarthgap/2026-01-01",
+        )
+        assert facets["vendor"] == "acme"
+        assert facets["device"] == "board"
+        assert facets["machine"] == "board"
+        assert facets["release"] == "scarthgap"
+        assert facets["date"] == "2026-01-01"
+
+    def test_non_matching_prefix_returns_empty(self):
+        from bsp.deployer import parse_prefix_facets
+        assert parse_prefix_facets("{vendor}/{device}", "only-one") == {}
+
+    def test_literal_separators_respected(self):
+        from bsp.deployer import parse_prefix_facets
+        facets = parse_prefix_facets("builds/{device}-{release}", "builds/rpi4-kirkstone")
+        assert facets["device"] == "rpi4"
+        assert facets["release"] == "kirkstone"
+
+    def test_empty_inputs(self):
+        from bsp.deployer import parse_prefix_facets
+        assert parse_prefix_facets("", "") == {}
+        assert parse_prefix_facets("no-placeholders", "no-placeholders") == {}
+
+
+class TestFacetCollection:
+    def _tree(self):
+        from bsp.deployer import build_index_tree
+        return build_index_tree([
+            {"path": "a/x.wic", "facets": {"machine": "rpi4", "release": "scarthgap"}},
+            {"path": "a/y.wic", "facets": {"machine": "rpi4", "release": "scarthgap"}},
+            {"path": "b/z.wic", "facets": {"machine": "qemu", "release": "kirkstone"}},
+        ])
+
+    def test_directory_inherits_child_facets(self):
+        tree = self._tree()
+        top = {c["name"]: c for c in tree["children"]}
+        assert top["a"]["facets"]["machine"] == ["rpi4"]
+        assert sorted(tree["facets"]["machine"]) == ["qemu", "rpi4"]
+
+    def test_counts_and_labels(self):
+        from bsp.deployer import collect_facets
+        groups = collect_facets(self._tree(), ["machine", "release"])
+        by_key = {g["key"]: g for g in groups}
+        assert by_key["machine"]["label"] == "Machine"
+        assert by_key["machine"]["values"][0] == {"value": "rpi4", "count": 2}
+
+    def test_unknown_and_empty_groups_dropped(self):
+        from bsp.deployer import collect_facets
+        groups = collect_facets(self._tree(), ["bogus", "preset", "machine"])
+        assert [g["key"] for g in groups] == ["machine"]
+
+
+class TestIndexFacetPage:
+    def _deploy(self, tmp_path, backend, **index_kwargs):
+        from bsp.models import IndexConfig
+        (tmp_path / "tmp/deploy/images").mkdir(parents=True)
+        (tmp_path / "tmp/deploy/images/core-image.wic").write_bytes(b"x")
+        cfg = DeployConfig(
+            container="c",
+            index=IndexConfig(enabled=True, sign_urls=False, **index_kwargs),
+        )
+        deployer = ArtifactDeployer(cfg, backend)
+        deployer.deploy(
+            str(tmp_path), device="board", release="scarthgap",
+            distro="poky", vendor="acme", preset="my-preset",
+        )
+        return deployer
+
+    def test_facets_rendered_and_embedded(self, tmp_path):
+        backend = _DownloadingBackend()
+        self._deploy(tmp_path, backend)
+        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        assert 'id="bsp-facets"' in page
+        assert 'data-facet="preset"' in page
+        assert 'data-value="my-preset"' in page
+        assert 'data-facet="machine"' in page
+        assert 'data-facet="release"' in page
+        assert 'data-bucket="today"' in page
+        assert 'id="bsp-date-from"' in page
+
+    def test_upload_date_recorded(self, tmp_path):
+        backend = _DownloadingBackend()
+        self._deploy(tmp_path, backend)
+        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        assert today in page
+
+    def test_facets_disabled_by_config(self, tmp_path):
+        backend = _DownloadingBackend()
+        self._deploy(tmp_path, backend, facets=[])
+        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        assert 'id="bsp-facets"' not in page
+
+    def test_index_meta_sidecar_written(self, tmp_path):
+        backend = _DownloadingBackend()
+        self._deploy(tmp_path, backend)
+        remote = next(k for k in backend.contents if k.endswith("index-meta.json"))
+        meta = json.loads(backend.contents[remote])
+        assert meta["facets"]["preset"] == "my-preset"
+        assert meta["facets"]["machine"] == "board"
+        assert meta["facets"]["release"] == "scarthgap"
+        assert meta["uploaded_at"]
+
+    def test_index_meta_roundtrip_on_rebuild(self, tmp_path):
+        from bsp.models import IndexConfig
+        backend = _DownloadingBackend()
+        deployer = self._deploy(tmp_path, backend)
+        prefix = next(
+            k.rsplit("/", 1)[0] for k in backend.contents if k.endswith("index-meta.json")
+        )
+        deployer.rebuild_index(prefix, index_config=IndexConfig(enabled=True, sign_urls=False))
+        page = backend.contents[f"{prefix}/index.html"]
+        assert 'data-value="my-preset"' in page
+        assert "index-meta.json" not in page.split('id="bsp-index-data"')[0]
+
+    def test_facet_values_are_html_escaped(self):
+        from bsp.deployer import build_index_tree
+        from bsp.models import IndexConfig
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        entries = [{
+            "name": "a.wic", "path": "a.wic", "href": "a.wic",
+            "size_bytes": 1, "sha256": "",
+            "facets": {"preset": '<img src=x onerror=alert(1)>'},
+        }]
+        page = deployer.generate_index_html(
+            entries, title="t", tree=build_index_tree(entries),
+        )
+        assert "<img src=x" not in page
+        assert "&lt;img src=x" in page
+
+    def test_no_external_resources(self, tmp_path):
+        backend = _DownloadingBackend()
+        self._deploy(tmp_path, backend)
+        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        assert "http://" not in page
+        assert "https://" not in page
+        assert "<noscript>" in page
+
+
+class TestIndexStyling:
+    def _page(self, **index_kwargs):
+        from bsp.deployer import build_index_tree
+        from bsp.models import IndexConfig
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True, **index_kwargs))
+        deployer = ArtifactDeployer(cfg, _FakeBackend())
+        entries = [{
+            "name": "a.wic", "path": "dir/a.wic", "href": "dir/a.wic",
+            "size_bytes": 10, "sha256": "b" * 64,
+        }]
+        return deployer.generate_index_html(
+            entries, title="t", metadata={"prefix": "acme/board"},
+            tree=build_index_tree(entries),
+        )
+
+    def test_design_tokens_and_dark_mode(self):
+        page = self._page()
+        assert "--accent:" in page
+        assert "prefers-color-scheme: dark" in page
+
+    def test_theme_attribute(self):
+        assert 'data-theme="dark"' in self._page(theme="dark")
+        assert 'data-theme="auto"' in self._page(theme="bogus")
+
+    def test_accent_override(self):
+        assert "--accent: #ff0000" in self._page(accent="#ff0000")
+
+    def test_hostile_accent_is_dropped(self):
+        page = self._page(accent="red; } body { background: url(http://evil) }")
+        assert "evil" not in page
+        assert "--accent: red" not in page
+
+    def test_badges_and_breadcrumb(self):
+        page = self._page()
+        assert 'class="badges"' in page
+        assert 'class="breadcrumb"' in page
+        assert "../index.html" in page
+
+    def test_summary_element_present(self):
+        assert 'id="bsp-summary"' in self._page()
+
+
+class TestRootIndexBuildBrowser:
+    def test_prefix_rows_carry_facets(self):
+        from bsp.models import IndexConfig
+        backend = _DownloadingBackend()
+        backend.uploaded = {
+            "acme/board/scarthgap/2026-01-01/a.wic": Path("a"),
+            "other/dev/kirkstone/2025-01-01/c.wic": Path("c"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        deployer = ArtifactDeployer(cfg, backend)
+        deployer._upload_root_index()
+        page = backend.contents["index.html"]
+        assert 'data-facet="machine"' in page
+        assert 'data-value="board"' in page
+        assert 'data-value="scarthgap"' in page
+
+    def test_newest_prefix_first(self):
+        from bsp.models import IndexConfig
+        backend = _DownloadingBackend()
+        backend.uploaded = {
+            "acme/board/scarthgap/2026-01-01/a.wic": Path("a"),
+            "acme/board/scarthgap/2026-02-01/b.wic": Path("b"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        ArtifactDeployer(cfg, backend)._upload_root_index()
+        page = backend.contents["index.html"]
+        assert page.index("2026-02-01") < page.index("2026-01-01")
+
+
+class TestIndexConfigFacetDefaults:
+    def test_defaults(self):
+        from bsp.models import IndexConfig
+        cfg = IndexConfig()
+        assert cfg.facets == ["preset", "machine", "release", "date"]
+        assert cfg.theme == "auto"
+        assert cfg.accent == ""
