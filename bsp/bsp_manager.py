@@ -3020,6 +3020,7 @@ class BspManager:
             downloads_path=downloads_path,
             sstate_path=sstate_path,
             update_index=update_index,
+            preset=getattr(preset, "name", "") or "",
         )
 
         # Print summary
