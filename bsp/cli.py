@@ -126,11 +126,20 @@ def _run_index_command(args) -> int:
     container = args.container
     dry_run = getattr(args, "dry_run", False)
 
+    defaults = IndexConfig()
+    collapse_depth = getattr(args, "index_collapse_depth", None)
     index_cfg = IndexConfig(
         enabled=True,
         sign_urls=getattr(args, "index_sign_urls", True),
-        sas_expiry=getattr(args, "index_sas_expiry", None) or IndexConfig().sas_expiry,
+        sas_expiry=getattr(args, "index_sas_expiry", None) or defaults.sas_expiry,
         root_index=getattr(args, "index_root", False),
+        tree=getattr(args, "index_tree", True),
+        collapse_depth=(
+            defaults.collapse_depth if collapse_depth is None else collapse_depth
+        ),
+        search=getattr(args, "index_search", True),
+        filters=getattr(args, "index_search", True),
+        exclude=getattr(args, "index_exclude", None) or [],
     )
     deploy_cfg = DeployConfig(provider=provider, container=container, index=index_cfg)
 
@@ -1149,6 +1158,41 @@ def main() -> int:
             default=IndexConfig().sas_expiry,
             metavar="ISO8601",
             help="Expiry timestamp for generated signed URLs (default: 2038-01-19T03:14:06Z)"
+        )
+        index_parser.add_argument(
+            "--tree",
+            action="store_true",
+            dest="index_tree",
+            default=True,
+            help="Render a collapsible directory tree (default)"
+        )
+        index_parser.add_argument(
+            "--flat",
+            action="store_false",
+            dest="index_tree",
+            help="Render the legacy flat artifact table instead of a tree"
+        )
+        index_parser.add_argument(
+            "--collapse-depth",
+            type=int,
+            dest="index_collapse_depth",
+            default=None,
+            metavar="N",
+            help="Directory depth expanded by default in the tree view (default: 1)"
+        )
+        index_parser.add_argument(
+            "--exclude",
+            action="append",
+            dest="index_exclude",
+            metavar="PATTERN",
+            help="Glob pattern of paths to omit from the index (repeatable)"
+        )
+        index_parser.add_argument(
+            "--no-search",
+            action="store_false",
+            dest="index_search",
+            default=True,
+            help="Omit the interactive search box and file-type filter chips"
         )
         index_parser.add_argument(
             "--dry-run",

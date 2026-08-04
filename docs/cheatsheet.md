@@ -220,6 +220,9 @@ bsp deploy <bsp_name> --dry-run                        # preview without uploadi
 # Rebuild the SAS-signed HTML index without a build (e.g. from a cron job)
 bsp deploy index <container> --root
 bsp deploy index <container> --prefix <vendor>/<device>/<release>/<date>
+bsp deploy index <container> --collapse-depth 2     # tree view, 2 levels open
+bsp deploy index <container> --exclude 'cache/*'    # omit paths from the index
+bsp deploy index <container> --flat                 # legacy flat table
 ```
 
 ---
