@@ -20,6 +20,8 @@ caches without running a full build.
   - [Prefix template placeholders](#prefix-template-placeholders)
   - [Archive bundling](#archive-bundling)
   - [Yocto cache upload](#yocto-cache-upload)
+  - [HTML index generation](#html-index-generation)
+- [Public access without anonymous blob access](#public-access-without-anonymous-blob-access)
 - [Authentication](#authentication)
   - [Azure](#azure)
   - [AWS](#aws)
@@ -27,6 +29,7 @@ caches without running a full build.
   - [`bsp deploy`](#bsp-deploy)
   - [`bsp build --deploy`](#bsp-build---deploy)
   - [`bsp gather`](#bsp-gather)
+  - [`bsp index`](#bsp-index)
 - [Dry-run mode](#dry-run-mode)
 - [Artifact manifest](#artifact-manifest)
 - [Partial failures](#partial-failures)
@@ -236,6 +239,7 @@ registry:
 | `region`           | string (opt.) | —       | AWS region (optional; boto3 default otherwise) |
 | `profile`          | string (opt.) | —       | AWS credentials profile (optional) |
 | `yocto_cache`      | object (opt.) | —       | Upload / restore Yocto DL_DIR / SSTATE_DIR caches. See [Yocto cache upload](#yocto-cache-upload). |
+| `index`            | object (opt.) | —       | Generate a browsable `index.html` of the uploaded artifacts. See [HTML index generation](#html-index-generation). |
 
 ### Prefix template placeholders
 
@@ -433,6 +437,80 @@ gracefully — the gatherer falls back to the heuristic
 
 ---
 
+## HTML index generation
+
+Add an `index:` block to `deploy:` to publish a browsable `index.html` next to
+the uploaded artifacts:
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  index:
+    enabled: true
+    title: "{vendor} {device} — {release}"
+    sign_urls: true
+    sas_expiry: "2038-01-19T03:14:06Z"
+    root_index: true
+```
+
+### `index` fields
+
+| Field        | Type   | Default | Description |
+|--------------|--------|---------|-------------|
+| `enabled`    | bool   | `false` | Master switch.  Index generation is opt-in. |
+| `title`      | string | `"{vendor} {device} — {release}"` | Page title template.  Supports the same placeholders as `prefix`. |
+| `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
+| `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
+| `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+
+The page is self-contained (no external assets), lists one row per artifact
+(name, human-readable size, short SHA-256, link), links to `manifest.json`, and
+carries no-cache `<meta>` tags so browsers never show stale, expired links.
+`*.html` blobs are excluded so the index never lists itself, and every
+interpolated value is HTML-escaped.
+
+The index is **fully regenerated** on every run from the current artifact set
+(or, for `bsp index`, from the live container listing) — it is never appended
+to, so links are always fresh.
+
+---
+
+## Public access without anonymous blob access
+
+Storage accounts with `allowBlobPublicAccess=false` (and no `$web` static
+website endpoint) cannot serve blobs anonymously.  The generated index solves
+this without weakening that posture: each artifact link is a **read-only signed
+URL**, and `index.html` itself is fetched through a signed URL.
+
+On Azure the backend picks the strongest available option:
+
+1. **Account-key SAS** — used when `AZURE_STORAGE_CONNECTION_STRING` (or an
+   explicit connection string) is available.  Supports arbitrary expiry, so the
+   2038 sentinel works as-is.
+2. **User-delegation SAS** — used when authenticated via
+   `DefaultAzureCredential` (`az login`, managed identity, service principal).
+   Azure caps delegation keys at **7 days**, so longer expiries are clamped
+   automatically with a warning.
+
+On AWS `get_signed_url()` returns an S3 presigned URL (capped at 7 days).
+
+Trade-offs to be aware of:
+
+- Anyone holding a link can download that blob until the SAS expires — treat
+  the links as bearer tokens.
+- User-delegation links expire after at most 7 days; schedule
+  `bsp index <container> --root` (for example from a nightly job) to re-sign
+  them.
+- Signed links are not written to logs, and the account key / connection string
+  is never logged or embedded in the page.
+- Uploads set `Content-Type: application/octet-stream` (with **no**
+  `Content-Encoding`) for artifacts so browsers do not transparently decompress
+  `*.wic.gz` images and corrupt them; `index.html` is stored as `text/html` so
+  it renders instead of downloading.
+
+---
+
 ## Authentication
 
 ### Azure
@@ -518,6 +596,8 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches |
 | `--no-deploy-cache-downloads` | Skip uploading the DL_DIR downloads cache (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip uploading the SSTATE_DIR sstate cache (use with `--deploy-cache`) |
+| `--update-index` | Regenerate and upload the browsable `index.html` after a successful deploy |
+| `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
 **Examples:**
@@ -546,6 +626,9 @@ bsp deploy --device qemuarm64 --release scarthgap --container bsp-artifacts
 
 # Deploy artifacts + Yocto caches
 bsp deploy poky-qemuarm64-scarthgap --deploy-cache
+
+# Deploy and publish a browsable, SAS-signed index.html
+bsp deploy poky-qemuarm64-scarthgap --update-index
 ```
 
 ### `bsp build --deploy`
@@ -584,6 +667,31 @@ bsp build poky-qemuarm64-scarthgap \
 
 # Build, deploy artifacts and caches in one step
 bsp build poky-qemuarm64-scarthgap --deploy --deploy-cache
+```
+
+### `bsp index`
+
+Rebuild the browsable HTML index straight from the live container listing —
+no build required.  This is the command to schedule when signed URLs expire.
+
+```
+bsp index <container> [--prefix PREFIX] [--root] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--prefix PREFIX` | Remote prefix to index (default: the whole container) |
+| `--root` | Also generate the container-root `index.html` listing every prefix |
+| `--provider PROVIDER` | Provider: `azure` (default) or `aws` |
+| `--account-url URL` | Azure storage account URL |
+| `--no-sign-urls` | Emit relative links instead of signed URLs (CDN / custom domain) |
+| `--sas-expiry ISO8601` | Expiry for generated signed URLs (default `2038-01-19T03:14:06Z`) |
+| `--dry-run` | Show what would be generated without uploading (no credentials needed) |
+
+```bash
+bsp index bsp-artifacts --root
+bsp index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
+bsp index bsp-artifacts --dry-run
 ```
 
 ### `bsp gather`
@@ -1177,6 +1285,80 @@ bsp build my-preset --deploy \
 
 ---
 
+## HTML index generation
+
+Add an `index:` block to `deploy:` to publish a browsable `index.html` next to
+the uploaded artifacts:
+
+```yaml
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  index:
+    enabled: true
+    title: "{vendor} {device} — {release}"
+    sign_urls: true
+    sas_expiry: "2038-01-19T03:14:06Z"
+    root_index: true
+```
+
+### `index` fields
+
+| Field        | Type   | Default | Description |
+|--------------|--------|---------|-------------|
+| `enabled`    | bool   | `false` | Master switch.  Index generation is opt-in. |
+| `title`      | string | `"{vendor} {device} — {release}"` | Page title template.  Supports the same placeholders as `prefix`. |
+| `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
+| `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
+| `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+
+The page is self-contained (no external assets), lists one row per artifact
+(name, human-readable size, short SHA-256, link), links to `manifest.json`, and
+carries no-cache `<meta>` tags so browsers never show stale, expired links.
+`*.html` blobs are excluded so the index never lists itself, and every
+interpolated value is HTML-escaped.
+
+The index is **fully regenerated** on every run from the current artifact set
+(or, for `bsp index`, from the live container listing) — it is never appended
+to, so links are always fresh.
+
+---
+
+## Public access without anonymous blob access
+
+Storage accounts with `allowBlobPublicAccess=false` (and no `$web` static
+website endpoint) cannot serve blobs anonymously.  The generated index solves
+this without weakening that posture: each artifact link is a **read-only signed
+URL**, and `index.html` itself is fetched through a signed URL.
+
+On Azure the backend picks the strongest available option:
+
+1. **Account-key SAS** — used when `AZURE_STORAGE_CONNECTION_STRING` (or an
+   explicit connection string) is available.  Supports arbitrary expiry, so the
+   2038 sentinel works as-is.
+2. **User-delegation SAS** — used when authenticated via
+   `DefaultAzureCredential` (`az login`, managed identity, service principal).
+   Azure caps delegation keys at **7 days**, so longer expiries are clamped
+   automatically with a warning.
+
+On AWS `get_signed_url()` returns an S3 presigned URL (capped at 7 days).
+
+Trade-offs to be aware of:
+
+- Anyone holding a link can download that blob until the SAS expires — treat
+  the links as bearer tokens.
+- User-delegation links expire after at most 7 days; schedule
+  `bsp index <container> --root` (for example from a nightly job) to re-sign
+  them.
+- Signed links are not written to logs, and the account key / connection string
+  is never logged or embedded in the page.
+- Uploads set `Content-Type: application/octet-stream` (with **no**
+  `Content-Encoding`) for artifacts so browsers do not transparently decompress
+  `*.wic.gz` images and corrupt them; `index.html` is stored as `text/html` so
+  it renders instead of downloading.
+
+---
+
 ## Authentication
 
 ### Azure
@@ -1259,6 +1441,8 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--pattern PATTERN` | Override glob patterns (repeatable; replaces registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
+| `--update-index` | Regenerate and upload the browsable `index.html` after a successful deploy |
+| `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
 **Examples:**

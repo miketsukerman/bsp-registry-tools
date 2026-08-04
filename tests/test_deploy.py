@@ -1487,3 +1487,428 @@ deploy:
 
         assert dl == "/env/dl"
         assert ss == "/env/ss"
+
+
+# =============================================================================
+# HTML index generation tests
+# =============================================================================
+
+
+class _SigningBackend(_FakeBackend):
+    """Fake backend that supports signed URLs and records uploaded content."""
+
+    def __init__(self, dry_run=False):
+        super().__init__(dry_run=dry_run)
+        self.contents: dict = {}  # remote_path → file content
+
+    def upload_file(self, local_path, remote_path):
+        url = super().upload_file(local_path, remote_path)
+        if not self.dry_run:
+            self.contents[remote_path] = Path(local_path).read_text()
+        return url
+
+    def get_signed_url(self, remote_path, expiry=None):
+        if self.dry_run:
+            return f"dry-run:{remote_path}"
+        return f"https://fake/{remote_path}?sig=TOKEN&se={expiry}"
+
+
+def _make_result(tmp_path, names=("image.wic.gz", "sdk.tar.gz")):
+    result = DeployResult()
+    for i, name in enumerate(names):
+        local = tmp_path / name
+        local.write_bytes(b"x")
+        result.artifacts.append(
+            UploadedArtifact(
+                local_path=local,
+                remote_url=f"fake://p/{name}",
+                size_bytes=1024 * (i + 1),
+                sha256="a" * 64,
+            )
+        )
+    return result
+
+
+class TestIndexConfigModel:
+    def test_defaults(self):
+        from bsp.models import IndexConfig
+        cfg = IndexConfig()
+        assert cfg.enabled is False
+        assert cfg.sign_urls is True
+        assert cfg.root_index is True
+        assert cfg.sas_expiry == "2038-01-19T03:14:06Z"
+
+    def test_deploy_config_index_default_none(self, default_deploy_config):
+        assert default_deploy_config.index is None
+
+    def test_registry_yaml_parsing(self, tmp_path):
+        from bsp.utils import get_registry_from_yaml_file
+        yaml_text = """
+specification:
+  version: '2.2'
+deploy:
+  provider: azure
+  container: bsp-artifacts
+  index:
+    enabled: true
+    title: "My {device}"
+    sign_urls: false
+    root_index: false
+registry:
+  devices: []
+  releases: []
+  features: []
+  frameworks: []
+  distro: []
+  vendors: []
+"""
+        path = tmp_path / "registry.yaml"
+        path.write_text(yaml_text)
+        root = get_registry_from_yaml_file(path)
+        assert root.deploy.index.enabled is True
+        assert root.deploy.index.title == "My {device}"
+        assert root.deploy.index.sign_urls is False
+        assert root.deploy.index.root_index is False
+
+
+class TestIndexGeneration:
+    def _deployer(self, backend=None, **index_kwargs):
+        from bsp.models import IndexConfig
+        cfg = DeployConfig(
+            container="c",
+            index=IndexConfig(enabled=True, root_index=False, **index_kwargs),
+        )
+        return ArtifactDeployer(cfg, backend or _SigningBackend())
+
+    def test_one_row_per_artifact(self, tmp_path):
+        deployer = self._deployer()
+        result = _make_result(tmp_path)
+        deployer._upload_index(result, "acme/board/scarthgap/2026-01-01")
+        uploaded = deployer.backend.uploaded
+        assert "acme/board/scarthgap/2026-01-01/index.html" in uploaded
+        html_text = deployer.backend.contents[
+            "acme/board/scarthgap/2026-01-01/index.html"
+        ]
+        assert html_text.count("<tr><td><a href=") == 2
+        assert "image.wic.gz" in html_text
+        assert "sdk.tar.gz" in html_text
+
+    def test_short_sha_included(self, tmp_path):
+        deployer = self._deployer()
+        result = _make_result(tmp_path, names=("a.wic",))
+        html_text = deployer.generate_index_html(
+            [{"name": "a.wic", "href": "a.wic", "size_bytes": 10,
+              "sha256": "b" * 64}],
+            title="t",
+        )
+        assert "<code>bbbbbbbbbbbb</code>" in html_text
+
+    def test_html_files_excluded(self, tmp_path):
+        deployer = self._deployer()
+        result = _make_result(tmp_path, names=("image.wic", "old-index.html"))
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert "old-index.html" not in html_text
+        assert "image.wic" in html_text
+
+    def test_html_escaping(self):
+        deployer = self._deployer()
+        html_text = deployer.generate_index_html(
+            [{"name": "<script>x</script>", "href": 'a"b', "size_bytes": 1,
+              "sha256": ""}],
+            title="<b>title</b>",
+            metadata={"device": "<evil>"},
+        )
+        assert "<script>x</script>" not in html_text
+        assert "&lt;script&gt;" in html_text
+        assert "&lt;b&gt;title&lt;/b&gt;" in html_text
+        assert "&lt;evil&gt;" in html_text
+        assert 'href="a&quot;b"' in html_text
+
+    def test_signed_hrefs_used(self, tmp_path):
+        deployer = self._deployer()
+        result = _make_result(tmp_path, names=("image.wic",))
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert "sig=TOKEN" in html_text
+
+    def test_relative_hrefs_when_signing_disabled(self, tmp_path):
+        deployer = self._deployer(sign_urls=False)
+        result = _make_result(tmp_path, names=("image.wic",))
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert 'href="image.wic"' in html_text
+        assert "sig=TOKEN" not in html_text
+
+    def test_unsupported_signing_falls_back_to_relative(self, tmp_path):
+        class _Unsigned(_SigningBackend):
+            def get_signed_url(self, remote_path, expiry=None):
+                raise NotImplementedError
+
+        deployer = self._deployer(backend=_Unsigned())
+        result = _make_result(tmp_path, names=("image.wic",))
+        deployer._upload_index(result, "p")
+        html_text = deployer.backend.contents["p/index.html"]
+        assert 'href="image.wic"' in html_text
+
+    def test_no_cache_meta_tags(self, tmp_path):
+        deployer = self._deployer()
+        html_text = deployer.generate_index_html([], title="t")
+        assert "no-cache" in html_text
+        assert 'http-equiv="Pragma"' in html_text
+
+    def test_dry_run_requires_no_credentials(self, tmp_path, capsys):
+        deployer = self._deployer(backend=_SigningBackend(dry_run=True))
+        result = _make_result(tmp_path, names=("image.wic",))
+        url = deployer._upload_index(result, "p")
+        assert url == "dry-run:p/index.html"
+        assert "[dry-run]" in capsys.readouterr().out
+
+    def test_index_upload_failure_does_not_raise(self, tmp_path):
+        class _Boom(_SigningBackend):
+            def upload_file(self, local_path, remote_path):
+                raise RuntimeError("nope")
+
+        deployer = self._deployer(backend=_Boom())
+        result = _make_result(tmp_path, names=("image.wic",))
+        assert deployer._upload_index(result, "p") is None
+
+    def test_deploy_generates_index_when_enabled(self, tmp_path):
+        from bsp.models import IndexConfig
+        images = tmp_path / "tmp/deploy/images"
+        images.mkdir(parents=True)
+        (images / "core-image.wic").write_bytes(b"1234")
+
+        cfg = DeployConfig(
+            container="c",
+            prefix="v/d/r/2026-01-01",
+            index=IndexConfig(enabled=True, root_index=False),
+        )
+        backend = _SigningBackend()
+        result = ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+        assert result.index_url == "fake://v/d/r/2026-01-01/index.html"
+        assert "v/d/r/2026-01-01/index.html" in backend.uploaded
+
+    def test_deploy_skips_index_by_default(self, tmp_path):
+        images = tmp_path / "tmp/deploy/images"
+        images.mkdir(parents=True)
+        (images / "core-image.wic").write_bytes(b"1234")
+
+        cfg = DeployConfig(container="c", prefix="v/d/r/2026-01-01")
+        backend = _SigningBackend()
+        result = ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+        assert result.index_url is None
+        assert not any(k.endswith("index.html") for k in backend.uploaded)
+
+    def test_update_index_argument_overrides_config(self, tmp_path):
+        images = tmp_path / "tmp/deploy/images"
+        images.mkdir(parents=True)
+        (images / "core-image.wic").write_bytes(b"1234")
+
+        cfg = DeployConfig(container="c", prefix="p")
+        backend = _SigningBackend()
+        ArtifactDeployer(cfg, backend).deploy(str(tmp_path), update_index=True)
+        assert "p/index.html" in backend.uploaded
+
+    def test_root_index_groups_by_prefix(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {
+            "acme/board/scarthgap/2026-01-01/a.wic": Path("a"),
+            "acme/board/scarthgap/2026-02-01/b.wic": Path("b"),
+            "other/dev/kirkstone/2025-01-01/c.wic": Path("c"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        deployer = ArtifactDeployer(cfg, backend)
+        deployer._upload_root_index()
+        html_text = backend.contents["index.html"]
+        assert "acme/board/scarthgap/2026-02-01" in html_text
+        assert "other/dev/kirkstone/2025-01-01" in html_text
+        # newest (lexicographically greatest) prefix first
+        assert html_text.index("2026-02-01") < html_text.index("2026-01-01")
+
+    def test_rebuild_index_from_listing(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {
+            "p/a.wic": Path("a"),
+            "p/manifest.json": Path("m"),
+            "p/index.html": Path("i"),
+        }
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        deployer = ArtifactDeployer(cfg, backend)
+        deployer.rebuild_index("p")
+        html_text = backend.contents["p/index.html"]
+        assert "a.wic" in html_text
+        assert "manifest.json" in html_text
+        assert html_text.count("<tr><td><a href=") == 1
+
+    def test_human_size(self):
+        from bsp.deployer import human_size
+        assert human_size(512) == "512 B"
+        assert human_size(2048) == "2.0 KiB"
+        assert human_size(5 * 1024 * 1024) == "5.0 MiB"
+
+
+class TestAzureSignedUrls:
+    def _sdk_or_skip(self):
+        try:
+            import azure.storage.blob  # noqa: F401
+        except ImportError:
+            pytest.skip("azure-storage-blob not installed")
+
+    def test_dry_run_signed_url_no_credentials(self):
+        from bsp.storage.azure import AzureStorageBackend
+        backend = AzureStorageBackend(container_name="c", dry_run=True)
+        assert backend.get_signed_url("p/a.wic") == "dry-run:p/a.wic"
+
+    def test_parse_expiry_default(self):
+        from bsp.storage.azure import AzureStorageBackend, DEFAULT_SAS_EXPIRY
+        dt = AzureStorageBackend._parse_expiry(None)
+        assert dt.year == 2038
+        assert DEFAULT_SAS_EXPIRY.startswith("2038")
+
+    def test_parse_account_key(self):
+        from bsp.storage.azure import AzureStorageBackend
+        key = AzureStorageBackend._parse_account_key(
+            "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=SECRET==;"
+        )
+        assert key == "SECRET=="
+
+    def test_account_key_sas_uses_requested_expiry(self):
+        self._sdk_or_skip()
+        from bsp.storage.azure import AzureStorageBackend
+
+        mock_service = MagicMock()
+        mock_service.url = "https://myaccount.blob.core.windows.net"
+        mock_service.account_name = "myaccount"
+
+        with patch("azure.storage.blob.BlobServiceClient") as mock_cls:
+            mock_cls.from_connection_string.return_value = mock_service
+            backend = AzureStorageBackend(
+                container_name="c",
+                connection_string="AccountName=myaccount;AccountKey=a2V5MTIz;",
+            )
+        with patch("azure.storage.blob.generate_blob_sas", return_value="tok") as gen:
+            url = backend.get_signed_url("p/a.wic")
+        assert url.endswith("?tok")
+        assert gen.call_args.kwargs["expiry"].year == 2038
+        mock_service.get_user_delegation_key.assert_not_called()
+
+    def test_user_delegation_expiry_clamped(self):
+        self._sdk_or_skip()
+        import datetime as _dt
+        from bsp.storage.azure import AzureStorageBackend, MAX_USER_DELEGATION_DAYS
+
+        mock_service = MagicMock()
+        mock_service.url = "https://myaccount.blob.core.windows.net"
+        mock_service.account_name = "myaccount"
+
+        with patch("azure.storage.blob.BlobServiceClient", return_value=mock_service):
+            backend = AzureStorageBackend(
+                container_name="c",
+                account_url="https://myaccount.blob.core.windows.net",
+                credential=MagicMock(),
+            )
+        with patch("azure.storage.blob.generate_blob_sas", return_value="tok") as gen:
+            backend.get_signed_url("p/a.wic")
+
+        mock_service.get_user_delegation_key.assert_called_once()
+        expiry = gen.call_args.kwargs["expiry"]
+        limit = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(
+            days=MAX_USER_DELEGATION_DAYS
+        )
+        assert expiry <= limit + _dt.timedelta(minutes=1)
+
+    def test_content_settings_html(self):
+        self._sdk_or_skip()
+        from bsp.storage.azure import AzureStorageBackend
+        backend = AzureStorageBackend(container_name="c", dry_run=True)
+        cs = backend._content_settings_for("p/index.html")
+        assert cs.content_type == "text/html"
+
+    def test_content_settings_wic_gz_no_encoding(self):
+        self._sdk_or_skip()
+        from bsp.storage.azure import AzureStorageBackend
+        backend = AzureStorageBackend(container_name="c", dry_run=True)
+        cs = backend._content_settings_for("p/image.wic.gz")
+        assert cs.content_type == "application/octet-stream"
+        assert not cs.content_encoding
+
+    def test_base_backend_signed_url_not_implemented(self):
+        backend = _FakeBackend()
+        with pytest.raises(NotImplementedError):
+            backend.get_signed_url("p/a.wic")
+
+
+class TestIndexCli:
+    """CLI wiring tests (the parser is built inside ``bsp.cli.main``)."""
+
+    def _help(self, command):
+        from bsp.cli import main
+        with patch.object(sys, "argv", ["bsp", command, "--help"]):
+            try:
+                main()
+            except SystemExit:
+                pass
+
+    def test_deploy_has_update_index_flags(self, capsys):
+        self._help("deploy")
+        out = capsys.readouterr().out
+        assert "--update-index" in out
+        assert "--no-update-index" in out
+
+    def test_build_has_update_index_flags(self, capsys):
+        self._help("build")
+        out = capsys.readouterr().out
+        assert "--update-index" in out
+
+    def test_index_subcommand_help(self, capsys):
+        self._help("index")
+        out = capsys.readouterr().out
+        assert "--prefix" in out
+        assert "--root" in out
+        assert "--no-sign-urls" in out
+
+    def test_collect_deploy_overrides_index(self):
+        from bsp.cli import _collect_deploy_overrides
+        from bsp.models import IndexConfig
+        args = MagicMock()
+        args.deploy_provider = None
+        args.deploy_container = None
+        args.deploy_prefix = None
+        args.deploy_patterns = None
+        args.deploy_archive_name = None
+        args.deploy_archive_format = None
+        args.deploy_cache = None
+        args.update_index = True
+        overrides = _collect_deploy_overrides(args)
+        assert isinstance(overrides["index"], IndexConfig)
+        assert overrides["index"].enabled is True
+
+    def test_collect_deploy_overrides_no_index_by_default(self):
+        from bsp.cli import _collect_deploy_overrides
+        args = MagicMock()
+        args.deploy_provider = None
+        args.deploy_container = None
+        args.deploy_prefix = None
+        args.deploy_patterns = None
+        args.deploy_archive_name = None
+        args.deploy_archive_format = None
+        args.deploy_cache = None
+        args.update_index = None
+        assert "index" not in _collect_deploy_overrides(args)
+
+    def test_index_command_dry_run_no_credentials(self, capsys):
+        from bsp.cli import _run_index_command
+        args = MagicMock()
+        args.container = "c"
+        args.deploy_provider = "azure"
+        args.dry_run = True
+        args.index_prefix = "a/b"
+        args.index_root = False
+        args.index_sign_urls = True
+        args.index_sas_expiry = "2038-01-19T03:14:06Z"
+        args.index_account_url = None
+        assert _run_index_command(args) == 0
+        assert "[dry-run]" in capsys.readouterr().out

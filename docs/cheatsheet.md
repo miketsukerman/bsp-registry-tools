@@ -113,6 +113,7 @@ bsp build <bsp_name> --deploy --deploy-provider aws \
 bsp build <bsp_name> --deploy --deploy-prefix "{device}/{release}/{date}"
 bsp build <bsp_name> --deploy --deploy-archive-name "image-{device}-{date}.tar.gz"
 bsp build <bsp_name> --deploy --deploy-cache                    # also upload caches
+bsp build <bsp_name> --deploy --update-index                    # also publish index.html
 ```
 
 ### Build → Test (LAVA HIL)
@@ -212,7 +213,13 @@ bsp deploy <bsp_name> --archive-name "image-{device}-{datetime}.tar.gz"
 bsp deploy <bsp_name> --deploy-cache                   # also upload Yocto caches
 bsp deploy <bsp_name> --no-deploy-cache-downloads      # skip DL_DIR upload
 bsp deploy <bsp_name> --no-deploy-cache-sstate         # skip SSTATE_DIR upload
+bsp deploy <bsp_name> --update-index                   # also publish a browsable index.html
+bsp deploy <bsp_name> --no-update-index                # never publish an index.html
 bsp deploy <bsp_name> --dry-run                        # preview without uploading
+
+# Rebuild the SAS-signed HTML index without a build (e.g. from a cron job)
+bsp index <container> --root
+bsp index <container> --prefix <vendor>/<device>/<release>/<date>
 ```
 
 ---
