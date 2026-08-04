@@ -1507,6 +1507,7 @@ class BspManager:
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
         docker_build_options: Optional[str] = None,
+        update_index: Optional[bool] = None,
     ) -> None:
         """
         Execute a build (or checkout) for the given ResolvedConfig.
@@ -1589,6 +1590,7 @@ class BspManager:
                         preset=preset,
                         deploy_overrides=deploy_overrides or {},
                         build_path_override=build_path_override,
+                        update_index=update_index,
                     )
                 if scan_after_build:
                     self._scan_resolved(
@@ -1955,6 +1957,7 @@ class BspManager:
         vendor_release_slug: Optional[str] = None,
         override_slug: Optional[str] = None,
         docker_build_options: Optional[str] = None,
+        update_index: Optional[bool] = None,
     ) -> None:
         """
         Build a BSP by preset name.
@@ -2006,6 +2009,7 @@ class BspManager:
                 flash_target=flash_target,
                 flash_overrides=flash_overrides,
                 docker_build_options=docker_build_options,
+                update_index=update_index,
             )
 
     def fetch_bsp(
@@ -2062,6 +2066,7 @@ class BspManager:
         flash_target: Optional[str] = None,
         flash_overrides: Optional[Dict] = None,
         docker_build_options: Optional[str] = None,
+        update_index: Optional[bool] = None,
     ) -> None:
         """
         Build by specifying device, release, and optional features directly.
@@ -2117,6 +2122,7 @@ class BspManager:
             flash_target=flash_target,
             flash_overrides=flash_overrides,
             docker_build_options=docker_build_options,
+            update_index=update_index,
         )
 
     def fetch_by_components(
@@ -2937,6 +2943,7 @@ class BspManager:
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
         build_path_override: Optional[str] = None,
+        update_index: Optional[bool] = None,
     ) -> DeployResult:
         """
         Deploy build artifacts for the given ResolvedConfig.
@@ -2949,6 +2956,8 @@ class BspManager:
             deploy_overrides: CLI-level overrides for the deploy configuration.
             dry_run: When True log what would be uploaded without uploading.
             build_path_override: Optional build path override for artifact lookup.
+            update_index: Force-enable/disable HTML index generation,
+                          overriding ``deploy.index.enabled``.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact.
@@ -3010,6 +3019,7 @@ class BspManager:
             vendor=resolved.device.vendor,
             downloads_path=downloads_path,
             sstate_path=sstate_path,
+            update_index=update_index,
         )
 
         # Print summary
@@ -3020,6 +3030,8 @@ class BspManager:
                 print(f"  {art.local_path.name} → {art.remote_url}")
             if result.manifest_url:
                 print(f"  manifest.json → {result.manifest_url}")
+            if result.index_url:
+                print(f"  index.html → {result.index_url}")
         else:
             print("No artifacts found to deploy.")
 
@@ -3036,6 +3048,7 @@ class BspManager:
         bsp_name: str,
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
+        update_index: Optional[bool] = None,
     ) -> DeployResult:
         """
         Deploy artifacts for a BSP preset.
@@ -3054,7 +3067,10 @@ class BspManager:
         logging.info("Deploying artifacts for BSP preset: %s", bsp_name)
         resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
         with self._use_registry_context(reg_model, reg_resolver, reg_path):
-            return self._deploy_resolved(resolved, preset=preset, deploy_overrides=deploy_overrides, dry_run=dry_run)
+            return self._deploy_resolved(
+                resolved, preset=preset, deploy_overrides=deploy_overrides,
+                dry_run=dry_run, update_index=update_index,
+            )
 
     def deploy_by_components(
         self,
@@ -3063,6 +3079,7 @@ class BspManager:
         feature_slugs: Optional[List[str]] = None,
         deploy_overrides: Optional[Dict] = None,
         dry_run: bool = False,
+        update_index: Optional[bool] = None,
     ) -> DeployResult:
         """
         Deploy artifacts by specifying device, release, and features directly.
@@ -3085,7 +3102,10 @@ class BspManager:
             device_slug, release_slug, feature_slugs or [],
         )
         resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
-        return self._deploy_resolved(resolved, deploy_overrides=deploy_overrides, dry_run=dry_run)
+        return self._deploy_resolved(
+            resolved, deploy_overrides=deploy_overrides, dry_run=dry_run,
+            update_index=update_index,
+        )
 
     # ------------------------------------------------------------------
     # Gather (download artifacts from cloud storage)

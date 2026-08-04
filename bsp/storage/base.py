@@ -95,6 +95,27 @@ class CloudStorageBackend(ABC):
         """
         return remote_path
 
+    def get_signed_url(self, remote_path: str, expiry=None) -> str:
+        """
+        Return a read-only signed URL for *remote_path*.
+
+        Subclasses that support signed URLs (Azure SAS, S3 presigned URLs)
+        override this.  The base implementation raises
+        ``NotImplementedError``.
+
+        Args:
+            remote_path: Remote object path.
+            expiry: Backend-specific expiry (ISO-8601 string, ``datetime``
+                    or number of seconds).  ``None`` selects the backend
+                    default.
+
+        Returns:
+            Signed URL string.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support signed URLs."
+        )
+
     def get_manifest(self, remote_prefix: str) -> Optional[Dict]:
         """
         Fetch and parse a ``manifest.json`` stored under *remote_prefix*.

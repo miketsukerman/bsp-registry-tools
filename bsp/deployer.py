@@ -4,6 +4,7 @@ Artifact deployer: discovers and uploads Yocto build artifacts to cloud storage.
 
 import datetime
 import hashlib
+import html
 import json
 import logging
 import shutil
@@ -14,8 +15,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .models import DeployConfig
+from .models import DeployConfig, IndexConfig
 from .storage.base import CloudStorageBackend
+
+# Meta tags copied from the reference implementation so browsers and proxies
+# never serve a stale index with expired signed links.
+_NO_CACHE_META = (
+    '  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n'
+    '  <meta http-equiv="Pragma" content="no-cache">\n'
+    '  <meta http-equiv="Expires" content="0">\n'
+)
+
+
+def human_size(num_bytes: int) -> str:
+    """Return *num_bytes* formatted as a short human-readable string."""
+    size = float(num_bytes or 0)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            if unit == "B":
+                return f"{int(size)} B"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TiB"
 
 
 # =============================================================================
@@ -48,6 +69,7 @@ class DeployResult:
     artifacts: List[UploadedArtifact] = field(default_factory=list)
     cache_uploads: List[UploadedCache] = field(default_factory=list)
     manifest_url: Optional[str] = None
+    index_url: Optional[str] = None
     dry_run: bool = False
 
     @property
@@ -198,6 +220,7 @@ class ArtifactDeployer:
         vendor: str = "",
         downloads_path: Optional[str] = None,
         sstate_path: Optional[str] = None,
+        update_index: Optional[bool] = None,
     ) -> DeployResult:
         """
         Collect and upload all matching artifacts.
@@ -218,6 +241,10 @@ class ArtifactDeployer:
                             when Yocto cache upload is enabled.
             sstate_path: Optional absolute path to the ``SSTATE_DIR`` cache
                          directory.
+            update_index: Force-enable (``True``) or disable (``False``) HTML
+                          index generation, overriding
+                          ``DeployConfig.index.enabled``.  ``None`` (default)
+                          uses the configured value.
 
         Returns:
             ``DeployResult`` with metadata for every uploaded artifact and,
@@ -314,6 +341,16 @@ class ArtifactDeployer:
         if self.config.include_manifest and result.artifacts:
             manifest_url = self._upload_manifest(result, prefix, device, release, distro, vendor)
             result.manifest_url = manifest_url
+
+        index_cfg = self.config.index or IndexConfig()
+        index_enabled = index_cfg.enabled if update_index is None else update_index
+        if index_enabled and result.artifacts:
+            result.index_url = self._upload_index(
+                result, prefix, device, release, distro, vendor,
+                index_config=index_cfg,
+            )
+            if index_cfg.root_index:
+                self._upload_root_index(index_config=index_cfg)
 
         return result
 
@@ -473,6 +510,304 @@ class ArtifactDeployer:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
         return uploaded
+
+    # ------------------------------------------------------------------
+    # HTML index generation
+    # ------------------------------------------------------------------
+
+    def compose_index_title(
+        self,
+        index_config: Optional[IndexConfig] = None,
+        device: str = "",
+        release: str = "",
+        distro: str = "",
+        vendor: str = "",
+    ) -> str:
+        """
+        Expand the ``IndexConfig.title`` template.
+
+        Supports the same placeholders as :meth:`compose_remote_prefix`.
+        """
+        cfg = index_config or self.config.index or IndexConfig()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        try:
+            return cfg.title.format(
+                device=device or "unknown",
+                release=release or "unknown",
+                distro=distro or "unknown",
+                vendor=vendor or "unknown",
+                date=now.strftime("%Y-%m-%d"),
+                datetime=now.strftime("%Y%m%d-%H%M%S"),
+            )
+        except (KeyError, IndexError):
+            return cfg.title
+
+    def _artifact_href(
+        self,
+        remote_path: str,
+        index_config: IndexConfig,
+    ) -> str:
+        """
+        Resolve the ``href`` used for *remote_path* in a generated index.
+
+        With ``sign_urls`` enabled a read-only signed URL is requested from
+        the backend.  Otherwise (or when the backend cannot sign) a relative
+        href is emitted so the page also works behind a CDN or custom domain.
+        """
+        relative = remote_path.rsplit("/", 1)[-1]
+        if not index_config.sign_urls:
+            return relative
+        try:
+            return self.backend.get_signed_url(
+                remote_path, expiry=index_config.sas_expiry
+            )
+        except NotImplementedError:
+            self.logger.warning(
+                "Storage backend does not support signed URLs; "
+                "falling back to relative links in the index."
+            )
+            return relative
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Failed to sign URL for %s: %s", remote_path, exc)
+            return relative
+
+    def generate_index_html(
+        self,
+        entries: List[Dict],
+        title: str,
+        metadata: Optional[Dict] = None,
+        manifest_href: Optional[str] = None,
+    ) -> str:
+        """
+        Render a self-contained HTML page listing *entries*.
+
+        Args:
+            entries: One dict per artifact with the keys ``name``, ``href``,
+                     ``size_bytes`` and (optionally) ``sha256``.
+            title: Page title (already expanded).
+            metadata: Optional build metadata rendered above the table.
+            manifest_href: Optional link to the JSON manifest.
+
+        Returns:
+            Complete HTML document as a string.  All interpolated values are
+            HTML-escaped.
+        """
+        esc = html.escape
+        generated = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        lines = [
+            "<!DOCTYPE html>",
+            '<html lang="en">',
+            "<head>",
+            '  <meta charset="utf-8">',
+            '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+            _NO_CACHE_META.rstrip("\n"),
+            f"  <title>{esc(title)}</title>",
+            "  <style>",
+            "    body { font-family: sans-serif; margin: 2rem; }",
+            "    table { border-collapse: collapse; }",
+            "    th, td { padding: 0.3rem 0.8rem; border-bottom: 1px solid #ddd; }",
+            "    td.size { text-align: right; }",
+            "    code { font-size: 0.9em; }",
+            "  </style>",
+            "</head>",
+            "<body>",
+            f"  <h1>{esc(title)}</h1>",
+        ]
+
+        meta_items = list((metadata or {}).items())
+        meta_items.append(("generated", generated))
+        lines.append("  <ul>")
+        for key, value in meta_items:
+            if value in (None, ""):
+                continue
+            lines.append(f"    <li><b>{esc(str(key))}:</b> {esc(str(value))}</li>")
+        lines.append("  </ul>")
+
+        lines.extend([
+            "  <table>",
+            "    <tr><th>Name</th><th>Size</th><th>SHA-256</th></tr>",
+        ])
+        for entry in entries:
+            name = esc(str(entry.get("name", "")))
+            href = esc(str(entry.get("href", "")), quote=True)
+            size = esc(human_size(entry.get("size_bytes") or 0))
+            sha = str(entry.get("sha256") or "")
+            short_sha = esc(sha[:12])
+            lines.append(
+                f'    <tr><td><a href="{href}">{name}</a></td>'
+                f'<td class="size">{size}</td><td><code>{short_sha}</code></td></tr>'
+            )
+        lines.append("  </table>")
+
+        if manifest_href:
+            lines.append(
+                f'  <p><a href="{esc(str(manifest_href), quote=True)}">manifest.json</a></p>'
+            )
+
+        lines.extend(["</body>", "</html>", ""])
+        return "\n".join(lines)
+
+    def _upload_html(self, html_text: str, remote_path: str) -> Optional[str]:
+        """Upload *html_text* as an ``.html`` blob; return its URL or ``None``."""
+        if self.backend.dry_run:
+            print(f"[dry-run] Would generate and upload index → {remote_path}")
+            return f"dry-run:{remote_path}"
+
+        tmp_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".html", delete=False, prefix="bsp_index_",
+                encoding="utf-8",
+            ) as fh:
+                fh.write(html_text)
+                tmp_path = Path(fh.name)
+            return self.backend.upload_file(tmp_path, remote_path)
+        except Exception as exc:  # noqa: BLE001
+            # A failing index upload must never fail an otherwise good deploy.
+            self.logger.warning("Failed to upload index %s: %s", remote_path, exc)
+            return None
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+
+    def _upload_index(
+        self,
+        result: DeployResult,
+        prefix: str,
+        device: str = "",
+        release: str = "",
+        distro: str = "",
+        vendor: str = "",
+        index_config: Optional[IndexConfig] = None,
+    ) -> Optional[str]:
+        """Generate and upload ``{prefix}/index.html``; return its remote URL."""
+        cfg = index_config or self.config.index or IndexConfig()
+        entries: List[Dict] = []
+        for art in result.artifacts:
+            name = art.local_path.name
+            if name.lower().endswith(".html"):
+                continue
+            entries.append({
+                "name": name,
+                "href": self._artifact_href(f"{prefix}/{name}", cfg),
+                "size_bytes": art.size_bytes,
+                "sha256": art.sha256,
+            })
+        entries.sort(key=lambda e: e["name"])
+
+        manifest_href = None
+        if result.manifest_url:
+            manifest_href = self._artifact_href(f"{prefix}/manifest.json", cfg)
+
+        html_text = self.generate_index_html(
+            entries,
+            title=self.compose_index_title(
+                cfg, device=device, release=release, distro=distro, vendor=vendor
+            ),
+            metadata={
+                "device": device,
+                "release": release,
+                "distro": distro,
+                "vendor": vendor,
+                "prefix": prefix,
+            },
+            manifest_href=manifest_href,
+        )
+        return self._upload_html(html_text, f"{prefix}/index.html")
+
+    def rebuild_index(
+        self,
+        prefix: str,
+        index_config: Optional[IndexConfig] = None,
+    ) -> Optional[str]:
+        """
+        Rebuild ``{prefix}/index.html`` purely from the live container listing.
+
+        This requires no local build and is what lets a scheduled job refresh
+        expiring signed links.
+
+        Args:
+            prefix: Remote prefix to index.
+            index_config: Optional index configuration override.
+
+        Returns:
+            Remote URL of the uploaded index, or ``None`` on failure.
+        """
+        cfg = index_config or self.config.index or IndexConfig()
+        prefix = prefix.strip("/")
+        blobs = self.backend.list_artifacts(prefix) if prefix else self.backend.list_artifacts("")
+
+        entries: List[Dict] = []
+        manifest_href = None
+        for blob in sorted(blobs):
+            name = blob.rsplit("/", 1)[-1]
+            if name.lower().endswith(".html"):
+                continue
+            if name == "manifest.json":
+                manifest_href = self._artifact_href(blob, cfg)
+                continue
+            entries.append({
+                "name": name,
+                "href": self._artifact_href(blob, cfg),
+                "size_bytes": 0,
+                "sha256": "",
+            })
+
+        html_text = self.generate_index_html(
+            entries,
+            title=self.compose_index_title(cfg) if not prefix else prefix,
+            metadata={"prefix": prefix or "/"},
+            manifest_href=manifest_href,
+        )
+        remote = f"{prefix}/index.html" if prefix else "index.html"
+        return self._upload_html(html_text, remote)
+
+    def _upload_root_index(
+        self,
+        index_config: Optional[IndexConfig] = None,
+    ) -> Optional[str]:
+        """
+        Generate and upload a container-root ``index.html`` linking to every
+        per-prefix index page, newest first.
+        """
+        cfg = index_config or self.config.index or IndexConfig()
+        if self.backend.dry_run:
+            print("[dry-run] Would generate and upload root index → index.html")
+            return "dry-run:index.html"
+
+        try:
+            blobs = self.backend.list_artifacts("")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Failed to list container for root index: %s", exc)
+            return None
+
+        prefixes = set()
+        for blob in blobs:
+            name = blob.rsplit("/", 1)[-1]
+            if name.lower().endswith(".html"):
+                continue
+            if "/" in blob:
+                prefixes.add(blob.rsplit("/", 1)[0])
+
+        entries = [
+            {
+                "name": p,
+                "href": f"{p}/index.html" if not cfg.sign_urls
+                else self._artifact_href(f"{p}/index.html", cfg),
+                "size_bytes": 0,
+                "sha256": "",
+            }
+            for p in sorted(prefixes, reverse=True)
+        ]
+
+        html_text = self.generate_index_html(
+            entries,
+            title="Build artifacts",
+            metadata={"prefixes": len(entries)},
+        )
+        return self._upload_html(html_text, "index.html")
 
     def _upload_manifest(
         self,

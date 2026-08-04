@@ -19,7 +19,7 @@ from .completions import (
     VendorReleaseCompleter,
 )
 from .exceptions import COLORAMA_AVAILABLE, ColoramaFormatter
-from .models import ArchiveConfig, YoctoCacheConfig
+from .models import ArchiveConfig, IndexConfig, YoctoCacheConfig
 from .registry_fetcher import DEFAULT_BRANCH, DEFAULT_REMOTE_URL, RegistryFetcher
 from .remotes_manager import RemotesManager
 from .utils import SUPPORTED_REGISTRY_VERSION, get_installed_package_version
@@ -67,7 +67,75 @@ def _collect_deploy_overrides(args) -> dict:
             sstate=getattr(args, "deploy_cache_sstate", True),
         )
 
+    # HTML index config
+    update_index = getattr(args, "update_index", None)
+    if update_index is not None:
+        defaults = IndexConfig()
+        overrides["index"] = IndexConfig(
+            enabled=update_index,
+            title=defaults.title,
+            sign_urls=defaults.sign_urls,
+            sas_expiry=defaults.sas_expiry,
+            root_index=defaults.root_index,
+        )
+
     return overrides
+
+
+def _run_index_command(args) -> int:
+    """
+    Rebuild the browsable HTML index for a storage container.
+
+    The index is regenerated purely from the live container listing, so no
+    local build is required.  This is what lets a scheduled job refresh
+    expiring signed URLs.
+    """
+    from .deployer import ArtifactDeployer
+    from .models import DeployConfig
+    from .storage import create_backend
+
+    provider = getattr(args, "deploy_provider", None) or "azure"
+    container = args.container
+    dry_run = getattr(args, "dry_run", False)
+
+    index_cfg = IndexConfig(
+        enabled=True,
+        sign_urls=getattr(args, "index_sign_urls", True),
+        sas_expiry=getattr(args, "index_sas_expiry", None) or IndexConfig().sas_expiry,
+        root_index=getattr(args, "index_root", False),
+    )
+    deploy_cfg = DeployConfig(provider=provider, container=container, index=index_cfg)
+
+    if provider == "azure":
+        backend_kwargs = {
+            "container_name": container,
+            "account_url": getattr(args, "index_account_url", None),
+            "dry_run": dry_run,
+        }
+    elif provider == "aws":
+        backend_kwargs = {"bucket_name": container, "dry_run": dry_run}
+    else:
+        logging.error("Unsupported index provider: %s", provider)
+        return 1
+
+    try:
+        backend = create_backend(provider, **backend_kwargs)
+    except (ImportError, ValueError) as exc:
+        logging.error("Failed to initialize storage backend: %s", exc)
+        return 1
+
+    deployer = ArtifactDeployer(deploy_cfg, backend)
+    prefix = getattr(args, "index_prefix", None) or ""
+    url = deployer.rebuild_index(prefix, index_config=index_cfg)
+    if url:
+        print(f"index.html → {url}")
+
+    if index_cfg.root_index and prefix:
+        root_url = deployer._upload_root_index(index_config=index_cfg)
+        if root_url:
+            print(f"index.html (root) → {root_url}")
+
+    return 0
 
 
 def _collect_gather_overrides(args) -> dict:
@@ -454,6 +522,22 @@ def main() -> int:
             dest="deploy_cache_sstate",
             default=True,
             help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
+        )
+        build_parser.add_argument(
+            "--update-index",
+            action="store_true",
+            default=None,
+            dest="update_index",
+            help=(
+                "Regenerate and upload a browsable index.html after deployment "
+                "(only effective when --deploy is used)."
+            )
+        )
+        build_parser.add_argument(
+            "--no-update-index",
+            action="store_false",
+            dest="update_index",
+            help="Do not generate an index.html after deployment."
         )
         build_parser.add_argument(
             "--test",
@@ -955,6 +1039,86 @@ def main() -> int:
             dest="deploy_cache_sstate",
             default=True,
             help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
+        )
+        deploy_parser.add_argument(
+            "--update-index",
+            action="store_true",
+            default=None,
+            dest="update_index",
+            help=(
+                "Regenerate and upload a browsable index.html (with signed "
+                "read-only artifact links) after a successful deploy."
+            )
+        )
+        deploy_parser.add_argument(
+            "--no-update-index",
+            action="store_false",
+            dest="update_index",
+            help="Do not generate an index.html, even when enabled in the registry config."
+        )
+
+        # ----------------------------------------------------------------
+        # Index command
+        # ----------------------------------------------------------------
+        index_parser = subparsers.add_parser(
+            "index",
+            help="Rebuild the browsable HTML index of a storage container"
+        )
+        index_parser.add_argument(
+            "container",
+            type=str,
+            help="Azure Blob container or AWS S3 bucket name"
+        )
+        index_parser.add_argument(
+            "--prefix",
+            type=str,
+            dest="index_prefix",
+            default=None,
+            metavar="PREFIX",
+            help="Remote prefix to index (default: the whole container)"
+        )
+        index_parser.add_argument(
+            "--root",
+            action="store_true",
+            dest="index_root",
+            help="Also generate the container-root index.html listing every prefix"
+        )
+        index_parser.add_argument(
+            "--provider",
+            type=str,
+            dest="deploy_provider",
+            default="azure",
+            metavar="PROVIDER",
+            help="Cloud storage provider: azure (default) or aws"
+        )
+        index_parser.add_argument(
+            "--account-url",
+            type=str,
+            dest="index_account_url",
+            default=None,
+            metavar="URL",
+            help="Azure storage account URL"
+        )
+        index_parser.add_argument(
+            "--no-sign-urls",
+            action="store_false",
+            dest="index_sign_urls",
+            default=True,
+            help="Emit relative links instead of signed URLs (for CDN / custom domains)"
+        )
+        index_parser.add_argument(
+            "--sas-expiry",
+            type=str,
+            dest="index_sas_expiry",
+            default=IndexConfig().sas_expiry,
+            metavar="ISO8601",
+            help="Expiry timestamp for generated signed URLs (default: 2038-01-19T03:14:06Z)"
+        )
+        index_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="Show what would be generated without uploading (no credentials required)"
         )
 
         # ----------------------------------------------------------------
@@ -1678,6 +1842,7 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             deploy_after_build = getattr(args, "deploy_after_build", False)
             deploy_overrides = _collect_deploy_overrides(args)
+            update_index = getattr(args, "update_index", None)
             run_test = getattr(args, "run_test", False)
             scan_after_build = getattr(args, "scan_after_build", False)
             scan_overrides = _collect_scan_overrides(args)
@@ -1720,6 +1885,7 @@ def main() -> int:
                     vendor_release_slug=vendor_release,
                     override_slug=override_slug,
                     docker_build_options=docker_build_options,
+                    update_index=update_index,
                 )
                 if run_test:
                     passed = bsp_mgr.test_bsp(
@@ -1749,6 +1915,7 @@ def main() -> int:
                     vendor_release_slug=vendor_release,
                     override_slug=override_slug,
                     docker_build_options=docker_build_options,
+                    update_index=update_index,
                 )
                 if run_test:
                     passed = bsp_mgr.test_by_components(
@@ -1931,6 +2098,7 @@ def main() -> int:
             bsp_name = getattr(args, "bsp_name", None)
             dry_run = getattr(args, "dry_run", False)
             deploy_overrides = _collect_deploy_overrides(args)
+            update_index = getattr(args, "update_index", None)
 
             if _check_exclusive(bsp_name, device, release, deploy_parser):
                 return 1
@@ -1939,12 +2107,14 @@ def main() -> int:
                     bsp_name,
                     deploy_overrides=deploy_overrides,
                     dry_run=dry_run,
+                    update_index=update_index,
                 )
             elif device and release:
                 bsp_mgr.deploy_by_components(
                     device, release, features,
                     deploy_overrides=deploy_overrides,
                     dry_run=dry_run,
+                    update_index=update_index,
                 )
             else:
                 logging.error(
@@ -1952,6 +2122,9 @@ def main() -> int:
                 )
                 deploy_parser.print_help()
                 return 1
+
+        elif args.command == "index":
+            return _run_index_command(args)
 
         elif args.command == "gather":
             device = getattr(args, "device", None)
