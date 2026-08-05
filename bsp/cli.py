@@ -186,7 +186,8 @@ def _run_index_command(args, bsp_mgr=None) -> int:
     account_url = getattr(args, "index_account_url", None) or _registry("account_url")
     dry_run = getattr(args, "dry_run", False)
 
-    defaults = getattr(registry_deploy, "index", None) or IndexConfig()
+    registry_index = getattr(registry_deploy, "index", None)
+    defaults = registry_index or IndexConfig()
 
     def _opt(attr, default):
         value = getattr(args, attr, None)
@@ -199,7 +200,9 @@ def _run_index_command(args, bsp_mgr=None) -> int:
         title=defaults.title,
         sign_urls=_opt("index_sign_urls", defaults.sign_urls),
         sas_expiry=getattr(args, "index_sas_expiry", None) or defaults.sas_expiry,
-        root_index=_opt("index_root", False),
+        root_index=_opt(
+            "index_root", defaults.root_index if registry_index else False
+        ),
         tree=_opt("index_tree", defaults.tree),
         collapse_depth=(
             defaults.collapse_depth if collapse_depth is None else collapse_depth
@@ -212,7 +215,7 @@ def _run_index_command(args, bsp_mgr=None) -> int:
             if getattr(args, "index_no_facets", False) is True
             else facets_cli or list(defaults.facets)
         ),
-        theme=str(getattr(args, "index_theme", None) or defaults.theme),
+        theme=str(getattr(args, "index_theme", None) or defaults.theme or "auto"),
         accent=str(getattr(args, "index_accent", None) or defaults.accent or ""),
     )
     deploy_cfg = DeployConfig(provider=provider, container=container, index=index_cfg)
@@ -1229,6 +1232,7 @@ def main() -> int:
             "--root",
             action="store_true",
             dest="index_root",
+            default=None,
             help="Also generate the container-root index.html listing every prefix"
         )
         index_parser.add_argument(
