@@ -258,10 +258,6 @@ def _run_index_command(args, bsp_mgr=None) -> int:
 
     # No prefix given: refresh the index of every prefix in the container.
     urls = deployer.refresh_container_indexes(index_config=index_cfg)
-    if not index_cfg.root_index and "index.html" not in urls:
-        url = deployer.rebuild_index("", index_config=index_cfg)
-        if url:
-            urls["index.html"] = url
     for remote in sorted(urls):
         print(f"{remote} → {_index_display_url(backend, remote, index_cfg, urls[remote])}")
 
