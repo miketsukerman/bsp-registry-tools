@@ -2582,10 +2582,9 @@ class TestBuildManifestUpload:
     def test_referenced_from_deploy_manifest(self, tmp_path):
         self._prepare(tmp_path)
         backend = _FakeBackend()
-        cfg = self._config(include_manifest=True)
-        result = ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+        deployer = ArtifactDeployer(self._config(include_manifest=True), backend)
+        result = deployer.deploy(str(tmp_path))
 
-        deployer = ArtifactDeployer(cfg, backend)
         data = json.loads(deployer.generate_manifest(result))
         assert data["build_manifest"]["name"] == "build-manifest.json"
         assert data["build_manifest"]["remote_url"] == result.build_manifest_url
