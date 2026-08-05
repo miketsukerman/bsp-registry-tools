@@ -219,6 +219,7 @@ bsp deploy <bsp_name> --no-build-manifest              # skip uploading build-ma
 bsp deploy <bsp_name> --dry-run                        # preview without uploading
 
 # Rebuild the SAS-signed HTML index without a build (e.g. from a cron job)
+bsp deploy index --root                             # container from registry deploy: block
 bsp deploy index <container> --root
 bsp deploy index <container> --prefix <vendor>/<device>/<release>/<date>
 bsp deploy index <container> --collapse-depth 2     # tree view, 2 levels open
