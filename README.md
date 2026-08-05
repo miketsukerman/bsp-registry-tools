@@ -716,7 +716,9 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
 | `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
-Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).
+Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).  `bsp deploy` uploads this file
+to `<prefix>/build-manifest.json` by default; pass `--no-build-manifest` to
+skip it.
 
 **Examples:**
 
@@ -981,6 +983,7 @@ bsp flash <bsp_name> --target <device> [--image <path>]
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
 | `--update-index` | Regenerate and upload a browsable, SAS-signed `index.html` after a successful deploy |
 | `--no-update-index` | Never generate an `index.html`, even when enabled in the registry |
+| `--no-build-manifest` | Do not upload the `build-manifest.json` produced by `bsp build` |
 | `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches to cloud storage |
 | `--no-deploy-cache-downloads` | Skip the DL_DIR upload (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip the SSTATE_DIR upload (use with `--deploy-cache`) |
@@ -1944,6 +1947,7 @@ deploy:
     - tmp/deploy/images
     - tmp/deploy/sdk
   include_manifest: true                            # upload a JSON manifest of all artifacts
+  include_build_manifest: true                      # upload build-manifest.json from the build dir
 ```
 
 **Prefix template variables:**

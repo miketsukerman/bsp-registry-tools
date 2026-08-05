@@ -1648,6 +1648,9 @@ deploy:
   # Upload a JSON manifest listing all uploaded artifacts (names, sizes, SHA-256)
   include_manifest: true
 
+  # Upload the build-manifest.json written by `bsp build` into the build path
+  include_build_manifest: true
+
   # Optional: bundle all artifacts into a single archive before uploading
   # archive:
   #   name: "firmware-{device}-{release}-{date}"
@@ -1674,6 +1677,7 @@ deploy:
 | `patterns`         | list[str]     | see below | Glob patterns for artifact files to upload |
 | `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to search for artifacts |
 | `include_manifest` | bool          | `true`  | Whether to upload a JSON manifest file listing all uploaded artifacts |
+| `include_build_manifest` | bool    | `true`  | Whether to upload the `build-manifest.json` written by `bsp build` as `<prefix>/build-manifest.json` |
 | `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [ArchiveConfig](#archiveconfig) below. |
 | `region`           | string (opt.) | —       | AWS region (boto3 default if omitted) |
 | `profile`          | string (opt.) | —       | AWS credentials profile name |

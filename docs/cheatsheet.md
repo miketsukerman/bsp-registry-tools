@@ -215,6 +215,7 @@ bsp deploy <bsp_name> --no-deploy-cache-downloads      # skip DL_DIR upload
 bsp deploy <bsp_name> --no-deploy-cache-sstate         # skip SSTATE_DIR upload
 bsp deploy <bsp_name> --update-index                   # also publish a browsable index.html
 bsp deploy <bsp_name> --no-update-index                # never publish an index.html
+bsp deploy <bsp_name> --no-build-manifest              # skip uploading build-manifest.json
 bsp deploy <bsp_name> --dry-run                        # preview without uploading
 
 # Rebuild the SAS-signed HTML index without a build (e.g. from a cron job)
