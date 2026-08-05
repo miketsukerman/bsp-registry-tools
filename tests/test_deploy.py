@@ -2508,6 +2508,35 @@ class TestIndexFacetPage:
         assert 'data-value="my-preset"' in page
         assert "index-meta.json" not in page.split('id="bsp-index-data"')[0]
 
+    def test_rebuild_matches_deploy_title_and_badges(self, tmp_path):
+        """`bsp deploy index` must render the same header as `--update-index`."""
+        from bsp.models import IndexConfig
+        backend = _DownloadingBackend()
+        deployer = self._deploy(tmp_path, backend)
+        prefix = next(
+            k.rsplit("/", 1)[0] for k in backend.contents if k.endswith("index-meta.json")
+        )
+        deployed = backend.contents[f"{prefix}/index.html"]
+        deployer.rebuild_index(
+            prefix, index_config=IndexConfig(enabled=True, sign_urls=False)
+        )
+        rebuilt = backend.contents[f"{prefix}/index.html"]
+
+        def header(page):
+            return page.split('<dl class="badges">')[0], page.split(
+                '<dl class="badges">'
+            )[1].split("</dl>")[0]
+
+        deployed_title, deployed_badges = header(deployed)
+        rebuilt_title, rebuilt_badges = header(rebuilt)
+        assert "<h1>" in rebuilt_title
+        assert deployed_title.split("<h1>")[1] == rebuilt_title.split("<h1>")[1]
+        # "generated" timestamps legitimately differ; compare the other badges.
+        strip = lambda badges: [  # noqa: E731
+            b for b in badges.splitlines() if "<dt>generated</dt>" not in b
+        ]
+        assert strip(deployed_badges) == strip(rebuilt_badges)
+
     def test_facet_values_are_html_escaped(self):
         from bsp.deployer import build_index_tree
         from bsp.models import IndexConfig
