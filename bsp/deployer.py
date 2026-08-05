@@ -2016,15 +2016,26 @@ class ArtifactDeployer:
             records, prefix, cfg, facets=facets
         )
 
-        metadata = {
-            key: value for key, value in facets.items()
-            if key in FACET_LABELS and key != "date"
-        }
-        metadata["prefix"] = prefix or "/"
+        preset = str(facets.get("preset") or "")
+        device = str(facets.get("device") or facets.get("machine") or "")
+        release = str(facets.get("release") or "")
+        distro = str(facets.get("distro") or "")
+        vendor = str(facets.get("vendor") or "")
+
         html_text = self.generate_index_html(
             entries,
-            title=self.compose_index_title(cfg) if not prefix else prefix,
-            metadata=metadata,
+            title=self.compose_index_title(
+                cfg, device=device, release=release, distro=distro,
+                vendor=vendor, preset=preset,
+            ),
+            metadata={
+                "preset": preset,
+                "device": device,
+                "release": release,
+                "distro": distro,
+                "vendor": vendor,
+                "prefix": prefix,
+            },
             manifest_href=manifest_href,
             tree=build_index_tree(entries),
             index_config=cfg,
