@@ -68,6 +68,10 @@ def _collect_deploy_overrides(args) -> dict:
             sstate=getattr(args, "deploy_cache_sstate", True),
         )
 
+    include_build_manifest = getattr(args, "include_build_manifest", None)
+    if include_build_manifest is not None:
+        overrides["include_build_manifest"] = include_build_manifest
+
     # HTML index config
     update_index = getattr(args, "update_index", None)
     if update_index is not None:
@@ -598,6 +602,16 @@ def main() -> int:
             help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
         )
         build_parser.add_argument(
+            "--no-build-manifest",
+            action="store_false",
+            default=None,
+            dest="include_build_manifest",
+            help=(
+                "Do not upload the build-manifest.json produced by the build "
+                "(only effective when --deploy is used)."
+            ),
+        )
+        build_parser.add_argument(
             "--update-index",
             action="store_true",
             default=None,
@@ -1120,6 +1134,13 @@ def main() -> int:
             dest="deploy_cache_sstate",
             default=True,
             help="Skip uploading the SSTATE_DIR sstate cache (only effective with --deploy-cache)."
+        )
+        deploy_parser.add_argument(
+            "--no-build-manifest",
+            action="store_false",
+            default=None,
+            dest="include_build_manifest",
+            help="Do not upload the build-manifest.json produced by 'bsp build'."
         )
         deploy_parser.add_argument(
             "--update-index",

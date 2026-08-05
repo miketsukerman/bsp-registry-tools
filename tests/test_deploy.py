@@ -741,6 +741,12 @@ class TestDeployCliArguments:
             p.add_argument("--prefix", dest="deploy_prefix")
             p.add_argument("--pattern", action="append", dest="deploy_patterns")
             p.add_argument("--dry-run", action="store_true", dest="dry_run")
+            p.add_argument(
+                "--no-build-manifest",
+                action="store_false",
+                default=None,
+                dest="include_build_manifest",
+            )
             return p.parse_args(argv)
         finally:
             sys.argv = old_argv
@@ -771,6 +777,11 @@ class TestDeployCliArguments:
         args = self._parse(["preset"])
         overrides = _collect_deploy_overrides(args)
         assert overrides == {}
+
+    def test_no_build_manifest_flag(self):
+        from bsp.cli import _collect_deploy_overrides
+        args = self._parse(["preset", "--no-build-manifest"])
+        assert _collect_deploy_overrides(args)["include_build_manifest"] is False
 
     def test_collect_deploy_overrides_with_values(self):
         from bsp.cli import _collect_deploy_overrides
@@ -2478,3 +2489,108 @@ class TestIndexConfigFacetDefaults:
         assert cfg.facets == ["preset", "machine", "release", "date"]
         assert cfg.theme == "auto"
         assert cfg.accent == ""
+
+
+# =============================================================================
+# Build manifest upload
+# =============================================================================
+
+
+class TestBuildManifestUpload:
+    """``build-manifest.json`` written by ``bsp build`` is deployed too."""
+
+    @staticmethod
+    def _prepare(tmp_path, write_manifest=True):
+        deploy_dir = tmp_path / "tmp" / "deploy" / "images"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "image.wic.gz").write_bytes(b"data")
+        if write_manifest:
+            (tmp_path / "build-manifest.json").write_text('{"schema_version": "1"}')
+
+    @staticmethod
+    def _config(**kwargs):
+        base = dict(
+            artifact_dirs=["tmp/deploy/images"],
+            patterns=["**/*.wic.gz"],
+            include_manifest=False,
+            prefix="acme/board/rel",
+        )
+        base.update(kwargs)
+        return DeployConfig(**base)
+
+    def test_default_is_enabled(self, default_deploy_config):
+        assert default_deploy_config.include_build_manifest is True
+
+    def test_uploaded_by_default(self, tmp_path):
+        self._prepare(tmp_path)
+        backend = _FakeBackend()
+        result = ArtifactDeployer(self._config(), backend).deploy(str(tmp_path))
+
+        assert "acme/board/rel/build-manifest.json" in backend.uploaded
+        assert result.build_manifest_url == "fake://acme/board/rel/build-manifest.json"
+
+    def test_found_in_build_subdirectory(self, tmp_path):
+        self._prepare(tmp_path, write_manifest=False)
+        nested = tmp_path / "build"
+        nested.mkdir()
+        (nested / "build-manifest.json").write_text("{}")
+        backend = _FakeBackend()
+        ArtifactDeployer(self._config(), backend).deploy(str(tmp_path))
+
+        assert backend.uploaded["acme/board/rel/build-manifest.json"] == (
+            nested / "build-manifest.json"
+        )
+
+    def test_missing_manifest_is_skipped(self, tmp_path):
+        self._prepare(tmp_path, write_manifest=False)
+        backend = _FakeBackend()
+        result = ArtifactDeployer(self._config(), backend).deploy(str(tmp_path))
+
+        assert result.build_manifest_url is None
+        assert result.success_count == 1
+        assert "acme/board/rel/build-manifest.json" not in backend.uploaded
+
+    def test_disabled_by_config(self, tmp_path):
+        self._prepare(tmp_path)
+        backend = _FakeBackend()
+        result = ArtifactDeployer(
+            self._config(include_build_manifest=False), backend
+        ).deploy(str(tmp_path))
+
+        assert result.build_manifest_url is None
+        assert "acme/board/rel/build-manifest.json" not in backend.uploaded
+
+    def test_dry_run_does_not_upload(self, tmp_path):
+        self._prepare(tmp_path)
+        backend = _FakeBackend(dry_run=True)
+        result = ArtifactDeployer(self._config(), backend).deploy(str(tmp_path))
+
+        assert backend.uploaded == {}
+        assert result.build_manifest_url == "dry-run:acme/board/rel/build-manifest.json"
+
+    def test_uploaded_alongside_archive(self, tmp_path):
+        from bsp.models import ArchiveConfig
+
+        self._prepare(tmp_path)
+        backend = _FakeBackend()
+        cfg = self._config(archive=ArchiveConfig(name="bundle", format="tar.gz"))
+        ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+
+        assert "acme/board/rel/build-manifest.json" in backend.uploaded
+        assert "acme/board/rel/bundle.tar.gz" in backend.uploaded
+
+    def test_referenced_from_deploy_manifest(self, tmp_path):
+        self._prepare(tmp_path)
+        backend = _FakeBackend()
+        cfg = self._config(include_manifest=True)
+        result = ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+
+        deployer = ArtifactDeployer(cfg, backend)
+        data = json.loads(deployer.generate_manifest(result))
+        assert data["build_manifest"]["name"] == "build-manifest.json"
+        assert data["build_manifest"]["remote_url"] == result.build_manifest_url
+
+    def test_no_build_manifest_reference_when_absent(self, tmp_path):
+        deployer = ArtifactDeployer(self._config(), _FakeBackend())
+        data = json.loads(deployer.generate_manifest(DeployResult()))
+        assert "build_manifest" not in data

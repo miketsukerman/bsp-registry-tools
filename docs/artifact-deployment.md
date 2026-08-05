@@ -152,6 +152,7 @@ deploy:
     - tmp/deploy/images
     - tmp/deploy/sdk
   include_manifest: true
+  include_build_manifest: true
   # Optional: bundle all artifacts into a single archive before uploading
   archive:
     name: "firmware-{device}-{release}-{date}"
@@ -235,6 +236,7 @@ registry:
 | `patterns`         | list[str]     | `["**/*.wic*", "**/*.tar.gz", "**/*.ext4", "**/*.sdimg"]` | Glob patterns for artifact files |
 | `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to scan |
 | `include_manifest` | bool          | `true`  | Upload a JSON manifest alongside artifacts |
+| `include_build_manifest` | bool    | `true`  | Upload the `build-manifest.json` written by `bsp build` |
 | `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [Archive bundling](#archive-bundling). |
 | `region`           | string (opt.) | —       | AWS region (optional; boto3 default otherwise) |
 | `profile`          | string (opt.) | —       | AWS credentials profile (optional) |
@@ -826,6 +828,20 @@ Example output:
 
 ---
 
+## Build manifest
+
+When `include_build_manifest: true` (default), the `build-manifest.json`
+written by `bsp build` into the build path is uploaded as
+`<prefix>/build-manifest.json`, so the deployed artifacts stay traceable to
+the exact registry, device, release and feature set they were built from.
+It is looked up at `<build_path>/build-manifest.json` and, failing that, at
+`<build_path>/build/build-manifest.json`.  When the file does not exist a
+warning is logged and the deploy continues.  Its remote URL is also recorded
+under the `build_manifest` key of `manifest.json`.
+
+Pass `--no-build-manifest` to `bsp deploy` (or to `bsp build --deploy`) to
+skip the upload for a single run.
+
 ## Artifact manifest
 
 When `include_manifest: true` (default), a `manifest.json` file is uploaded
@@ -1186,6 +1202,7 @@ deploy:
     - tmp/deploy/images
     - tmp/deploy/sdk
   include_manifest: true
+  include_build_manifest: true
   # Optional: bundle all artifacts into a single archive before uploading
   archive:
     name: "firmware-{device}-{release}-{date}"
@@ -1269,6 +1286,7 @@ registry:
 | `patterns`         | list[str]     | `["**/*.wic*", "**/*.tar.gz", "**/*.ext4", "**/*.sdimg"]` | Glob patterns for artifact files |
 | `artifact_dirs`    | list[str]     | `["tmp/deploy/images", "tmp/deploy/sdk"]` | Subdirectories under the build path to scan |
 | `include_manifest` | bool          | `true`  | Upload a JSON manifest alongside artifacts |
+| `include_build_manifest` | bool    | `true`  | Upload the `build-manifest.json` written by `bsp build` |
 | `archive`          | object (opt.) | —       | Bundle all artifacts into a single archive before uploading. See [Archive bundling](#archive-bundling). |
 | `region`           | string (opt.) | —       | AWS region (optional; boto3 default otherwise) |
 | `profile`          | string (opt.) | —       | AWS credentials profile (optional) |
@@ -1635,6 +1653,20 @@ Example output:
 ```
 
 ---
+
+## Build manifest
+
+When `include_build_manifest: true` (default), the `build-manifest.json`
+written by `bsp build` into the build path is uploaded as
+`<prefix>/build-manifest.json`, so the deployed artifacts stay traceable to
+the exact registry, device, release and feature set they were built from.
+It is looked up at `<build_path>/build-manifest.json` and, failing that, at
+`<build_path>/build/build-manifest.json`.  When the file does not exist a
+warning is logged and the deploy continues.  Its remote URL is also recorded
+under the `build_manifest` key of `manifest.json`.
+
+Pass `--no-build-manifest` to `bsp deploy` (or to `bsp build --deploy`) to
+skip the upload for a single run.
 
 ## Artifact manifest
 
