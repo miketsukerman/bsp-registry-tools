@@ -1729,6 +1729,37 @@ class TestIndexGeneration:
         ArtifactDeployer(cfg, backend).deploy(str(tmp_path), update_index=True)
         assert "p/index.html" in backend.uploaded
 
+    def test_deploy_refreshes_all_prefix_indexes(self, tmp_path):
+        """Deploying must refresh every prefix, like `bsp deploy index` does."""
+        from bsp.models import IndexConfig
+        images = tmp_path / "tmp/deploy/images"
+        images.mkdir(parents=True)
+        (images / "core-image.wic").write_bytes(b"1234")
+
+        backend = _SigningBackend()
+        backend.uploaded = {"old/prefix/a.wic": Path("a")}
+        cfg = DeployConfig(
+            container="c", prefix="v/d/r/2026-01-01",
+            index=IndexConfig(enabled=True),
+        )
+        ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
+        assert "v/d/r/2026-01-01/index.html" in backend.uploaded
+        assert "old/prefix/index.html" in backend.uploaded
+        assert "index.html" in backend.uploaded
+
+    def test_refresh_container_indexes_skips_given_prefixes(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {"a/x.wic": Path("x"), "b/y.wic": Path("y")}
+        cfg = DeployConfig(
+            container="c", index=IndexConfig(enabled=True, root_index=False)
+        )
+        urls = ArtifactDeployer(cfg, backend).refresh_container_indexes(
+            skip_prefixes=["a"]
+        )
+        assert set(urls) == {"b/index.html"}
+        assert "a/index.html" not in backend.uploaded
+
     def test_root_index_groups_by_prefix(self):
         from bsp.models import IndexConfig
         backend = _SigningBackend()
@@ -2120,6 +2151,42 @@ class TestIndexCli:
         assert cfg.search is False
         assert cfg.exclude == ["cache/*"]
 
+    def test_index_command_without_prefix_refreshes_whole_container(self):
+        """`bsp deploy index` with no --prefix rebuilds every prefix index."""
+        import bsp.cli as cli
+        from bsp.models import IndexConfig
+
+        args = MagicMock()
+        args.container = "c"
+        args.deploy_provider = "azure"
+        args.dry_run = False
+        args.index_sign_urls = False
+        args.index_sas_expiry = None
+        args.index_root = True
+        args.index_prefix = None
+        args.index_account_url = None
+        args.index_tree = None
+        args.index_collapse_depth = None
+        args.index_search = None
+        args.index_exclude = None
+        args.index_facets = None
+        args.index_no_facets = False
+        args.index_theme = None
+        args.index_accent = None
+
+        backend = _SigningBackend()
+        backend.uploaded = {"a/x.wic": Path("x"), "b/y.wic": Path("y")}
+        deploy_cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        deployer = ArtifactDeployer(deploy_cfg, backend)
+
+        with patch("bsp.deployer.ArtifactDeployer", return_value=deployer), \
+                patch("bsp.storage.create_backend", return_value=backend):
+            assert cli._run_index_command(args) == 0
+
+        assert "a/index.html" in backend.uploaded
+        assert "b/index.html" in backend.uploaded
+        assert "index.html" in backend.uploaded
+
     def test_index_command_uses_registry_deploy_config(self):
         import bsp.cli as cli
         from bsp.models import DeployConfig, IndexConfig
@@ -2159,6 +2226,10 @@ class TestIndexCli:
             def rebuild_index(self, prefix, index_config=None):
                 captured["index_config"] = index_config
                 return None
+
+            def refresh_container_indexes(self, index_config=None, skip_prefixes=None):
+                captured["index_config"] = index_config
+                return {}
 
         def _create_backend(provider, **kwargs):
             captured["provider"] = provider
@@ -2215,6 +2286,9 @@ class TestIndexCli:
             def rebuild_index(self, prefix, index_config=None):
                 return None
 
+            def refresh_container_indexes(self, index_config=None, skip_prefixes=None):
+                return {}
+
         def _create_backend(provider, **kwargs):
             captured["provider"] = provider
             captured["kwargs"] = kwargs
@@ -2267,9 +2341,10 @@ class TestIndexCli:
         args.deploy_archive_format = None
         args.deploy_cache = None
         args.update_index = True
-        overrides = _collect_deploy_overrides(args)
-        assert isinstance(overrides["index"], IndexConfig)
-        assert overrides["index"].enabled is True
+        # --update-index is forwarded as ArtifactDeployer.deploy(update_index=...)
+        # and must not replace the registry-configured IndexConfig.
+        assert "index" not in _collect_deploy_overrides(args)
+        assert IndexConfig().enabled is not None
 
     def test_collect_deploy_overrides_no_index_by_default(self):
         from bsp.cli import _collect_deploy_overrides

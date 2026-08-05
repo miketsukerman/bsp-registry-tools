@@ -73,16 +73,13 @@ def _collect_deploy_overrides(args) -> dict:
         overrides["include_build_manifest"] = include_build_manifest
 
     # HTML index config
-    update_index = getattr(args, "update_index", None)
-    if update_index is not None:
-        defaults = IndexConfig()
-        overrides["index"] = IndexConfig(
-            enabled=update_index,
-            title=defaults.title,
-            sign_urls=defaults.sign_urls,
-            sas_expiry=defaults.sas_expiry,
-            root_index=defaults.root_index,
-        )
+    #
+    # ``--update-index/--no-update-index`` is forwarded separately as the
+    # ``update_index`` argument of ``ArtifactDeployer.deploy()``, which
+    # toggles ``IndexConfig.enabled`` only.  Building a fresh ``IndexConfig``
+    # here would clobber every other registry-configured index setting
+    # (title, sign_urls, tree, facets, theme, ...) and make the page differ
+    # from the one produced by ``bsp deploy index``.
 
     return overrides
 
@@ -245,18 +242,28 @@ def _run_index_command(args, bsp_mgr=None) -> int:
 
     deployer = ArtifactDeployer(deploy_cfg, backend)
     prefix = getattr(args, "index_prefix", None) or ""
-    url = deployer.rebuild_index(prefix, index_config=index_cfg)
-    if url:
-        remote = f"{prefix.strip('/')}/index.html" if prefix.strip("/") else "index.html"
-        print(f"index.html → {_index_display_url(backend, remote, index_cfg, url)}")
+    if prefix.strip("/"):
+        url = deployer.rebuild_index(prefix, index_config=index_cfg)
+        if url:
+            remote = f"{prefix.strip('/')}/index.html"
+            print(f"index.html → {_index_display_url(backend, remote, index_cfg, url)}")
+        if index_cfg.root_index:
+            root_url = deployer._upload_root_index(index_config=index_cfg)
+            if root_url:
+                print(
+                    "index.html (root) → "
+                    f"{_index_display_url(backend, 'index.html', index_cfg, root_url)}"
+                )
+        return 0
 
-    if index_cfg.root_index and prefix:
-        root_url = deployer._upload_root_index(index_config=index_cfg)
-        if root_url:
-            print(
-                "index.html (root) → "
-                f"{_index_display_url(backend, 'index.html', index_cfg, root_url)}"
-            )
+    # No prefix given: refresh the index of every prefix in the container.
+    urls = deployer.refresh_container_indexes(index_config=index_cfg)
+    if not index_cfg.root_index and "index.html" not in urls:
+        url = deployer.rebuild_index("", index_config=index_cfg)
+        if url:
+            urls["index.html"] = url
+    for remote in sorted(urls):
+        print(f"{remote} → {_index_display_url(backend, remote, index_cfg, urls[remote])}")
 
     return 0
 

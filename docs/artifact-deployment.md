@@ -650,7 +650,7 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches |
 | `--no-deploy-cache-downloads` | Skip uploading the DL_DIR downloads cache (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip uploading the SSTATE_DIR sstate cache (use with `--deploy-cache`) |
-| `--update-index` | Regenerate and upload the browsable `index.html` after a successful deploy |
+| `--update-index` | Regenerate and upload the browsable `index.html` for every prefix in the container after a successful deploy |
 | `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
@@ -728,6 +728,10 @@ bsp build poky-qemuarm64-scarthgap --deploy --deploy-cache
 Rebuild the browsable HTML index straight from the live container listing —
 no build required.  This is the command to schedule when signed URLs expire.
 
+Without `--prefix` the index of *every* prefix in the container is rebuilt.
+Deploying with `--update-index` does the same, so `bsp deploy index` and
+`bsp build --deploy --update-index` leave the container in the same state.
+
 ```
 bsp deploy index [container] [--prefix PREFIX] [--root] [OPTIONS]
 ```
@@ -747,7 +751,7 @@ With such a registry, `bsp deploy index --root` needs no further arguments.
 
 | Option | Description |
 |--------|-------------|
-| `--prefix PREFIX` | Remote prefix to index (default: the whole container) |
+| `--prefix PREFIX` | Rebuild only this prefix (default: every prefix in the container) |
 | `--root` | Also generate the container-root `index.html` listing every prefix |
 | `--provider PROVIDER` | Provider: `azure` or `aws` (default: `deploy.provider`, else `azure`) |
 | `--account-url URL` | Azure storage account URL (default: `deploy.account_url`) |
@@ -1584,7 +1588,7 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--pattern PATTERN` | Override glob patterns (repeatable; replaces registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
-| `--update-index` | Regenerate and upload the browsable `index.html` after a successful deploy |
+| `--update-index` | Regenerate and upload the browsable `index.html` for every prefix in the container after a successful deploy |
 | `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
