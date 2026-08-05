@@ -729,15 +729,28 @@ Rebuild the browsable HTML index straight from the live container listing —
 no build required.  This is the command to schedule when signed URLs expire.
 
 ```
-bsp deploy index <container> [--prefix PREFIX] [--root] [OPTIONS]
+bsp deploy index [container] [--prefix PREFIX] [--root] [OPTIONS]
 ```
+
+The provider, container/bucket, Azure account URL, AWS region/profile and the
+`index:` options are taken from the root-level `deploy:` block of the registry
+configuration (`bsp-registry.yaml`); any option given on the command line wins:
+
+```yaml
+deploy:
+  provider: azure                                           # "azure" (default) or "aws"
+  account_url: "https://modularbsp.blob.core.windows.net"   # Azure only; supports $ENV{} expansion
+  container: bsp-registry-artifacts                         # Azure container name
+```
+
+With such a registry, `bsp deploy index --root` needs no further arguments.
 
 | Option | Description |
 |--------|-------------|
 | `--prefix PREFIX` | Remote prefix to index (default: the whole container) |
 | `--root` | Also generate the container-root `index.html` listing every prefix |
-| `--provider PROVIDER` | Provider: `azure` (default) or `aws` |
-| `--account-url URL` | Azure storage account URL |
+| `--provider PROVIDER` | Provider: `azure` or `aws` (default: `deploy.provider`, else `azure`) |
+| `--account-url URL` | Azure storage account URL (default: `deploy.account_url`) |
 | `--no-sign-urls` | Emit relative links instead of signed URLs (CDN / custom domain) |
 | `--sas-expiry ISO8601` | Expiry for generated signed URLs (default `2038-01-19T03:14:06Z`) |
 | `--tree` / `--flat` | Render the collapsible directory tree (default) or the legacy flat table |
@@ -747,6 +760,7 @@ bsp deploy index <container> [--prefix PREFIX] [--root] [OPTIONS]
 | `--dry-run` | Show what would be generated without uploading (no credentials needed) |
 
 ```bash
+bsp deploy index --root                       # container from bsp-registry.yaml
 bsp deploy index bsp-artifacts --root
 bsp deploy index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
 bsp deploy index bsp-artifacts --dry-run

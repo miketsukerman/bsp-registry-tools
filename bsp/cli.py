@@ -140,54 +140,96 @@ def _index_display_url(backend, remote_path: str, index_cfg, fallback: str) -> s
     return signed or fallback
 
 
-def _run_index_command(args) -> int:
+def _run_index_command(args, bsp_mgr=None) -> int:
     """
     Rebuild the browsable HTML index for a storage container.
 
     The index is regenerated purely from the live container listing, so no
     local build is required.  This is what lets a scheduled job refresh
     expiring signed URLs.
+
+    Provider, container and Azure account URL default to the root-level
+    ``deploy:`` block of the bsp-registry model (when a registry is loaded);
+    any explicitly given CLI option wins over the registry value.
     """
     from .deployer import ArtifactDeployer
     from .models import DeployConfig
     from .storage import create_backend
 
-    provider = getattr(args, "deploy_provider", None) or "azure"
-    container = args.container
+    registry_deploy = None
+    if bsp_mgr is not None:
+        try:
+            registry_deploy = bsp_mgr.get_registry_deploy_config()
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Failed to read deploy config from registry: %s", exc)
+
+    def _registry(attr, default=None):
+        value = getattr(registry_deploy, attr, None) if registry_deploy else None
+        return default if value is None else value
+
+    provider = (
+        getattr(args, "deploy_provider", None)
+        or _registry("provider")
+        or "azure"
+    )
+    container = (
+        getattr(args, "container", None)
+        or _registry("container")
+        or _registry("bucket")
+    )
+    if not container:
+        logging.error(
+            "No container given: pass it on the command line or define "
+            "'deploy.container' in the registry configuration."
+        )
+        return 1
+    account_url = getattr(args, "index_account_url", None) or _registry("account_url")
     dry_run = getattr(args, "dry_run", False)
 
-    defaults = IndexConfig()
+    defaults = getattr(registry_deploy, "index", None) or IndexConfig()
+
+    def _opt(attr, default):
+        value = getattr(args, attr, None)
+        return default if value is None else value
+
     collapse_depth = getattr(args, "index_collapse_depth", None)
+    facets_cli = [str(f) for f in (getattr(args, "index_facets", None) or [])]
     index_cfg = IndexConfig(
         enabled=True,
-        sign_urls=getattr(args, "index_sign_urls", True),
+        title=defaults.title,
+        sign_urls=_opt("index_sign_urls", defaults.sign_urls),
         sas_expiry=getattr(args, "index_sas_expiry", None) or defaults.sas_expiry,
-        root_index=getattr(args, "index_root", False),
-        tree=getattr(args, "index_tree", True),
+        root_index=_opt("index_root", False),
+        tree=_opt("index_tree", defaults.tree),
         collapse_depth=(
             defaults.collapse_depth if collapse_depth is None else collapse_depth
         ),
-        search=getattr(args, "index_search", True),
-        exclude=getattr(args, "index_exclude", None) or [],
+        search=_opt("index_search", defaults.search),
+        exclude=getattr(args, "index_exclude", None) or list(defaults.exclude),
+        show_dates=defaults.show_dates,
         facets=(
             []
             if getattr(args, "index_no_facets", False) is True
-            else [str(f) for f in (getattr(args, "index_facets", None) or [])]
-            or defaults.facets
+            else facets_cli or list(defaults.facets)
         ),
         theme=str(getattr(args, "index_theme", None) or defaults.theme),
-        accent=str(getattr(args, "index_accent", None) or ""),
+        accent=str(getattr(args, "index_accent", None) or defaults.accent or ""),
     )
     deploy_cfg = DeployConfig(provider=provider, container=container, index=index_cfg)
 
     if provider == "azure":
         backend_kwargs = {
             "container_name": container,
-            "account_url": getattr(args, "index_account_url", None),
+            "account_url": account_url,
             "dry_run": dry_run,
         }
     elif provider == "aws":
-        backend_kwargs = {"bucket_name": container, "dry_run": dry_run}
+        backend_kwargs = {
+            "bucket_name": container,
+            "region": _registry("region"),
+            "profile": _registry("profile"),
+            "dry_run": dry_run,
+        }
     else:
         logging.error("Unsupported index provider: %s", provider)
         return 1
@@ -1170,7 +1212,10 @@ def main() -> int:
         index_parser.add_argument(
             "container",
             type=str,
-            help="Azure Blob container or AWS S3 bucket name"
+            nargs="?",
+            default=None,
+            help="Azure Blob container or AWS S3 bucket name "
+                 "(default: 'deploy.container' from the registry configuration)"
         )
         index_parser.add_argument(
             "--prefix",
@@ -1190,9 +1235,11 @@ def main() -> int:
             "--provider",
             type=str,
             dest="deploy_provider",
-            default="azure",
+            default=None,
             metavar="PROVIDER",
-            help="Cloud storage provider: azure (default) or aws"
+            help="Cloud storage provider: azure or aws "
+                 "(default: 'deploy.provider' from the registry configuration, "
+                 "else azure)"
         )
         index_parser.add_argument(
             "--account-url",
@@ -1200,20 +1247,21 @@ def main() -> int:
             dest="index_account_url",
             default=None,
             metavar="URL",
-            help="Azure storage account URL"
+            help="Azure storage account URL "
+                 "(default: 'deploy.account_url' from the registry configuration)"
         )
         index_parser.add_argument(
             "--no-sign-urls",
             action="store_false",
             dest="index_sign_urls",
-            default=True,
+            default=None,
             help="Emit relative links instead of signed URLs (for CDN / custom domains)"
         )
         index_parser.add_argument(
             "--sas-expiry",
             type=str,
             dest="index_sas_expiry",
-            default=IndexConfig().sas_expiry,
+            default=None,
             metavar="ISO8601",
             help="Expiry timestamp for generated signed URLs (default: 2038-01-19T03:14:06Z)"
         )
@@ -1221,7 +1269,7 @@ def main() -> int:
             "--tree",
             action="store_true",
             dest="index_tree",
-            default=True,
+            default=None,
             help="Render a collapsible directory tree (default)"
         )
         index_parser.add_argument(
@@ -1264,13 +1312,13 @@ def main() -> int:
             "--theme",
             choices=["auto", "light", "dark"],
             dest="index_theme",
-            default=IndexConfig().theme,
+            default=None,
             help="Colour scheme of the generated page (default: auto)"
         )
         index_parser.add_argument(
             "--accent",
             dest="index_accent",
-            default="",
+            default=None,
             metavar="CSS_COLOR",
             help="Accent colour used by the generated page"
         )
@@ -1278,7 +1326,7 @@ def main() -> int:
             "--no-search",
             action="store_false",
             dest="index_search",
-            default=True,
+            default=None,
             help="Omit the interactive search box"
         )
         index_parser.add_argument(
@@ -2301,7 +2349,7 @@ def main() -> int:
                 return 1
 
         elif args.command == "index":
-            return _run_index_command(args)
+            return _run_index_command(args, bsp_mgr)
 
         elif args.command == "gather":
             device = getattr(args, "device", None)

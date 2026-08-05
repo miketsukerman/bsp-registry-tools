@@ -2720,6 +2720,20 @@ class BspManager:
     # Deploy
     # ------------------------------------------------------------------
 
+    def get_registry_deploy_config(self) -> Optional[DeployConfig]:
+        """
+        Return the root-level ``deploy`` config of the loaded registry.
+
+        ``$ENV{VAR}`` placeholders in ``account_url`` are expanded.  Returns
+        ``None`` when the registry defines no ``deploy`` block.
+        """
+        deploy = self.model.deploy if self.model else None
+        if deploy is None:
+            return None
+        if deploy.account_url:
+            deploy = replace(deploy, account_url=_expand_env(deploy.account_url))
+        return deploy
+
     def _resolve_deploy_config(
         self,
         resolved: ResolvedConfig,
@@ -2750,11 +2764,7 @@ class BspManager:
             Effective ``DeployConfig`` instance.
         """
         # Start with global registry deploy config or defaults
-        base = self.model.deploy if self.model and self.model.deploy else DeployConfig()
-
-        # Expand $ENV{VAR} in account_url if present
-        if base.account_url:
-            base = replace(base, account_url=_expand_env(base.account_url))
+        base = self.get_registry_deploy_config() or DeployConfig()
 
         # Apply preset-level deploy overrides (only fields that differ from defaults)
         if preset is not None and preset.deploy is not None:

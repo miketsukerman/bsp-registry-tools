@@ -2120,6 +2120,128 @@ class TestIndexCli:
         assert cfg.search is False
         assert cfg.exclude == ["cache/*"]
 
+    def test_index_command_uses_registry_deploy_config(self):
+        import bsp.cli as cli
+        from bsp.models import DeployConfig, IndexConfig
+
+        args = MagicMock()
+        args.container = None
+        args.deploy_provider = None
+        args.dry_run = True
+        args.index_sign_urls = None
+        args.index_sas_expiry = None
+        args.index_root = False
+        args.index_prefix = None
+        args.index_account_url = None
+        args.index_tree = None
+        args.index_collapse_depth = None
+        args.index_search = None
+        args.index_exclude = None
+        args.index_facets = None
+        args.index_no_facets = False
+        args.index_theme = None
+        args.index_accent = None
+
+        mgr = MagicMock()
+        mgr.get_registry_deploy_config.return_value = DeployConfig(
+            provider="azure",
+            container="bsp-registry-artifacts",
+            account_url="https://modularbsp.blob.core.windows.net",
+            index=IndexConfig(enabled=True, theme="dark", collapse_depth=3),
+        )
+
+        captured = {}
+
+        class _Deployer:
+            def __init__(self, cfg, backend):
+                captured["cfg"] = cfg
+
+            def rebuild_index(self, prefix, index_config=None):
+                captured["index_config"] = index_config
+                return None
+
+        def _create_backend(provider, **kwargs):
+            captured["provider"] = provider
+            captured["kwargs"] = kwargs
+            return object()
+
+        with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
+                patch("bsp.storage.create_backend", _create_backend):
+            assert cli._run_index_command(args, mgr) == 0
+
+        assert captured["provider"] == "azure"
+        assert captured["kwargs"]["container_name"] == "bsp-registry-artifacts"
+        assert captured["kwargs"]["account_url"] == (
+            "https://modularbsp.blob.core.windows.net"
+        )
+        assert captured["cfg"].container == "bsp-registry-artifacts"
+        assert captured["index_config"].theme == "dark"
+        assert captured["index_config"].collapse_depth == 3
+
+    def test_index_command_cli_overrides_registry(self):
+        import bsp.cli as cli
+        from bsp.models import DeployConfig
+
+        args = MagicMock()
+        args.container = "cli-container"
+        args.deploy_provider = "azure"
+        args.dry_run = True
+        args.index_sign_urls = None
+        args.index_sas_expiry = None
+        args.index_root = False
+        args.index_prefix = None
+        args.index_account_url = "https://cli.blob.core.windows.net"
+        args.index_tree = None
+        args.index_collapse_depth = None
+        args.index_search = None
+        args.index_exclude = None
+        args.index_facets = None
+        args.index_no_facets = False
+        args.index_theme = None
+        args.index_accent = None
+
+        mgr = MagicMock()
+        mgr.get_registry_deploy_config.return_value = DeployConfig(
+            provider="aws", bucket="registry-bucket",
+            account_url="https://registry.blob.core.windows.net",
+        )
+
+        captured = {}
+
+        class _Deployer:
+            def __init__(self, cfg, backend):
+                pass
+
+            def rebuild_index(self, prefix, index_config=None):
+                return None
+
+        def _create_backend(provider, **kwargs):
+            captured["provider"] = provider
+            captured["kwargs"] = kwargs
+            return object()
+
+        with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
+                patch("bsp.storage.create_backend", _create_backend):
+            assert cli._run_index_command(args, mgr) == 0
+
+        assert captured["provider"] == "azure"
+        assert captured["kwargs"]["container_name"] == "cli-container"
+        assert captured["kwargs"]["account_url"] == "https://cli.blob.core.windows.net"
+
+    def test_index_command_errors_without_container(self):
+        import bsp.cli as cli
+
+        args = MagicMock()
+        args.container = None
+        args.deploy_provider = None
+        args.dry_run = True
+        args.index_account_url = None
+
+        mgr = MagicMock()
+        mgr.get_registry_deploy_config.return_value = None
+
+        assert cli._run_index_command(args, mgr) == 1
+
     def test_rewrite_deploy_index_argv(self):
         from bsp.cli import _rewrite_deploy_index_argv
         assert _rewrite_deploy_index_argv(
