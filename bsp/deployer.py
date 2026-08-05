@@ -20,6 +20,9 @@ from typing import Dict, List, Optional, Tuple
 from .models import DeployConfig, IndexConfig
 from .storage.base import CloudStorageBackend
 
+#: Name of the build manifest written by ``bsp build`` into the build path.
+BUILD_MANIFEST_FILENAME = "build-manifest.json"
+
 # Meta tags copied from the reference implementation so browsers and proxies
 # never serve a stale index with expired signed links.
 _NO_CACHE_META = (
@@ -981,6 +984,7 @@ class DeployResult:
     artifacts: List[UploadedArtifact] = field(default_factory=list)
     cache_uploads: List[UploadedCache] = field(default_factory=list)
     manifest_url: Optional[str] = None
+    build_manifest_url: Optional[str] = None
     index_url: Optional[str] = None
     dry_run: bool = False
 
@@ -1252,6 +1256,9 @@ class ArtifactDeployer:
                 include_sstate=cache_cfg.sstate,
             )
 
+        if self.config.include_build_manifest and result.artifacts:
+            result.build_manifest_url = self._upload_build_manifest(build_path, prefix)
+
         if self.config.include_manifest and result.artifacts:
             manifest_url = self._upload_manifest(result, prefix, device, release, distro, vendor)
             result.manifest_url = manifest_url
@@ -1316,6 +1323,12 @@ class ArtifactDeployer:
             ],
             "total_size_bytes": result.total_bytes,
         }
+
+        if result.build_manifest_url:
+            manifest["build_manifest"] = {
+                "name": BUILD_MANIFEST_FILENAME,
+                "remote_url": result.build_manifest_url,
+            }
 
         if result.cache_uploads:
             manifest["yocto_cache"] = {
@@ -2074,6 +2087,64 @@ class ArtifactDeployer:
             index_config=cfg,
         )
         return self._upload_html(html_text, "index.html")
+
+    def _find_build_manifest(self, build_path: str) -> Optional[Path]:
+        """
+        Locate the ``build-manifest.json`` written by ``bsp build``.
+
+        Looks in the build path root first, then in the ``build/``
+        sub-directory used by some Yocto layouts.
+
+        Args:
+            build_path: Top-level Yocto build output directory.
+
+        Returns:
+            Path to the manifest, or ``None`` when it does not exist.
+        """
+        root = Path(build_path)
+        for candidate in (
+            root / BUILD_MANIFEST_FILENAME,
+            root / "build" / BUILD_MANIFEST_FILENAME,
+        ):
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _upload_build_manifest(self, build_path: str, prefix: str) -> Optional[str]:
+        """
+        Upload the build manifest produced by ``bsp build``.
+
+        Args:
+            build_path: Top-level Yocto build output directory.
+            prefix: Resolved remote prefix.
+
+        Returns:
+            Remote URL of the uploaded manifest, or ``None`` when the file is
+            missing or the upload failed.
+        """
+        local_path = self._find_build_manifest(build_path)
+        if local_path is None:
+            self.logger.warning(
+                "No %s found under '%s'; skipping build manifest upload.",
+                BUILD_MANIFEST_FILENAME,
+                build_path,
+            )
+            return None
+
+        remote_path = f"{prefix}/{BUILD_MANIFEST_FILENAME}"
+        if self.backend.dry_run:
+            self.logger.info(
+                "[dry-run] Would upload build manifest → %s", remote_path
+            )
+            print(f"  [dry-run] Would upload {BUILD_MANIFEST_FILENAME}...")
+            return f"dry-run:{remote_path}"
+
+        print(f"  Uploading {BUILD_MANIFEST_FILENAME}...")
+        try:
+            return self.backend.upload_file(local_path, remote_path)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Failed to upload build manifest: %s", exc)
+            return None
 
     def _upload_manifest(
         self,

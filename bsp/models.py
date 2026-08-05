@@ -1250,6 +1250,11 @@ class DeployConfig:
                           all uploaded artifacts (names, sizes, SHA-256
                           checksums, build metadata) is uploaded alongside
                           the artifacts.
+        include_build_manifest: When ``True`` (default), the
+                          ``build-manifest.json`` written by ``bsp build``
+                          into the build path is uploaded alongside the
+                          artifacts as ``<prefix>/build-manifest.json``.
+                          Missing files are skipped with a warning.
         archive: When set, all collected artifacts are bundled into a single
                  compressed archive **before** uploading.  Only the archive is
                  uploaded (plus the manifest when ``include_manifest`` is
@@ -1299,6 +1304,7 @@ class DeployConfig:
         "tmp/deploy/sdk",
     ])
     include_manifest: bool = True
+    include_build_manifest: bool = True
     archive: Optional["ArchiveConfig"] = None
     region: Optional[str] = None
     profile: Optional[str] = None
