@@ -453,7 +453,6 @@ deploy:
     title: "{vendor} {device} — {release}"
     sign_urls: true
     sas_expiry: "2038-01-19T03:14:06Z"
-    root_index: true
     tree: true
     collapse_depth: 1
     search: true
@@ -472,7 +471,7 @@ deploy:
 | `title`      | string | `"{vendor} {device} — {release}"` | Page title template.  Supports the same placeholders as `prefix`. |
 | `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
 | `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
-| `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+| `root_index` | bool   | `true`  | Deprecated and ignored.  A single `index.html` is always written at the container root; no `index.html` is generated inside artifact folders. |
 | `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
 | `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
 | `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
@@ -504,8 +503,8 @@ they are recovered by inverting the configured `prefix` template.  The
 container-root index lists one row per build prefix with its facets, newest
 first, and is filtered by the same bar.
 
-In the default tree view the remote directory structure below the indexed
-prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
+In the default tree view the remote directory structure of the container is
+preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
 keep their folders and identically named files in different directories stay
 distinct.  The inlined vanilla-JavaScript renderer provides:
 
@@ -554,7 +553,7 @@ Trade-offs to be aware of:
 - Anyone holding a link can download that blob until the SAS expires — treat
   the links as bearer tokens.
 - User-delegation links expire after at most 7 days; schedule
-  `bsp deploy index <container> --root` (for example from a nightly job) to re-sign
+  `bsp deploy index <container>` (for example from a nightly job) to re-sign
   them.
 - Signed links are not written to logs, and the account key / connection string
   is never logged or embedded in the page.
@@ -650,7 +649,7 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--deploy-cache` | Also upload Yocto DL_DIR / SSTATE_DIR caches |
 | `--no-deploy-cache-downloads` | Skip uploading the DL_DIR downloads cache (use with `--deploy-cache`) |
 | `--no-deploy-cache-sstate` | Skip uploading the SSTATE_DIR sstate cache (use with `--deploy-cache`) |
-| `--update-index` | Regenerate and upload the browsable `index.html` for every prefix in the container after a successful deploy |
+| `--update-index` | Regenerate and upload the browsable container-root `index.html` after a successful deploy |
 | `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 
@@ -728,12 +727,14 @@ bsp build poky-qemuarm64-scarthgap --deploy --deploy-cache
 Rebuild the browsable HTML index straight from the live container listing —
 no build required.  This is the command to schedule when signed URLs expire.
 
-Without `--prefix` the index of *every* prefix in the container is rebuilt.
-Deploying with `--update-index` does the same, so `bsp deploy index` and
-`bsp build --deploy --update-index` leave the container in the same state.
+A container has exactly **one** index page: `index.html` at its root, listing
+every artifact of every prefix as a navigable tree.  No `index.html` is written
+inside artifact folders.  Deploying with `--update-index` refreshes the same
+page, so `bsp deploy index` and `bsp build --deploy --update-index` leave the
+container in the same state.
 
 ```
-bsp deploy index [container] [--prefix PREFIX] [--root] [OPTIONS]
+bsp deploy index [container] [OPTIONS]
 ```
 
 The provider, container/bucket, Azure account URL, AWS region/profile and the
@@ -747,12 +748,12 @@ deploy:
   container: bsp-registry-artifacts                         # Azure container name
 ```
 
-With such a registry, `bsp deploy index --root` needs no further arguments.
+With such a registry, `bsp deploy index` needs no further arguments.
 
 | Option | Description |
 |--------|-------------|
-| `--prefix PREFIX` | Rebuild only this prefix (default: every prefix in the container) |
-| `--root` | Also generate the container-root `index.html` listing every prefix |
+| `--prefix PREFIX` | Deprecated and ignored: the root `index.html` always covers the whole container |
+| `--root` | Deprecated and ignored: the root `index.html` is always generated |
 | `--provider PROVIDER` | Provider: `azure` or `aws` (default: `deploy.provider`, else `azure`) |
 | `--account-url URL` | Azure storage account URL (default: `deploy.account_url`) |
 | `--no-sign-urls` | Emit relative links instead of signed URLs (CDN / custom domain) |
@@ -764,11 +765,10 @@ With such a registry, `bsp deploy index --root` needs no further arguments.
 | `--dry-run` | Show what would be generated without uploading (no credentials needed) |
 
 ```bash
-bsp deploy index --root                       # container from bsp-registry.yaml
-bsp deploy index bsp-artifacts --root
-bsp deploy index bsp-artifacts --prefix acme/myboard/scarthgap/2026-01-15
+bsp deploy index                              # container from bsp-registry.yaml
+bsp deploy index bsp-artifacts
 bsp deploy index bsp-artifacts --dry-run
-bsp deploy index bsp-artifacts --prefix acme/myboard --collapse-depth 2
+bsp deploy index bsp-artifacts --collapse-depth 2
 bsp deploy index bsp-artifacts --exclude 'cache/*' --exclude '*.sig'
 bsp deploy index bsp-artifacts --flat --no-search
 ```
@@ -1394,7 +1394,6 @@ deploy:
     title: "{vendor} {device} — {release}"
     sign_urls: true
     sas_expiry: "2038-01-19T03:14:06Z"
-    root_index: true
     tree: true
     collapse_depth: 1
     search: true
@@ -1413,7 +1412,7 @@ deploy:
 | `title`      | string | `"{vendor} {device} — {release}"` | Page title template.  Supports the same placeholders as `prefix`. |
 | `sign_urls`  | bool   | `true`  | Link artifacts through read-only signed URLs (Azure SAS / S3 presigned).  Set to `false` when a CDN, Front Door or custom domain fronts the container — relative links are emitted instead. |
 | `sas_expiry` | string | `"2038-01-19T03:14:06Z"` | Expiry timestamp (ISO-8601) for generated signed URLs.  The default is the 32-bit `time_t` limit. |
-| `root_index` | bool   | `true`  | Also generate a container-root `index.html` listing every prefix, newest first. |
+| `root_index` | bool   | `true`  | Deprecated and ignored.  A single `index.html` is always written at the container root; no `index.html` is generated inside artifact folders. |
 | `tree`       | bool   | `true`  | Render a collapsible tree that preserves the remote directory structure below the indexed prefix.  Set to `false` for the legacy flat table. |
 | `collapse_depth` | int | `1`    | Directory depth expanded by default in the tree view (`1` expands only the top level). |
 | `search`     | bool   | `true`  | Show the search / filter box.  Plain substrings and simple `*` / `?` globs are matched against the full relative path. |
@@ -1445,8 +1444,8 @@ they are recovered by inverting the configured `prefix` template.  The
 container-root index lists one row per build prefix with its facets, newest
 first, and is filtered by the same bar.
 
-In the default tree view the remote directory structure below the indexed
-prefix is preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
+In the default tree view the remote directory structure of the container is
+preserved, so nested artifacts (`images/…`, `sdk/…`, cache archives)
 keep their folders and identically named files in different directories stay
 distinct.  The inlined vanilla-JavaScript renderer provides:
 
@@ -1495,7 +1494,7 @@ Trade-offs to be aware of:
 - Anyone holding a link can download that blob until the SAS expires — treat
   the links as bearer tokens.
 - User-delegation links expire after at most 7 days; schedule
-  `bsp deploy index <container> --root` (for example from a nightly job) to re-sign
+  `bsp deploy index <container>` (for example from a nightly job) to re-sign
   them.
 - Signed links are not written to logs, and the account key / connection string
   is never logged or embedded in the page.
@@ -1588,7 +1587,7 @@ bsp deploy --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--pattern PATTERN` | Override glob patterns (repeatable; replaces registry config) |
 | `--archive-name NAME` | Bundle artifacts into a single archive with this name (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`, `{datetime}`) |
 | `--archive-format FORMAT` | Archive format: `tar.gz` (default), `tar.bz2`, `tar.xz`, `zip` |
-| `--update-index` | Regenerate and upload the browsable `index.html` for every prefix in the container after a successful deploy |
+| `--update-index` | Regenerate and upload the browsable container-root `index.html` after a successful deploy |
 | `--no-update-index` | Never generate an index, even when enabled in the registry |
 | `--dry-run` | List what would be uploaded without uploading (no credentials needed) |
 

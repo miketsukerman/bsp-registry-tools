@@ -1598,14 +1598,20 @@ class TestIndexGeneration:
         return ArtifactDeployer(cfg, backend or _SigningBackend())
 
     def test_one_row_per_artifact(self, tmp_path):
+        prefix = "acme/board/scarthgap/2026-01-01"
         deployer = self._deployer()
         result = _make_result(tmp_path)
-        deployer._upload_index(result, "acme/board/scarthgap/2026-01-01")
+        deployer.backend.uploaded = {
+            f"{prefix}/{art.local_path.name}": art.local_path
+            for art in result.artifacts
+        }
+        deployer._upload_index(result, prefix)
         uploaded = deployer.backend.uploaded
-        assert "acme/board/scarthgap/2026-01-01/index.html" in uploaded
-        html_text = deployer.backend.contents[
-            "acme/board/scarthgap/2026-01-01/index.html"
-        ]
+        assert "index.html" in uploaded
+        assert not any(
+            key.endswith("/index.html") for key in uploaded
+        )
+        html_text = deployer.backend.contents["index.html"]
         assert html_text.count("<tr><td><a href=") == 2
         assert "image.wic.gz" in html_text
         assert "sdk.tar.gz" in html_text
@@ -1623,8 +1629,13 @@ class TestIndexGeneration:
     def test_only_index_pages_excluded(self, tmp_path):
         deployer = self._deployer()
         result = _make_result(tmp_path, names=("image.wic", "index.html", "report.html"))
+        deployer.backend.uploaded = {
+            "p/image.wic": Path("a"),
+            "p/index.html": Path("i"),
+            "p/report.html": Path("r"),
+        }
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
+        html_text = deployer.backend.contents["index.html"]
         assert "image.wic" in html_text
         # genuine HTML build artifacts stay listed, only index pages are skipped
         assert "report.html" in html_text
@@ -1647,16 +1658,18 @@ class TestIndexGeneration:
     def test_signed_hrefs_used(self, tmp_path):
         deployer = self._deployer()
         result = _make_result(tmp_path, names=("image.wic",))
+        deployer.backend.uploaded = {"p/image.wic": Path("a")}
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
+        html_text = deployer.backend.contents["index.html"]
         assert "sig=TOKEN" in html_text
 
     def test_relative_hrefs_when_signing_disabled(self, tmp_path):
         deployer = self._deployer(sign_urls=False)
         result = _make_result(tmp_path, names=("image.wic",))
+        deployer.backend.uploaded = {"p/image.wic": Path("a")}
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
-        assert 'href="image.wic"' in html_text
+        html_text = deployer.backend.contents["index.html"]
+        assert 'href="p/image.wic"' in html_text
         assert "sig=TOKEN" not in html_text
 
     def test_unsupported_signing_falls_back_to_relative(self, tmp_path):
@@ -1666,9 +1679,10 @@ class TestIndexGeneration:
 
         deployer = self._deployer(backend=_Unsigned())
         result = _make_result(tmp_path, names=("image.wic",))
+        deployer.backend.uploaded = {"p/image.wic": Path("a")}
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
-        assert 'href="image.wic"' in html_text
+        html_text = deployer.backend.contents["index.html"]
+        assert 'href="p/image.wic"' in html_text
 
     def test_no_cache_meta_tags(self, tmp_path):
         deployer = self._deployer()
@@ -1680,7 +1694,7 @@ class TestIndexGeneration:
         deployer = self._deployer(backend=_SigningBackend(dry_run=True))
         result = _make_result(tmp_path, names=("image.wic",))
         url = deployer._upload_index(result, "p")
-        assert url == "dry-run:p/index.html"
+        assert url == "dry-run:index.html"
         assert "[dry-run]" in capsys.readouterr().out
 
     def test_index_upload_failure_does_not_raise(self, tmp_path):
@@ -1705,8 +1719,9 @@ class TestIndexGeneration:
         )
         backend = _SigningBackend()
         result = ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
-        assert result.index_url == "fake://v/d/r/2026-01-01/index.html"
-        assert "v/d/r/2026-01-01/index.html" in backend.uploaded
+        assert result.index_url == "fake://index.html"
+        assert "index.html" in backend.uploaded
+        assert "v/d/r/2026-01-01/index.html" not in backend.uploaded
 
     def test_deploy_skips_index_by_default(self, tmp_path):
         images = tmp_path / "tmp/deploy/images"
@@ -1727,10 +1742,11 @@ class TestIndexGeneration:
         cfg = DeployConfig(container="c", prefix="p")
         backend = _SigningBackend()
         ArtifactDeployer(cfg, backend).deploy(str(tmp_path), update_index=True)
-        assert "p/index.html" in backend.uploaded
+        assert "index.html" in backend.uploaded
+        assert "p/index.html" not in backend.uploaded
 
-    def test_deploy_refreshes_all_prefix_indexes(self, tmp_path):
-        """Deploying must refresh every prefix, like `bsp deploy index` does."""
+    def test_deploy_refreshes_whole_container_index(self, tmp_path):
+        """Deploying must refresh the root index, like `bsp deploy index` does."""
         from bsp.models import IndexConfig
         images = tmp_path / "tmp/deploy/images"
         images.mkdir(parents=True)
@@ -1743,22 +1759,24 @@ class TestIndexGeneration:
             index=IndexConfig(enabled=True),
         )
         ArtifactDeployer(cfg, backend).deploy(str(tmp_path))
-        assert "v/d/r/2026-01-01/index.html" in backend.uploaded
-        assert "old/prefix/index.html" in backend.uploaded
         assert "index.html" in backend.uploaded
+        assert not any(k.endswith("/index.html") for k in backend.uploaded)
+        page = backend.contents["index.html"]
+        assert "old/prefix/a.wic" in page
+        assert "v/d/r/2026-01-01/core-image.wic" in page
 
-    def test_refresh_container_indexes_skips_given_prefixes(self):
+    def test_refresh_container_indexes_writes_only_root_page(self):
         from bsp.models import IndexConfig
         backend = _SigningBackend()
         backend.uploaded = {"a/x.wic": Path("x"), "b/y.wic": Path("y")}
-        cfg = DeployConfig(
-            container="c", index=IndexConfig(enabled=True, root_index=False)
-        )
-        urls = ArtifactDeployer(cfg, backend).refresh_container_indexes(
-            skip_prefixes=["a"]
-        )
-        assert set(urls) == {"b/index.html"}
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        urls = ArtifactDeployer(cfg, backend).refresh_container_indexes()
+        assert set(urls) == {"index.html"}
         assert "a/index.html" not in backend.uploaded
+        assert "b/index.html" not in backend.uploaded
+        page = backend.contents["index.html"]
+        assert "a/x.wic" in page
+        assert "b/y.wic" in page
 
     def test_root_index_groups_by_prefix(self):
         from bsp.models import IndexConfig
@@ -1787,11 +1805,23 @@ class TestIndexGeneration:
         }
         cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
         deployer = ArtifactDeployer(cfg, backend)
-        deployer.rebuild_index("p")
-        html_text = backend.contents["p/index.html"]
+        deployer.rebuild_index()
+        html_text = backend.contents["index.html"]
         assert "a.wic" in html_text
         assert "manifest.json" in html_text
-        assert html_text.count("<tr><td><a href=") == 1
+        assert html_text.count("<tr><td><a href=") == 2
+
+    def test_rebuild_index_ignores_prefix_argument(self):
+        from bsp.models import IndexConfig
+        backend = _SigningBackend()
+        backend.uploaded = {"p/a.wic": Path("a"), "q/b.wic": Path("b")}
+        cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
+        url = ArtifactDeployer(cfg, backend).rebuild_index("p")
+        assert url == "fake://index.html"
+        assert "p/index.html" not in backend.uploaded
+        page = backend.contents["index.html"]
+        assert "p/a.wic" in page
+        assert "q/b.wic" in page
 
 
 class TestIndexTree:
@@ -1843,10 +1873,10 @@ class TestIndexTree:
             "p/index.html": Path("i"),
         }
         cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
-        ArtifactDeployer(cfg, backend).rebuild_index("p")
-        html_text = backend.contents["p/index.html"]
-        assert '"path": "images/a.wic"' in html_text
-        assert '"path": "sdk/deep/b.sh"' in html_text
+        ArtifactDeployer(cfg, backend).rebuild_index()
+        html_text = backend.contents["index.html"]
+        assert '"path": "p/images/a.wic"' in html_text
+        assert '"path": "p/sdk/deep/b.sh"' in html_text
         assert '"name": "index.html"' not in html_text
         assert "manifest.json" in html_text
 
@@ -1857,9 +1887,9 @@ class TestIndexTree:
         cfg = DeployConfig(
             container="c", index=IndexConfig(enabled=True, sign_urls=False)
         )
-        ArtifactDeployer(cfg, backend).rebuild_index("p")
-        html_text = backend.contents["p/index.html"]
-        assert '"href": "images/a.wic"' in html_text
+        ArtifactDeployer(cfg, backend).rebuild_index()
+        html_text = backend.contents["index.html"]
+        assert '"href": "p/images/a.wic"' in html_text
 
     def test_exclude_patterns_drop_paths(self):
         from bsp.models import IndexConfig
@@ -1870,18 +1900,19 @@ class TestIndexTree:
         }
         cfg = DeployConfig(
             container="c",
-            index=IndexConfig(enabled=True, exclude=["cache/*"]),
+            index=IndexConfig(enabled=True, exclude=["*/cache/*"]),
         )
-        ArtifactDeployer(cfg, backend).rebuild_index("p")
-        html_text = backend.contents["p/index.html"]
+        ArtifactDeployer(cfg, backend).rebuild_index()
+        html_text = backend.contents["index.html"]
         assert "a.wic" in html_text
         assert "downloads.tar.gz" not in html_text
 
     def test_tree_page_has_controls_and_data_island(self, tmp_path):
         deployer = self._deployer()
         result = _make_result(tmp_path)
+        deployer.backend.uploaded = {"p/image.wic": Path("a")}
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
+        html_text = deployer.backend.contents["index.html"]
         assert 'id="bsp-index-data" type="application/json"' in html_text
         assert 'id="bsp-search"' in html_text
         assert 'aria-expanded' in html_text
@@ -1891,16 +1922,21 @@ class TestIndexTree:
     def test_no_search_controls_when_disabled(self, tmp_path):
         deployer = self._deployer(search=False)
         result = _make_result(tmp_path)
+        deployer.backend.uploaded = {"p/image.wic": Path("a")}
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
+        html_text = deployer.backend.contents["index.html"]
         assert 'id="bsp-search"' not in html_text
         assert 'data-ext=' not in html_text
 
     def test_flat_mode_matches_legacy_table(self, tmp_path):
         deployer = self._deployer(tree=False)
         result = _make_result(tmp_path)
+        deployer.backend.uploaded = {
+            f"p/{art.local_path.name}": art.local_path
+            for art in result.artifacts
+        }
         deployer._upload_index(result, "p")
-        html_text = deployer.backend.contents["p/index.html"]
+        html_text = deployer.backend.contents["index.html"]
         assert "bsp-index-data" not in html_text
         assert html_text.count("<tr><td><a href=") == 2
 
@@ -1928,7 +1964,7 @@ class TestIndexTree:
         backend.uploaded = {f"p/f{i}.bin": Path("x") for i in range(5001)}
         cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
         with caplog.at_level(_logging.WARNING):
-            ArtifactDeployer(cfg, backend).rebuild_index("p")
+            ArtifactDeployer(cfg, backend).rebuild_index()
         assert any("soft limit" in r.message for r in caplog.records)
 
     def test_root_index_tree_is_navigable(self):
@@ -1942,7 +1978,7 @@ class TestIndexTree:
         ArtifactDeployer(cfg, backend)._upload_root_index()
         html_text = backend.contents["index.html"]
         assert '"name": "acme"' in html_text
-        assert '"path": "acme/board/scarthgap/2026-02-01/index.html"' in html_text
+        assert '"path": "acme/board/scarthgap/2026-02-01/b.wic"' in html_text
 
 
 class TestDetailedListing:
@@ -1966,8 +2002,8 @@ class TestDetailedListing:
 
         backend = _Detailed()
         cfg = DeployConfig(container="c", index=IndexConfig(enabled=True))
-        ArtifactDeployer(cfg, backend).rebuild_index("p")
-        html_text = backend.contents["p/index.html"]
+        ArtifactDeployer(cfg, backend).rebuild_index()
+        html_text = backend.contents["index.html"]
         assert '"size_bytes": 2048' in html_text
         assert "2026-01-01T00:00:00+00:00" in html_text
 
@@ -2137,9 +2173,9 @@ class TestIndexCli:
             def __init__(self, cfg, backend):
                 captured["cfg"] = cfg
 
-            def rebuild_index(self, prefix, index_config=None):
+            def refresh_container_indexes(self, index_config=None, skip_prefixes=None):
                 captured["index_config"] = index_config
-                return None
+                return {}
 
         with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
                 patch("bsp.storage.create_backend", return_value=object()):
@@ -2151,8 +2187,8 @@ class TestIndexCli:
         assert cfg.search is False
         assert cfg.exclude == ["cache/*"]
 
-    def test_index_command_without_prefix_refreshes_whole_container(self):
-        """`bsp deploy index` with no --prefix rebuilds every prefix index."""
+    def test_index_command_refreshes_whole_container(self):
+        """`bsp deploy index` always rebuilds the container-root index."""
         import bsp.cli as cli
         from bsp.models import IndexConfig
 
@@ -2183,9 +2219,12 @@ class TestIndexCli:
                 patch("bsp.storage.create_backend", return_value=backend):
             assert cli._run_index_command(args) == 0
 
-        assert "a/index.html" in backend.uploaded
-        assert "b/index.html" in backend.uploaded
+        assert "a/index.html" not in backend.uploaded
+        assert "b/index.html" not in backend.uploaded
         assert "index.html" in backend.uploaded
+        page = backend.contents["index.html"]
+        assert "a/x.wic" in page
+        assert "b/y.wic" in page
 
     def test_index_command_uses_registry_deploy_config(self):
         import bsp.cli as cli
@@ -2392,11 +2431,10 @@ class TestIndexCli:
             def __init__(self, cfg, be):
                 pass
 
-            def rebuild_index(self, prefix, index_config=None):
-                return "https://acct.blob.core.windows.net/c/a/b/index.html"
-
-            def _upload_root_index(self, index_config=None):
-                return "https://acct.blob.core.windows.net/c/index.html"
+            def refresh_container_indexes(self, index_config=None, skip_prefixes=None):
+                return {
+                    "index.html": "https://acct.blob.core.windows.net/c/index.html"
+                }
 
         with patch("bsp.deployer.ArtifactDeployer", _Deployer), \
                 patch("bsp.storage.create_backend", return_value=backend):
@@ -2411,8 +2449,10 @@ class TestIndexCli:
 
         assert self._run_with_backend(self._signed_index_args(True), _Backend()) == 0
         out = capsys.readouterr().out
-        assert "index.html → https://acct.blob.core.windows.net/c/a/b/index.html?sig=TOKEN" in out
-        assert "index.html (root) → https://acct.blob.core.windows.net/c/index.html?sig=TOKEN" in out
+        assert (
+            "index.html → https://acct.blob.core.windows.net/c/index.html?sig=TOKEN"
+            in out
+        )
 
     def test_index_command_falls_back_when_signing_unsupported(self, capsys):
         class _Backend:
@@ -2423,7 +2463,7 @@ class TestIndexCli:
 
         assert self._run_with_backend(self._signed_index_args(), _Backend()) == 0
         out = capsys.readouterr().out
-        assert "index.html → https://acct.blob.core.windows.net/c/a/b/index.html" in out
+        assert "index.html → https://acct.blob.core.windows.net/c/index.html" in out
         assert "sig=" not in out
 
     def test_index_command_falls_back_when_signing_fails(self, capsys):
@@ -2434,7 +2474,7 @@ class TestIndexCli:
                 raise RuntimeError("boom")
 
         assert self._run_with_backend(self._signed_index_args(), _Backend()) == 0
-        assert "a/b/index.html" in capsys.readouterr().out
+        assert "index.html" in capsys.readouterr().out
 
     def test_index_command_no_signing_prints_plain_url(self, capsys):
         class _Backend:
@@ -2539,7 +2579,7 @@ class TestIndexFacetPage:
     def test_facets_rendered_and_embedded(self, tmp_path):
         backend = _DownloadingBackend()
         self._deploy(tmp_path, backend)
-        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        page = backend.contents["index.html"]
         assert 'id="bsp-facets"' in page
         assert 'data-facet="preset"' in page
         assert 'data-value="my-preset"' in page
@@ -2551,14 +2591,14 @@ class TestIndexFacetPage:
     def test_upload_date_recorded(self, tmp_path):
         backend = _DownloadingBackend()
         self._deploy(tmp_path, backend)
-        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        page = backend.contents["index.html"]
         today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         assert today in page
 
     def test_facets_disabled_by_config(self, tmp_path):
         backend = _DownloadingBackend()
         self._deploy(tmp_path, backend, facets=[])
-        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        page = backend.contents["index.html"]
         assert 'id="bsp-facets"' not in page
 
     def test_index_meta_sidecar_written(self, tmp_path):
@@ -2575,11 +2615,8 @@ class TestIndexFacetPage:
         from bsp.models import IndexConfig
         backend = _DownloadingBackend()
         deployer = self._deploy(tmp_path, backend)
-        prefix = next(
-            k.rsplit("/", 1)[0] for k in backend.contents if k.endswith("index-meta.json")
-        )
-        deployer.rebuild_index(prefix, index_config=IndexConfig(enabled=True, sign_urls=False))
-        page = backend.contents[f"{prefix}/index.html"]
+        deployer.rebuild_index(index_config=IndexConfig(enabled=True, sign_urls=False))
+        page = backend.contents["index.html"]
         assert 'data-value="my-preset"' in page
         assert "index-meta.json" not in page.split('id="bsp-index-data"')[0]
 
@@ -2588,14 +2625,11 @@ class TestIndexFacetPage:
         from bsp.models import IndexConfig
         backend = _DownloadingBackend()
         deployer = self._deploy(tmp_path, backend)
-        prefix = next(
-            k.rsplit("/", 1)[0] for k in backend.contents if k.endswith("index-meta.json")
-        )
-        deployed = backend.contents[f"{prefix}/index.html"]
+        deployed = backend.contents["index.html"]
         deployer.rebuild_index(
-            prefix, index_config=IndexConfig(enabled=True, sign_urls=False)
+            index_config=IndexConfig(enabled=True, sign_urls=False)
         )
-        rebuilt = backend.contents[f"{prefix}/index.html"]
+        rebuilt = backend.contents["index.html"]
 
         def header(page):
             return page.split('<dl class="badges">')[0], page.split(
@@ -2631,7 +2665,7 @@ class TestIndexFacetPage:
     def test_no_external_resources(self, tmp_path):
         backend = _DownloadingBackend()
         self._deploy(tmp_path, backend)
-        page = next(v for k, v in backend.contents.items() if k.endswith("/index.html"))
+        page = backend.contents["index.html"]
         assert "http://" not in page
         assert "https://" not in page
         assert "<noscript>" in page

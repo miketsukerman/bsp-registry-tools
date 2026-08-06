@@ -1179,8 +1179,9 @@ class IndexConfig:
                     form (default ``"2038-01-19T03:14:06Z"``, the 32-bit
                     ``time_t`` limit).  Azure user-delegation SAS tokens are
                     capped at 7 days and clamped automatically.
-        root_index: When ``True`` (default) a container-root ``index.html``
-                    listing every prefix is generated as well.
+        root_index: Deprecated and ignored.  A single ``index.html`` is
+                    always written at the container root; ``index.html``
+                    pages are never generated inside artifact folders.
         tree: When ``True`` (default) the page renders a collapsible tree
               that preserves the remote directory structure.  Set to
               ``False`` for the legacy flat table.
@@ -1281,7 +1282,6 @@ class DeployConfig:
                      title: "{vendor} {device} — {release}"
                      sign_urls: true
                      sas_expiry: "2038-01-19T03:14:06Z"
-                     root_index: true
     """
     provider: str = "azure"
     container: Optional[str] = None
