@@ -863,6 +863,19 @@ def _matches_any(rel_path: str, patterns: Optional[List[str]]) -> bool:
     )
 
 
+#: Directory names that look like a build date / timestamp, e.g.
+#: ``2026-01-31`` or ``20260131-101500``.  They are listed newest first.
+_DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T_-]\d[\d\-:]*)?$|^\d{8}-\d{6}$")
+
+
+def _dir_sort_key(name: str):
+    """Sort key placing date-like directories newest first, others by name."""
+    if _DATE_DIR_RE.match(name):
+        digits = re.sub(r"\D", "", name)
+        return (0, -int(digits), name.lower())
+    return (1, 0, name.lower())
+
+
 def build_index_tree(files: List[Dict]) -> Dict:
     """
     Build a nested directory tree from a flat list of file records.
@@ -933,7 +946,11 @@ def build_index_tree(files: List[Dict]) -> Dict:
 
     def _sort(node: Dict) -> None:
         node["children"].sort(
-            key=lambda c: (c["type"] != "dir", c["name"].lower())
+            key=lambda c: (
+                c["type"] != "dir",
+                _dir_sort_key(c["name"]) if c["type"] == "dir"
+                else (1, 0, c["name"].lower()),
+            )
         )
         for child in node["children"]:
             if child["type"] == "dir":
@@ -1266,15 +1283,12 @@ class ArtifactDeployer:
         index_cfg = self.config.index or IndexConfig()
         index_enabled = index_cfg.enabled if update_index is None else update_index
         if index_enabled and result.artifacts:
+            # A single container-root index.html covers every prefix, so a
+            # deployment and a stand-alone `bsp deploy index` leave the
+            # container identical and no signed link silently expires.
             result.index_url = self._upload_index(
                 result, prefix, device, release, distro, vendor,
                 index_config=index_cfg, preset=preset,
-            )
-            # Refresh every other prefix too, so a deployment and a
-            # stand-alone `bsp deploy index` leave the container identical
-            # and signed links elsewhere do not silently expire.
-            self.refresh_container_indexes(
-                index_config=index_cfg, skip_prefixes=[prefix],
             )
 
         return result
@@ -1777,8 +1791,8 @@ class ArtifactDeployer:
         """
         Turn raw listing *records* into index entries relative to *prefix*.
 
-        ``index.html`` pages are always skipped (at any depth) and paths
-        matching ``IndexConfig.exclude`` are dropped.  The manifest href is
+        ``index.html`` pages and facet sidecars are always skipped (at any
+        depth) and paths matching ``IndexConfig.exclude`` are dropped.  The manifest href is
         returned separately so it can be rendered as a footer link.
 
         *facets* provides default facet values applied to every entry that
@@ -1799,7 +1813,7 @@ class ArtifactDeployer:
             if rel == "manifest.json":
                 manifest_href = self._artifact_href(remote_path, cfg, prefix)
                 continue
-            if rel == INDEX_META_NAME:
+            if name == INDEX_META_NAME:
                 continue
             last_modified = record.get("last_modified")
             entry_facets = dict(record.get("facets") or facets or {})
@@ -1835,7 +1849,13 @@ class ArtifactDeployer:
         index_config: Optional[IndexConfig] = None,
         preset: str = "",
     ) -> Optional[str]:
-        """Generate and upload ``{prefix}/index.html``; return its remote URL."""
+        """
+        Persist the facet sidecar of *prefix* and refresh the container-root
+        ``index.html``; return the remote URL of that root page.
+
+        A container has exactly one index page, at its root: no ``index.html``
+        is written inside artifact folders.
+        """
         cfg = index_config or self.config.index or IndexConfig()
         uploaded_at = datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
@@ -1853,60 +1873,10 @@ class ArtifactDeployer:
             )
             if value
         }
-        records: List[Dict] = []
-        for art in result.artifacts:
-            remote_path = self._artifact_remote_path(art, prefix)
-            records.append({
-                "path": remote_path,
-                "size": art.size_bytes,
-                "sha256": art.sha256,
-                "last_modified": uploaded_at,
-                "facets": facets,
-            })
-        for cache in getattr(result, "cache_uploads", None) or []:
-            remote_path = _remote_path_from_url(
-                getattr(cache, "remote_url", ""), prefix,
-                Path(getattr(cache, "local_archive", "") or "").name,
-            )
-            if remote_path:
-                records.append({
-                    "path": remote_path,
-                    "size": getattr(cache, "size_bytes", None),
-                    "sha256": getattr(cache, "sha256", ""),
-                    "last_modified": uploaded_at,
-                    "facets": facets,
-                })
 
         self._upload_index_meta(prefix, facets, uploaded_at)
 
-        entries, discovered_manifest = self._index_entries(
-            records, prefix, cfg, facets=facets
-        )
-        manifest_href = None
-        if result.manifest_url:
-            manifest_href = discovered_manifest or self._artifact_href(
-                f"{prefix}/manifest.json", cfg, prefix
-            )
-
-        html_text = self.generate_index_html(
-            entries,
-            title=self.compose_index_title(
-                cfg, device=device, release=release, distro=distro,
-                vendor=vendor, preset=preset,
-            ),
-            metadata={
-                "preset": preset,
-                "device": device,
-                "release": release,
-                "distro": distro,
-                "vendor": vendor,
-                "prefix": prefix,
-            },
-            manifest_href=manifest_href,
-            tree=build_index_tree(entries),
-            index_config=cfg,
-        )
-        return self._upload_html(html_text, f"{prefix}/index.html")
+        return self._upload_root_index(index_config=cfg)
 
     def _upload_index_meta(
         self,
@@ -1994,58 +1964,32 @@ class ArtifactDeployer:
 
     def rebuild_index(
         self,
-        prefix: str,
+        prefix: str = "",
         index_config: Optional[IndexConfig] = None,
     ) -> Optional[str]:
         """
-        Rebuild ``{prefix}/index.html`` purely from the live container listing.
+        Rebuild the container-root ``index.html`` from the live listing.
 
         This requires no local build and is what lets a scheduled job refresh
-        expiring signed links.  The remote directory structure below *prefix*
-        is preserved in the generated tree.
+        expiring signed links.  The whole remote directory structure of the
+        container is preserved in the generated tree, so a single page covers
+        every prefix.
 
         Args:
-            prefix: Remote prefix to index.
+            prefix: Deprecated and ignored; index pages are never written
+                    inside container folders.
             index_config: Optional index configuration override.
 
         Returns:
             Remote URL of the uploaded index, or ``None`` on failure.
         """
-        cfg = index_config or self.config.index or IndexConfig()
-        prefix = prefix.strip("/")
-        records = self.backend.list_artifacts_detailed(prefix)
-
-        facets = self._prefix_facets(prefix)
-        entries, manifest_href = self._index_entries(
-            records, prefix, cfg, facets=facets
-        )
-
-        preset = str(facets.get("preset") or "")
-        device = str(facets.get("device") or facets.get("machine") or "")
-        release = str(facets.get("release") or "")
-        distro = str(facets.get("distro") or "")
-        vendor = str(facets.get("vendor") or "")
-
-        html_text = self.generate_index_html(
-            entries,
-            title=self.compose_index_title(
-                cfg, device=device, release=release, distro=distro,
-                vendor=vendor, preset=preset,
-            ),
-            metadata={
-                "preset": preset,
-                "device": device,
-                "release": release,
-                "distro": distro,
-                "vendor": vendor,
-                "prefix": prefix,
-            },
-            manifest_href=manifest_href,
-            tree=build_index_tree(entries),
-            index_config=cfg,
-        )
-        remote = f"{prefix}/index.html" if prefix else "index.html"
-        return self._upload_html(html_text, remote)
+        if str(prefix or "").strip("/"):
+            self.logger.warning(
+                "Per-prefix index pages are no longer generated; refreshing "
+                "the container-root index.html instead of '%s/index.html'.",
+                str(prefix).strip("/"),
+            )
+        return self._upload_root_index(index_config=index_config)
 
     def discover_index_prefixes(
         self,
@@ -2084,37 +2028,28 @@ class ArtifactDeployer:
         skip_prefixes: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
-        Rebuild the index of every artifact prefix in the container.
+        Refresh the container-root ``index.html``.
 
         Both ``bsp deploy index`` and ``bsp deploy``/``bsp build --deploy
         --update-index`` funnel through this method so a deployment and a
         stand-alone index rebuild leave the container in the same state (and
-        so signed links in *all* prefixes are refreshed, not only the one
-        that was just uploaded).  The container-root page is rebuilt last when
-        ``IndexConfig.root_index`` is enabled.
+        so every signed link on the page is refreshed, not only those of the
+        prefix that was just uploaded).  Exactly one page is written, at the
+        container root; artifact folders never receive an ``index.html``.
 
         Args:
             index_config: Optional index configuration override.
-            skip_prefixes: Prefixes whose page was already generated by the
-                           caller (e.g. the freshly deployed prefix).
+            skip_prefixes: Deprecated and ignored; kept for compatibility.
 
         Returns:
-            Mapping of remote ``index.html`` path to its uploaded URL, for the
-            pages that were rebuilt successfully.
+            Mapping of remote ``index.html`` path to its uploaded URL, empty
+            when the upload failed.
         """
         cfg = index_config or self.config.index or IndexConfig()
-        skip = {str(p).strip("/") for p in (skip_prefixes or [])}
         urls: Dict[str, str] = {}
-        for prefix in self.discover_index_prefixes(cfg):
-            if prefix in skip:
-                continue
-            url = self.rebuild_index(prefix, index_config=cfg)
-            if url:
-                urls[f"{prefix}/index.html"] = url
-        if cfg.root_index:
-            root_url = self._upload_root_index(index_config=cfg)
-            if root_url:
-                urls["index.html"] = root_url
+        root_url = self._upload_root_index(index_config=cfg)
+        if root_url:
+            urls["index.html"] = root_url
         return urls
 
     def _upload_root_index(
@@ -2122,38 +2057,41 @@ class ArtifactDeployer:
         index_config: Optional[IndexConfig] = None,
     ) -> Optional[str]:
         """
-        Generate and upload a container-root ``index.html`` presenting every
-        indexed prefix as a navigable tree, newest first.
+        Generate and upload the container-root ``index.html`` presenting every
+        artifact in the container as a navigable tree, newest first.
         """
         cfg = index_config or self.config.index or IndexConfig()
         if self.backend.dry_run:
             print("[dry-run] Would generate and upload root index → index.html")
             return "dry-run:index.html"
 
-        prefixes = self.discover_index_prefixes(cfg)
+        try:
+            records = self.backend.list_artifacts_detailed("")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Failed to list container for index refresh: %s", exc)
+            return None
 
-        entries = []
-        for prefix in prefixes:
-            facets = self._prefix_facets(prefix)
-            entries.append({
-                "name": prefix.rsplit("/", 1)[-1],
-                "path": f"{prefix}/index.html",
-                "href": f"{prefix}/index.html" if not cfg.sign_urls
-                else self._artifact_href(f"{prefix}/index.html", cfg),
-                "size_bytes": 0,
-                "sha256": "",
-                "last_modified": facets.get("date", ""),
-                "facets": facets,
-            })
-        entries.sort(
-            key=lambda e: (str(e.get("last_modified") or ""), e["path"]),
-            reverse=True,
-        )
+        facet_cache: Dict[str, Dict] = {}
+        enriched: List[Dict] = []
+        for record in records:
+            remote_path = str(record.get("path") or "")
+            prefix = remote_path.rsplit("/", 1)[0] if "/" in remote_path else ""
+            if prefix not in facet_cache:
+                facet_cache[prefix] = self._prefix_facets(prefix)
+            entry = dict(record)
+            entry["facets"] = record.get("facets") or facet_cache[prefix]
+            enriched.append(entry)
+
+        entries, _manifest_href = self._index_entries(enriched, "", cfg)
+        prefixes = {
+            entry["path"].rsplit("/", 1)[0]
+            for entry in entries if "/" in entry["path"]
+        }
 
         html_text = self.generate_index_html(
             entries,
             title=DEFAULT_INDEX_TITLE,
-            metadata={"prefixes": len(entries)},
+            metadata={"prefixes": len(prefixes)},
             tree=build_index_tree(entries),
             index_config=cfg,
         )

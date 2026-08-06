@@ -197,9 +197,7 @@ def _run_index_command(args, bsp_mgr=None) -> int:
         title=defaults.title,
         sign_urls=_opt("index_sign_urls", defaults.sign_urls),
         sas_expiry=getattr(args, "index_sas_expiry", None) or defaults.sas_expiry,
-        root_index=_opt(
-            "index_root", defaults.root_index if registry_index else False
-        ),
+        root_index=True,
         tree=_opt("index_tree", defaults.tree),
         collapse_depth=(
             defaults.collapse_depth if collapse_depth is None else collapse_depth
@@ -243,20 +241,12 @@ def _run_index_command(args, bsp_mgr=None) -> int:
     deployer = ArtifactDeployer(deploy_cfg, backend)
     prefix = getattr(args, "index_prefix", None) or ""
     if prefix.strip("/"):
-        url = deployer.rebuild_index(prefix, index_config=index_cfg)
-        if url:
-            remote = f"{prefix.strip('/')}/index.html"
-            print(f"index.html → {_index_display_url(backend, remote, index_cfg, url)}")
-        if index_cfg.root_index:
-            root_url = deployer._upload_root_index(index_config=index_cfg)
-            if root_url:
-                print(
-                    "index.html (root) → "
-                    f"{_index_display_url(backend, 'index.html', index_cfg, root_url)}"
-                )
-        return 0
+        logging.warning(
+            "--prefix is deprecated and ignored: a single index.html is "
+            "generated at the container root covering every prefix."
+        )
 
-    # No prefix given: refresh the index of every prefix in the container.
+    # A single container-root index.html is (re)generated, always.
     urls = deployer.refresh_container_indexes(index_config=index_cfg)
     for remote in sorted(urls):
         print(f"{remote} → {_index_display_url(backend, remote, index_cfg, urls[remote])}")
@@ -1229,14 +1219,16 @@ def main() -> int:
             dest="index_prefix",
             default=None,
             metavar="PREFIX",
-            help="Remote prefix to index (default: the whole container)"
+            help="Deprecated and ignored: the container-root index.html "
+                 "always covers the whole container"
         )
         index_parser.add_argument(
             "--root",
             action="store_true",
             dest="index_root",
             default=None,
-            help="Also generate the container-root index.html listing every prefix"
+            help="Deprecated and ignored: the container-root index.html is "
+                 "always generated"
         )
         index_parser.add_argument(
             "--provider",
