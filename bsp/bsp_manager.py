@@ -3736,14 +3736,32 @@ class BspManager:
     # Test backends (LAVA + direct local/SSH/serial)
     # ------------------------------------------------------------------
 
-    def _print_test_summary(self, backend_name: str, suites: List[dict], extra: str = "") -> None:
-        """Print a backend-neutral test summary table."""
+    def _print_test_summary(
+        self,
+        backend_name: str,
+        suites: List[dict],
+        extra: str = "",
+        case_summary: Optional[dict] = None,
+    ) -> None:
+        """Print a backend-neutral test summary table.
+
+        *case_summary* optionally carries aggregate per-test-case counts
+        (total/passed/failed/not run/manual) collected from LAVA signals.
+        """
         if extra:
             print(extra)
         if not suites:
             print(f"{backend_name}: no test suite results.")
             return
         print(f"\n{backend_name} Test Results:")
+        if case_summary and int(case_summary.get("total", 0)) > 0:
+            print(
+                f"  Tests: {int(case_summary.get('total', 0))} total, "
+                f"{int(case_summary.get('passed', 0))} passed, "
+                f"{int(case_summary.get('failed', 0))} failed, "
+                f"{int(case_summary.get('not_run', 0))} not run, "
+                f"{int(case_summary.get('manual', 0))} manual"
+            )
         for suite in suites:
             passed = bool(suite.get("passed", False))
             status_icon = "✓" if passed else "✗"
@@ -3951,6 +3969,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_requirement_catalogs: Optional[List[str]] = None,
         test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
@@ -3979,6 +3998,7 @@ class BspManager:
             repo_ref=test_repo_ref,
             definition_paths=test_definition_paths,
             local_job_paths=test_job_paths,
+            requirement_catalog_paths=test_requirement_catalogs,
             suites=test_suites,
             params=test_params,
             timeout=direct_timeout,
@@ -4042,7 +4062,33 @@ class BspManager:
                         case.log_path,
                         case.command,
                     )
-        self._print_test_summary(f"Direct ({result.backend})", summary_suites)
+                    for signal in case.lava_signals:
+                        logging.debug(
+                            "Direct test case: suite=%s id=%s requirement=%s status=%s description=%s",
+                            suite.name,
+                            signal.test_case_id,
+                            signal.requirement_id,
+                            signal.report_result,
+                            signal.description,
+                        )
+        signals = [
+            signal
+            for suite in result.suites
+            for case in suite.cases
+            for signal in case.lava_signals
+        ]
+        case_summary = {
+            "total": len(signals),
+            "passed": sum(1 for s in signals if s.passed),
+            "failed": sum(1 for s in signals if s.failed),
+            "not_run": sum(1 for s in signals if s.not_run),
+            "manual": sum(1 for s in signals if s.is_manual),
+        }
+        self._print_test_summary(
+            f"Direct ({result.backend})",
+            summary_suites,
+            case_summary=case_summary,
+        )
         return result.passed
 
     def _test_resolved(
@@ -4058,6 +4104,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_requirement_catalogs: Optional[List[str]] = None,
         test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
@@ -4116,6 +4163,7 @@ class BspManager:
             test_repo_ref=test_repo_ref,
             test_definition_paths=test_definition_paths,
             test_job_paths=test_job_paths,
+            test_requirement_catalogs=test_requirement_catalogs,
             test_suites=test_suites,
             test_params=test_params,
             direct_timeout=direct_timeout,
@@ -4145,6 +4193,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_requirement_catalogs: Optional[List[str]] = None,
         test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
@@ -4194,6 +4243,7 @@ class BspManager:
                 test_repo_ref=test_repo_ref,
                 test_definition_paths=test_definition_paths,
                 test_job_paths=test_job_paths,
+                test_requirement_catalogs=test_requirement_catalogs,
                 test_suites=test_suites,
                 test_params=test_params,
                 direct_timeout=direct_timeout,
@@ -4225,6 +4275,7 @@ class BspManager:
         test_repo_ref: Optional[str] = None,
         test_definition_paths: Optional[List[str]] = None,
         test_job_paths: Optional[List[str]] = None,
+        test_requirement_catalogs: Optional[List[str]] = None,
         test_suites: Optional[List[str]] = None,
         test_params: Optional[Dict[str, str]] = None,
         direct_timeout: Optional[int] = None,
@@ -4279,6 +4330,7 @@ class BspManager:
             test_repo_ref=test_repo_ref,
             test_definition_paths=test_definition_paths,
             test_job_paths=test_job_paths,
+            test_requirement_catalogs=test_requirement_catalogs,
             test_suites=test_suites,
             test_params=test_params,
             direct_timeout=direct_timeout,

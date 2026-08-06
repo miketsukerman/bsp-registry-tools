@@ -1745,6 +1745,17 @@ def main() -> int:
                  "No --test-repo-url is required when using this option."
         )
         test_parser.add_argument(
+            "--test-requirements",
+            action="append",
+            dest="test_requirement_catalogs",
+            metavar="PATH",
+            help="Requirement catalogue YAML providing test case descriptions, "
+                 "specifications, versions and categories for the report "
+                 "(repeatable). Resolved inside the test-definition root first, "
+                 "then as an absolute path. Defaults to 'requirements.yaml' at "
+                 "the test-definition root when present. Direct backends only."
+        )
+        test_parser.add_argument(
             "--test-suite",
             action="append",
             dest="test_suites",
@@ -2487,6 +2498,7 @@ def main() -> int:
             test_definition_paths = getattr(args, "test_definition_paths", None)
             test_job_paths = getattr(args, "test_job_paths", None)
             test_suites = getattr(args, "test_suites", None)
+            test_requirement_catalogs = getattr(args, "test_requirement_catalogs", None)
             direct_timeout = getattr(args, "direct_timeout", None)
             direct_output_dir = getattr(args, "direct_output_dir", None)
             ssh_host = getattr(args, "ssh_host", None)
@@ -2520,6 +2532,7 @@ def main() -> int:
                     test_definition_paths=test_definition_paths,
                     test_job_paths=test_job_paths,
                     test_suites=test_suites,
+                    test_requirement_catalogs=test_requirement_catalogs,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,
@@ -2549,6 +2562,7 @@ def main() -> int:
                     test_definition_paths=test_definition_paths,
                     test_job_paths=test_job_paths,
                     test_suites=test_suites,
+                    test_requirement_catalogs=test_requirement_catalogs,
                     test_params=test_params,
                     direct_timeout=direct_timeout,
                     direct_output_dir=direct_output_dir,

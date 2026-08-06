@@ -515,6 +515,38 @@ class TestTestCommand:
         assert kwargs.get("ssh_serial_device") == "/dev/ttyUSB0"
         assert kwargs.get("ssh_serial_baudrate") == 9600
 
+    def test_test_command_forwards_requirement_catalog_flag(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test", "test-bsp",
+            "--backend", "direct-ssh",
+            "--test-definition-path", "smoke.yaml",
+            "--test-requirements", "requirements.yaml",
+            "--test-requirements", "extra-requirements.yaml",
+        ]):
+            with patch.object(BspManager, "test_bsp", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("test_requirement_catalogs") == [
+            "requirements.yaml",
+            "extra-requirements.yaml",
+        ]
+
+    def test_test_by_components_forwards_requirement_catalog_flag(self, registry_file):
+        with patch("sys.argv", [
+            "bsp", "--registry", str(registry_file), "test",
+            "--device", "test-device", "--release", "test-release",
+            "--backend", "direct-local",
+            "--test-requirements", "requirements.yaml",
+        ]):
+            with patch.object(BspManager, "test_by_components", return_value=True) as mock_test:
+                exit_code = bsp.main()
+
+        assert exit_code == 0
+        _, kwargs = mock_test.call_args
+        assert kwargs.get("test_requirement_catalogs") == ["requirements.yaml"]
+
     def test_test_command_forwards_test_suite_flag(self, registry_file):
         with patch("sys.argv", [
             "bsp", "--registry", str(registry_file), "test", "test-bsp",

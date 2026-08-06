@@ -4489,6 +4489,7 @@ class TestTestBackendDispatch:
             test_repo_ref=None,
             test_definition_paths=None,
             test_job_paths=None,
+            test_requirement_catalogs=None,
             test_suites=None,
             test_params=None,
             direct_timeout=None,
@@ -4526,6 +4527,25 @@ class TestTestBackendDispatch:
         overrides = mock_run.call_args.kwargs["overrides"]
         assert overrides.local_job_paths == ["/tmp/job.yaml"]
         assert overrides.suites == ["adv-context"]
+
+    def test_requirement_catalogs_reach_direct_run_overrides(self, registry_file):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        resolved, _preset = manager.resolver.resolve_preset("test-bsp")
+        testing_config = MagicMock()
+        testing_config.direct = MagicMock()
+
+        direct_result = SimpleNamespace(backend="direct-local", passed=True, suites=[])
+        with patch("bsp.direct_runner.DirectTestRunner.run", return_value=direct_result) as mock_run:
+            assert manager._test_resolved_direct(
+                resolved=resolved,
+                testing_config=testing_config,
+                backend="direct-local",
+                test_requirement_catalogs=["requirements.yaml"],
+            ) is True
+
+        overrides = mock_run.call_args.kwargs["overrides"]
+        assert overrides.requirement_catalog_paths == ["requirements.yaml"]
 
     def test_test_suites_ignored_for_lava_backend(self, registry_file, caplog):
         manager = BspManager(config_path=str(registry_file))
@@ -4569,6 +4589,7 @@ class TestVerboseTestExecutionLogging:
                             duration=0.5,
                             log_path="/tmp/logs/smoke/step-1.log",
                             command="echo ok",
+                            lava_signals=[],
                         )
                     ],
                 )
