@@ -19,6 +19,12 @@ from bsp.direct_runner import (
     _SshTransport,
 )
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
+from bsp.requirements_catalog import (
+    discover_catalog,
+    humanize_test_case_id,
+    inline_catalog,
+    load_catalog_file,
+)
 
 
 class _TableDataCellParser(HTMLParser):
@@ -2403,3 +2409,406 @@ actions:
 
         assert result.passed is True
         assert [s.name for s in result.suites] == ["two-suite"]
+
+
+class TestLavaSignalAttributeParsing:
+    """Tests for extended ``<LAVA_SIGNAL_TESTCASE ...>`` attribute parsing."""
+
+    def test_legacy_two_field_signal(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping RESULT=pass>"
+        )
+        assert len(signals) == 1
+        assert signals[0].test_case_id == "ping"
+        assert signals[0].result == "pass"
+        assert signals[0].passed is True
+        assert signals[0].extra == {}
+
+    def test_measurement_and_units(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=cpu0 RESULT=pass MEASUREMENT=1600000 UNITS=Hz>"
+        )
+        assert signals[0].measurement == "1600000"
+        assert signals[0].units == "Hz"
+        assert signals[0].report_result == "PASS (1600000 Hz)"
+
+    def test_quoted_values_with_spaces(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=disk RESULT=pass '
+            'DESCRIPTION="The specified disk shall be readable">'
+        )
+        assert signals[0].description == "The specified disk shall be readable"
+
+    def test_requirement_id_attribute(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CPU-MODEL-x RESULT=pass REQUIREMENT_ID=L-CPU-MODEL>"
+        )
+        assert signals[0].requirement_id == "L-CPU-MODEL"
+
+    def test_unknown_attributes_are_preserved(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=x RESULT=pass CUSTOM=value>"
+        )
+        assert signals[0].extra == {"CUSTOM": "value"}
+
+    def test_skip_result_is_not_a_failure(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=x RESULT=skip>"
+        )
+        assert signals[0].not_run is True
+        assert signals[0].failed is False
+        assert signals[0].passed is False
+
+    def test_manual_result(self):
+        signals = DirectTestRunner._parse_lava_signals(
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=x RESULT=manual>"
+        )
+        assert signals[0].is_manual is True
+        assert signals[0].failed is False
+        assert signals[0].report_result == "MANUAL"
+
+    def test_signal_without_result_is_ignored(self):
+        assert DirectTestRunner._parse_lava_signals("<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=x>") == []
+
+
+class TestRequirementCatalog:
+    """Tests for requirement catalogue loading and resolution."""
+
+    def test_mapping_catalog_file(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text(
+            "L-CPU-MODEL:\n"
+            "  description: The Linux Kernel shall enumerate the specified CPU Model\n"
+            "  specification: Cortex-A53\n"
+            "  version: 1\n"
+            "  category: CPU\n",
+            encoding="utf-8",
+        )
+        catalog = load_catalog_file(path)
+        entry = catalog.get("L-CPU-MODEL")
+        assert entry.description == "The Linux Kernel shall enumerate the specified CPU Model"
+        assert entry.specification_for() == "Cortex-A53"
+        assert entry.version == "1"
+        assert entry.category == "CPU"
+
+    def test_list_catalog_with_requirements_wrapper(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text(
+            "requirements:\n"
+            "  - id: L-DISK-DEV\n"
+            "    description: The Linux Kernel shall enumerate the specified disk device\n"
+            "    category: DISK\n",
+            encoding="utf-8",
+        )
+        catalog = load_catalog_file(path)
+        assert catalog.get("L-DISK-DEV").category == "DISK"
+
+    def test_malformed_catalog_is_skipped(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text("this: [is, not: valid\n", encoding="utf-8")
+        assert len(load_catalog_file(path)) == 0
+
+    def test_missing_catalog_file_yields_empty_catalog(self, tmp_path):
+        catalog = discover_catalog(tmp_path)
+        assert len(catalog) == 0
+
+    def test_discover_conventional_catalog(self, tmp_path):
+        (tmp_path / "requirements.yaml").write_text("L-X:\n  description: X\n", encoding="utf-8")
+        assert len(discover_catalog(tmp_path)) == 1
+
+    def test_discover_explicit_path(self, tmp_path):
+        (tmp_path / "custom.yaml").write_text("L-Y:\n  description: Y\n", encoding="utf-8")
+        catalog = discover_catalog(tmp_path, explicit_paths=["custom.yaml"])
+        assert catalog.get("L-Y").description == "Y"
+
+    def test_longest_prefix_resolution_with_instance(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text(
+            "L-CPU-FREQ-SCALING:\n  description: base\n"
+            "L-CPU-FREQ-SCALING-MAX:\n"
+            "  description: The CPU should match the specified maximum scaling frequency\n"
+            "  specification:\n    cpu0: 1600000\n    cpu1: 1500000\n",
+            encoding="utf-8",
+        )
+        catalog = load_catalog_file(path)
+        entry, instance = catalog.resolve("L-CPU-FREQ-SCALING-MAX-cpu1")
+        assert entry.id == "L-CPU-FREQ-SCALING-MAX"
+        assert instance == "cpu1"
+        assert entry.specification_for(instance) == "1500000"
+
+    def test_explicit_requirement_id_wins_over_prefix(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text("L-A:\n  description: A\nL-A-B:\n  description: AB\n", encoding="utf-8")
+        catalog = load_catalog_file(path)
+        entry, instance = catalog.resolve("L-A-B-c", requirement_id="L-A")
+        assert entry.id == "L-A"
+        assert instance == "B-c"
+
+    def test_inline_catalog_from_definition(self):
+        catalog = inline_catalog(
+            {"metadata": {"test_cases": {"L-X": {"description": "inline description"}}}}
+        )
+        assert catalog.get("L-X").description == "inline description"
+
+    def test_humanize_test_case_id(self):
+        assert humanize_test_case_id("ping-gateway") == "Ping gateway"
+
+
+class TestCatalogEnrichedReport:
+    """Tests for report rows enriched by the requirement catalogue."""
+
+    def _run(self, tmp_path, definition_text, catalog_text=None, params=None, catalogs=None):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "suite.yaml").write_text(definition_text, encoding="utf-8")
+        if catalog_text is not None:
+            (repo / "requirements.yaml").write_text(catalog_text, encoding="utf-8")
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[
+                TestDefinitionSource(
+                    repo_url=repo.as_uri(),
+                    paths=["defs/suite.yaml"],
+                    params=params or {},
+                )
+            ],
+            timeout=30,
+        )
+        return runner.run(
+            resolved=SimpleNamespace(build_path=str(tmp_path / "build")),
+            direct_config=cfg,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                output_dir=str(tmp_path / "out"),
+                requirement_catalog_paths=catalogs,
+            ),
+            label="catalog-run",
+        )
+
+    _DEFINITION = (
+        "metadata:\n  name: cpu-suite\n"
+        "run:\n  steps:\n"
+        "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CPU-FREQ-SCALING-MAX-cpu0 "
+        "RESULT=pass MEASUREMENT=1600000>\\n'\"\n"
+    )
+    _CATALOG = (
+        "L-CPU-FREQ-SCALING-MAX:\n"
+        "  description: The CPU should match the specified maximum scaling frequency\n"
+        "  specification:\n    cpu0: 1600000\n"
+        "  version: 1\n"
+        "  category: CPU\n"
+    )
+
+    def test_catalog_metadata_reaches_html_and_json(self, tmp_path):
+        result = self._run(tmp_path, self._DEFINITION, self._CATALOG)
+        assert result.passed is True
+
+        signal = result.suites[0].cases[0].lava_signals[0]
+        assert signal.requirement_id == "L-CPU-FREQ-SCALING-MAX"
+        assert signal.description == "The CPU should match the specified maximum scaling frequency"
+        assert signal.specification == "1600000"
+        assert signal.version == "1"
+        assert signal.category == "CPU"
+        assert signal.report_result == "PASS (1600000)"
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Requirement Id" in html
+        assert "Req. description" in html
+        assert "Req. specification" in html
+        assert "Req. version" in html
+        assert "The CPU should match the specified maximum scaling frequency" in html
+        assert "PASS (1600000)" in html
+        assert "Requirements, specification, and verification" in html
+        assert "Categories" in html
+
+        summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
+        sig_json = summary["suites"][0]["cases"][0]["lava_signals"][0]
+        assert sig_json["requirement_id"] == "L-CPU-FREQ-SCALING-MAX"
+        assert sig_json["category"] == "CPU"
+        assert sig_json["verification_status"] == "PASS (1600000)"
+        # Existing keys keep their original meaning.
+        assert sig_json["test_case_id"] == "L-CPU-FREQ-SCALING-MAX-cpu0"
+        assert sig_json["result"] == "pass"
+        assert summary["report"]["passed_lava_cases"] == 1
+        assert summary["categories"][0]["category"] == "CPU"
+        assert summary["requirements"][0]["requirement_id"] == "L-CPU-FREQ-SCALING-MAX"
+
+    def test_explicit_catalog_path_option(self, tmp_path):
+        repo = tmp_path / "defs-repo"
+        defs_dir = repo / "defs"
+        defs_dir.mkdir(parents=True)
+        (defs_dir / "suite.yaml").write_text(self._DEFINITION, encoding="utf-8")
+        (repo / "custom-reqs.yaml").write_text(self._CATALOG, encoding="utf-8")
+        _init_git_repo(repo)
+
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        result = runner.run(
+            resolved=SimpleNamespace(build_path=str(tmp_path / "build")),
+            direct_config=DirectTestConfig(
+                definitions=[TestDefinitionSource(repo_url=repo.as_uri(), paths=["defs/suite.yaml"])],
+            ),
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                output_dir=str(tmp_path / "out"),
+                requirement_catalog_paths=["custom-reqs.yaml"],
+            ),
+            label="catalog-run",
+        )
+        assert result.suites[0].cases[0].lava_signals[0].category == "CPU"
+
+    def test_inline_metadata_overrides_shared_catalog(self, tmp_path):
+        definition = (
+            "metadata:\n  name: cpu-suite\n"
+            "  test_cases:\n"
+            "    L-CPU-FREQ-SCALING-MAX:\n"
+            "      description: inline description\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CPU-FREQ-SCALING-MAX-cpu0 RESULT=pass>\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition, self._CATALOG)
+        assert result.suites[0].cases[0].lava_signals[0].description == "inline description"
+
+    def test_signal_attribute_overrides_catalog(self, tmp_path):
+        definition = (
+            "metadata:\n  name: cpu-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CPU-FREQ-SCALING-MAX-cpu0 "
+            "RESULT=pass DESCRIPTION=\\\"signal wins\\\">\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition, self._CATALOG)
+        assert result.suites[0].cases[0].lava_signals[0].description == "signal wins"
+
+    def test_description_falls_back_to_humanized_id(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition)
+        assert result.suites[0].cases[0].lava_signals[0].description == "Ping gateway"
+
+    def test_description_falls_back_to_suite_description(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n  description: Networking checks\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition)
+        assert result.suites[0].cases[0].lava_signals[0].description == "Networking checks"
+
+    def test_params_reach_report_rows(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "params:\n  BOARD: default\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition, params={"BOARD_IP": "10.0.0.1"})
+        signal = result.suites[0].cases[0].lava_signals[0]
+        assert signal.params == {"BOARD": "default", "BOARD_IP": "10.0.0.1"}
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "BOARD_IP=10.0.0.1" in html
+
+    def test_optional_columns_hidden_without_metadata(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        self._run(tmp_path, definition)
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Requirement Id" not in html
+        assert "Req. version" not in html
+        assert "Categories" not in html
+
+
+class TestReportContextAggregation:
+    """Unit tests for the report context builder aggregation logic."""
+
+    @staticmethod
+    def _suite(signals):
+        return DirectTestSuiteResult(
+            name="suite",
+            status="PASS",
+            duration=1.0,
+            cases=[
+                DirectTestCaseResult(
+                    name="step-1",
+                    status="PASS",
+                    duration=1.0,
+                    command="run",
+                    lava_signals=signals,
+                )
+            ],
+        )
+
+    def test_counts_by_result_state(self):
+        suites = [
+            self._suite(
+                [
+                    LavaSignalCase(test_case_id="a", result="pass"),
+                    LavaSignalCase(test_case_id="b", result="fail"),
+                    LavaSignalCase(test_case_id="c", result="skip"),
+                    LavaSignalCase(test_case_id="d", result="manual", manual=True),
+                ]
+            )
+        ]
+        report = DirectTestRunner._build_html_report_context(suites)["report"]
+        assert report["total_lava_cases"] == 4
+        assert report["passed_lava_cases"] == 1
+        assert report["failed_lava_cases"] == 1
+        assert report["not_run_lava_cases"] == 1
+        assert report["manual_lava_cases"] == 1
+
+    def test_category_rollup_all_ok(self):
+        suites = [self._suite([LavaSignalCase(test_case_id="a", result="pass", category="CPU")])]
+        categories = DirectTestRunner._build_html_report_context(suites)["categories"]
+        assert categories == [
+            {
+                "category": "CPU",
+                "status": "All automated tests OK",
+                "status_class": "pass",
+                "remarks": "",
+                "total": 1,
+                "failed": 0,
+                "manual": 0,
+            }
+        ]
+
+    def test_category_rollup_errors_and_manual_remark(self):
+        suites = [
+            self._suite(
+                [
+                    LavaSignalCase(test_case_id="a", result="fail", category="RTC"),
+                    LavaSignalCase(test_case_id="b", result="manual", manual=True, category="AUDIO"),
+                ]
+            )
+        ]
+        categories = DirectTestRunner._build_html_report_context(suites)["categories"]
+        by_name = {row["category"]: row for row in categories}
+        assert by_name["RTC"]["status"] == "Errors found"
+        assert by_name["RTC"]["status_class"] == "fail"
+        assert by_name["AUDIO"]["status"] == "All automated tests OK"
+        assert by_name["AUDIO"]["remarks"] == "Has manual tests"
+
+    def test_description_is_escaped_in_html(self, tmp_path):
+        suites = [
+            self._suite(
+                [
+                    LavaSignalCase(
+                        test_case_id="a",
+                        result="pass",
+                        description="tags <b> & ampersands",
+                    )
+                ]
+            )
+        ]
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        html = runner._render_html_report(
+            label="esc", backend="direct-local", suites=suites, passed=True
+        )
+        assert "tags &lt;b&gt; &amp; ampersands" in html
+        assert "tags <b> & ampersands" not in html
