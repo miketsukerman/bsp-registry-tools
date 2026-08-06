@@ -19,6 +19,12 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, TemplateError
 
 from .models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
+from .requirements_catalog import (
+    RequirementCatalog,
+    discover_catalog,
+    humanize_test_case_id,
+    inline_catalog,
+)
 from .resolver import ResolvedConfig
 
 
@@ -41,6 +47,7 @@ _HTML_REPORT_TEMPLATE = """\
   .pass  { background: #d1fae5; color: #065f46; }
   .fail  { background: #fee2e2; color: #991b1b; }
   .warn  { background: #fef3c7; color: #92400e; }
+  .manual { background: #e5e7eb; color: #374151; }
   .timeout { background: #ffedd5; color: #9a3412; }
   .label-row { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.35rem; }
   .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 0.6rem; }
@@ -74,6 +81,16 @@ _HTML_REPORT_TEMPLATE = """\
   .muted { color: #4b5563; }
   .log-link { white-space: nowrap; }
   .log-link a { color: #1d4ed8; text-decoration: none; }
+  .req-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; white-space: nowrap; }
+  .req-desc { min-width: 16rem; word-break: break-word; }
+  .req-spec { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; word-break: break-word; max-width: 20rem; }
+  .num { text-align: right; }
+  @page { size: A4 landscape; margin: 12mm; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .panel, .suite-card { break-inside: avoid; }
+    table { font-size: 0.7rem; }
+  }
 </style>
 </head>
 <body>
@@ -91,10 +108,34 @@ _HTML_REPORT_TEMPLATE = """\
   <div class="kpi-grid">
     <div class="kpi"><div class="name">Total suites</div><div class="value">{{ report.total_suites }}</div></div>
     <div class="kpi"><div class="name">Suites with issues</div><div class="value">{{ report.failing_suites }}</div></div>
-    <div class="kpi"><div class="name">Total LAVA cases</div><div class="value">{{ report.total_lava_cases }}</div></div>
-    <div class="kpi"><div class="name">Failed LAVA cases</div><div class="value">{{ report.failed_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Total tests</div><div class="value">{{ report.total_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Passed tests</div><div class="value">{{ report.passed_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Failed tests</div><div class="value">{{ report.failed_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Not run</div><div class="value">{{ report.not_run_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Manual tests</div><div class="value">{{ report.manual_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Duration</div><div class="value">{{ "%.2f"|format(report.total_duration) }}s</div></div>
   </div>
 </div>
+
+{% if categories %}
+<div class="panel">
+  <h2>Categories</h2>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Verification status</th><th>Remarks</th></tr>
+    </thead>
+    <tbody>
+    {% for category in categories %}
+      <tr>
+        <td>{{ category.category }}</td>
+        <td><span class="badge {{ category.status_class }}">{{ category.status }}</span></td>
+        <td>{{ category.remarks }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {% if preset_info %}
 <div class="panel">
@@ -127,15 +168,25 @@ _HTML_REPORT_TEMPLATE = """\
     <thead>
       <tr>
         <th>Suite</th>
+        {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
         <th>TEST_CASE_ID</th>
-        <th>Result</th>
+        {% if columns.description %}<th>Req. description</th>{% endif %}
+        {% if columns.specification %}<th>Req. specification</th>{% endif %}
+        {% if columns.version %}<th>Req. version</th>{% endif %}
+        {% if columns.category %}<th>Category</th>{% endif %}
+        <th>Verification status</th>
       </tr>
     </thead>
     <tbody>
       {% for failure in failures %}
       <tr>
         <td>{{ failure.suite_name }}</td>
-        <td>{{ failure.test_case_id | e }}</td>
+        {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
+        <td>{{ failure.test_case_id }}</td>
+        {% if columns.description %}<td class="req-desc">{{ failure.description }}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{{ failure.specification }}</td>{% endif %}
+        {% if columns.version %}<td class="num">{{ failure.version }}</td>{% endif %}
+        {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
         <td><span class="badge {{ failure.status_class }}">{{ failure.result }}</span></td>
       </tr>
       {% endfor %}
@@ -145,6 +196,38 @@ _HTML_REPORT_TEMPLATE = """\
   <p class="muted">No failures detected.</p>
   {% endif %}
 </div>
+
+{% if requirements %}
+<div class="panel">
+  <h2>Requirements, specification, and verification</h2>
+  <table>
+    <thead>
+      <tr>
+        {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
+        <th>TEST_CASE_ID</th>
+        {% if columns.description %}<th>Req. description</th>{% endif %}
+        {% if columns.specification %}<th>Req. specification</th>{% endif %}
+        {% if columns.version %}<th>Req. version</th>{% endif %}
+        {% if columns.category %}<th>Category</th>{% endif %}
+        <th>Verification status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in requirements %}
+      <tr>
+        {% if columns.requirement_id %}<td class="req-id">{{ row.requirement_id }}</td>{% endif %}
+        <td>{{ row.test_case_id }}</td>
+        {% if columns.description %}<td class="req-desc">{{ row.description }}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{{ row.specification }}</td>{% endif %}
+        {% if columns.version %}<td class="num">{{ row.version }}</td>{% endif %}
+        {% if columns.category %}<td>{{ row.category }}</td>{% endif %}
+        <td><span class="badge {{ row.status_class }}">{{ row.result }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {% for suite in suites %}
 <div class="suite-card" id="{{ suite.id }}">
@@ -170,14 +253,24 @@ _HTML_REPORT_TEMPLATE = """\
   <table>
     <thead>
       <tr>
+        {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
         <th>TEST_CASE_ID</th>
-        <th>Result</th>
+        {% if columns.description %}<th>Req. description</th>{% endif %}
+        {% if columns.specification %}<th>Req. specification</th>{% endif %}
+        {% if columns.version %}<th>Req. version</th>{% endif %}
+        {% if columns.category %}<th>Category</th>{% endif %}
+        <th>Verification status</th>
       </tr>
     </thead>
     <tbody>
     {% for case in suite.lava_cases %}
       <tr>
-        <td>{{ case.test_case_id | e }}</td>
+        {% if columns.requirement_id %}<td class="req-id">{{ case.requirement_id }}</td>{% endif %}
+        <td>{{ case.test_case_id }}</td>
+        {% if columns.description %}<td class="req-desc">{{ case.description }}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{{ case.specification }}</td>{% endif %}
+        {% if columns.version %}<td class="num">{{ case.version }}</td>{% endif %}
+        {% if columns.category %}<td>{{ case.category }}</td>{% endif %}
         <td><span class="badge {{ case.status_class }}">{{ case.result }}</span></td>
       </tr>
     {% endfor %}
@@ -203,23 +296,78 @@ _HTML_REPORT_TEMPLATE = """\
 _VAR_BRACE_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _VAR_DOLLAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # LAVA signal format (case-insensitive to tolerate minor variations in test scripts):
-# <LAVA_SIGNAL_TESTCASE TEST_CASE_ID=<id> RESULT=pass|fail>
+# <LAVA_SIGNAL_TESTCASE TEST_CASE_ID=<id> RESULT=pass|fail [KEY=VALUE ...]>
+# Additional KEY=VALUE attributes (e.g. MEASUREMENT, UNITS, REQUIREMENT_ID) are
+# optional; values may be quoted to carry spaces.
 _LAVA_SIGNAL_RE = re.compile(
-    r"<LAVA_SIGNAL_TESTCASE\s+TEST_CASE_ID=(\S+)\s+RESULT=(pass|fail)>",
+    r"<LAVA_SIGNAL_TESTCASE\s+(?P<body>[^>]*)>",
     re.IGNORECASE,
 )
+_SIGNAL_ATTR_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>\"[^\"]*\"|'[^']*'|\S+)",
+)
+# Results that do not represent an executed, successful check but must not be
+# counted as failures either.
+_NON_FAILING_RESULTS = ("skip", "unknown", "manual")
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
 @dataclass
 class LavaSignalCase:
-    """A single LAVA test case parsed from a ``<LAVA_SIGNAL_TESTCASE ...>`` signal line."""
+    """A single LAVA test case parsed from a ``<LAVA_SIGNAL_TESTCASE ...>`` signal line.
+
+    ``test_case_id`` and ``result`` come from the signal itself.  The remaining
+    fields are resolved against the requirement catalogue (or overridden by
+    signal attributes) when the report is built.
+    """
     test_case_id: str
-    result: str  # "pass" or "fail"
+    result: str  # "pass", "fail", "skip", "unknown" or "manual"
+    requirement_id: str = ""
+    description: str = ""
+    specification: str = ""
+    version: str = ""
+    category: str = ""
+    measurement: str = ""
+    units: str = ""
+    manual: bool = False
+    params: Dict[str, str] = field(default_factory=dict)
+    extra: Dict[str, str] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
         return self.result.lower() == "pass"
+
+    @property
+    def is_manual(self) -> bool:
+        return self.manual or self.result.lower() == "manual"
+
+    @property
+    def not_run(self) -> bool:
+        """True when the case neither passed nor failed (skipped/unknown)."""
+        return self.result.lower() in ("skip", "unknown")
+
+    @property
+    def failed(self) -> bool:
+        return not self.passed and not self.is_manual and not self.not_run
+
+    @property
+    def report_result(self) -> str:
+        """Verification status as shown in the report, e.g. ``PASS (1600000)``."""
+        status = "MANUAL" if self.is_manual else self.result.upper()
+        if self.measurement:
+            measurement = self.measurement
+            if self.units:
+                measurement = f"{measurement} {self.units}"
+            return f"{status} ({measurement})"
+        return status
+
+    @property
+    def report_status_class(self) -> str:
+        if self.is_manual:
+            return "manual"
+        if self.not_run:
+            return "warn"
+        return "pass" if self.passed else "fail"
 
 
 @dataclass
@@ -244,11 +392,11 @@ class DirectTestCaseResult:
 
     @property
     def has_failed_lava_signals(self) -> bool:
-        return any(not sig.passed for sig in self.lava_signals)
+        return any(sig.failed for sig in self.lava_signals)
 
     @property
     def lava_failed_count(self) -> int:
-        return sum(1 for sig in self.lava_signals if not sig.passed)
+        return sum(1 for sig in self.lava_signals if sig.failed)
 
     @property
     def report_status(self) -> str:
@@ -311,6 +459,7 @@ class DirectRunOverrides:
     repo_ref: Optional[str] = None
     definition_paths: Optional[List[str]] = None
     local_job_paths: Optional[List[str]] = None
+    requirement_catalog_paths: Optional[List[str]] = None
     suites: Optional[List[str]] = None
     params: Optional[Dict[str, str]] = None
     timeout: Optional[int] = None
@@ -528,6 +677,11 @@ class DirectTestRunner:
 
         for source_index, source in enumerate(cfg.definitions):
             repo_dir = self._prepare_source_repo(source)
+            catalog = discover_catalog(
+                repo_dir,
+                explicit_paths=list(source.requirement_catalogs or []),
+                logger=self.logger,
+            )
             def_files = self._resolve_definition_files(repo_dir, source.paths)
             if not def_files:
                 source_id = source.repo_url or source.local_dir or "<unknown>"
@@ -575,6 +729,7 @@ class DirectTestRunner:
                                 continue_on_failure=cfg.continue_on_failure,
                                 output_root=run_root,
                                 suite_name_override=entry_name,
+                                catalog=catalog,
                             )
                             suites.append(suite_result)
                             if suite_result.status != "PASS":
@@ -600,6 +755,7 @@ class DirectTestRunner:
                     continue_on_failure=cfg.continue_on_failure,
                     output_root=run_root,
                     suite_name_override=source.name,
+                    catalog=catalog,
                 )
                 suites.append(suite_result)
                 if suite_result.status != "PASS":
@@ -726,6 +882,7 @@ class DirectTestRunner:
                 params=dict(s.params),
                 local_dir=s.local_dir,
                 name=s.name,
+                requirement_catalogs=list(s.requirement_catalogs),
             )
             for s in base.definitions
         ]
@@ -845,6 +1002,12 @@ class DirectTestRunner:
             # A LAVA job file selected the suites explicitly; drop registry-level
             # sources so only the requested suites run.
             definitions = [d for d in definitions if d.name in suite_filter]
+
+        if overrides and overrides.requirement_catalog_paths:
+            # Applies to every source (registry- and job-derived alike) so a
+            # single catalogue can describe all suites of a run.
+            for definition_source in definitions:
+                definition_source.requirement_catalogs = list(overrides.requirement_catalog_paths)
 
         if not definitions:
             raise RuntimeError(
@@ -1081,14 +1244,74 @@ class DirectTestRunner:
 
     @staticmethod
     def _parse_lava_signals(output: str) -> List[LavaSignalCase]:
-        """Parse ``<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=... RESULT=pass|fail>`` lines from output."""
+        """Parse ``<LAVA_SIGNAL_TESTCASE ...>`` lines from step output.
+
+        ``TEST_CASE_ID`` and ``RESULT`` are required; any further ``KEY=VALUE``
+        attributes are captured.  Recognised attributes populate the matching
+        :class:`LavaSignalCase` fields, everything else is preserved in
+        ``extra`` so no information emitted by a test script is lost.
+        """
         results: List[LavaSignalCase] = []
         for match in _LAVA_SIGNAL_RE.finditer(output):
-            results.append(LavaSignalCase(
-                test_case_id=match.group(1),
-                result=match.group(2).lower(),
-            ))
+            attrs: Dict[str, str] = {}
+            for attr in _SIGNAL_ATTR_RE.finditer(match.group("body")):
+                value = attr.group("value")
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("\"", "'"):
+                    value = value[1:-1]
+                attrs[attr.group("key").upper()] = value
+
+            test_case_id = attrs.pop("TEST_CASE_ID", "")
+            result = attrs.pop("RESULT", "").lower()
+            if not test_case_id or not result:
+                continue
+
+            manual = result == "manual"
+            case = LavaSignalCase(
+                test_case_id=test_case_id,
+                result=result,
+                requirement_id=attrs.pop("REQUIREMENT_ID", ""),
+                description=attrs.pop("DESCRIPTION", ""),
+                specification=attrs.pop("SPECIFICATION", attrs.pop("SPEC", "")),
+                version=attrs.pop("VERSION", ""),
+                category=attrs.pop("CATEGORY", ""),
+                measurement=attrs.pop("MEASUREMENT", ""),
+                units=attrs.pop("UNITS", ""),
+                manual=manual,
+                extra=attrs,
+            )
+            results.append(case)
         return results
+
+    @staticmethod
+    def _apply_catalog(
+        signals: List[LavaSignalCase],
+        catalog: RequirementCatalog,
+        params: Dict[str, str],
+        suite_description: str = "",
+    ) -> None:
+        """Fill in static metadata for *signals* from the requirement *catalog*.
+
+        Precedence per field: signal attribute > catalogue entry >
+        suite ``metadata.description`` > humanized test case id.
+        """
+        for signal in signals:
+            signal.params = dict(sorted(params.items()))
+            entry, instance = catalog.resolve(signal.test_case_id, signal.requirement_id)
+            if entry is not None:
+                if not signal.requirement_id:
+                    signal.requirement_id = entry.id
+                if not signal.description:
+                    signal.description = entry.description
+                if not signal.specification:
+                    signal.specification = entry.specification_for(instance)
+                if not signal.version:
+                    signal.version = entry.version
+                if not signal.category:
+                    signal.category = entry.category
+                if entry.manual:
+                    signal.manual = True
+            if not signal.description:
+                signal.description = suite_description or humanize_test_case_id(signal.test_case_id)
 
     def _run_single_definition(
         self,
@@ -1102,11 +1325,18 @@ class DirectTestRunner:
         continue_on_failure: bool,
         output_root: Path,
         suite_name_override: str = "",
+        catalog: Optional[RequirementCatalog] = None,
     ) -> DirectTestSuiteResult:
         definition = self._load_definition(suite_path)
         metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
         suite_name = metadata.get("name") or suite_name_override or suite_path.stem
         suite_display_name = str(suite_name)
+        suite_description = str(metadata.get("description") or "")
+        # Inline metadata.test_cases entries override the shared catalogue for
+        # this suite only.
+        effective_catalog = (catalog or RequirementCatalog()).merged_with(
+            inline_catalog(definition, logger=self.logger)
+        )
 
         def_params = definition.get("params") if isinstance(definition.get("params"), dict) else {}
         merged_params = {k: str(v) for k, v in def_params.items()}
@@ -1170,7 +1400,13 @@ class DirectTestRunner:
             duration = time.monotonic() - start
             status = "PASS" if rc == 0 else "FAIL"
             lava_signals = self._parse_lava_signals(stdout)
-            lava_failures = sum(1 for sig in lava_signals if not sig.passed)
+            self._apply_catalog(
+                lava_signals,
+                effective_catalog,
+                merged_params,
+                suite_description=suite_description,
+            )
+            lava_failures = sum(1 for sig in lava_signals if sig.failed)
 
             if status == "PASS" and lava_failures > 0:
                 status = "FAIL"
@@ -1289,7 +1525,21 @@ class DirectTestRunner:
                             "log_path": c.log_path,
                             "timed_out": c.timed_out,
                             "lava_signals": [
-                                {"test_case_id": sig.test_case_id, "result": sig.result}
+                                {
+                                    "test_case_id": sig.test_case_id,
+                                    "result": sig.result,
+                                    "requirement_id": sig.requirement_id,
+                                    "description": sig.description,
+                                    "specification": sig.specification,
+                                    "version": sig.version,
+                                    "category": sig.category,
+                                    "measurement": sig.measurement,
+                                    "units": sig.units,
+                                    "manual": sig.is_manual,
+                                    "verification_status": sig.report_result,
+                                    "params": sig.params,
+                                    "extra": sig.extra,
+                                }
                                 for sig in c.lava_signals
                             ],
                         }
@@ -1299,6 +1549,10 @@ class DirectTestRunner:
                 for s in suites
             ],
         }
+        report_context = self._build_html_report_context(suites)
+        summary["report"] = report_context["report"]
+        summary["categories"] = report_context["categories"]
+        summary["requirements"] = report_context["requirements"]
         if preset_info:
             summary["preset"] = preset_info
         (output_dir / "direct-test-summary.json").write_text(
@@ -1336,18 +1590,56 @@ class DirectTestRunner:
             suites=report_context["suites"],
             report=report_context["report"],
             failures=report_context["failures"],
+            categories=report_context["categories"],
+            requirements=report_context["requirements"],
+            columns=report_context["columns"],
             passed=passed,
             preset_info=preset_info or {},
             generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
 
     @staticmethod
-    def _build_html_report_context(suites: List[DirectTestSuiteResult]) -> Dict[str, Any]:
+    def _format_params(params: Dict[str, str]) -> str:
+        """Render step parameters as a compact ``key=value`` listing."""
+        return " ".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+    @classmethod
+    def _build_case_row(
+        cls,
+        suite: DirectTestSuiteResult,
+        case: DirectTestCaseResult,
+        signal: LavaSignalCase,
+    ) -> Dict[str, Any]:
+        """Build one requirement/test-case row of the report."""
+        specification = signal.specification or cls._format_params(signal.params or case.params)
+        return {
+            "suite_name": suite.name,
+            "test_case_id": signal.test_case_id,
+            "requirement_id": signal.requirement_id,
+            "description": signal.description,
+            "specification": specification,
+            "parameters": cls._format_params(signal.params or case.params),
+            "version": signal.version,
+            "category": signal.category,
+            "result": signal.report_result,
+            "status_class": signal.report_status_class,
+            "step_name": case.name,
+            "log_path": case.log_path,
+        }
+
+    @classmethod
+    def _build_html_report_context(cls, suites: List[DirectTestSuiteResult]) -> Dict[str, Any]:
         rendered_suites: List[Dict[str, Any]] = []
         failures: List[Dict[str, Any]] = []
+        requirement_rows: List[Dict[str, Any]] = []
+        categories: Dict[str, Dict[str, Any]] = {}
 
         total_lava_cases = 0
         failed_lava_cases = 0
+        passed_lava_cases = 0
+        manual_lava_cases = 0
+        not_run_lava_cases = 0
+        total_duration = 0.0
 
         for idx, suite in enumerate(suites, start=1):
             suite_lava_total = 0
@@ -1355,6 +1647,7 @@ class DirectTestRunner:
             suite_failed_steps = 0
             suite_timed_out = 0
             rendered_lava_cases: List[Dict[str, Any]] = []
+            total_duration += suite.duration
 
             for case in suite.cases:
                 case_lava_failed = case.lava_failed_count
@@ -1367,23 +1660,30 @@ class DirectTestRunner:
                 suite_lava_failed += case_lava_failed
 
                 for sig in case.lava_signals:
-                    result_text = sig.result.upper()
-                    rendered_lava_cases.append(
-                        {
-                            "test_case_id": sig.test_case_id,
-                            "result": result_text,
-                            "status_class": "pass" if sig.passed else "fail",
-                        }
-                    )
-                    if not sig.passed:
-                        failures.append(
-                            {
-                                "suite_name": suite.name,
-                                "test_case_id": sig.test_case_id,
-                                "result": result_text,
-                                "status_class": "fail",
-                            }
+                    row = cls._build_case_row(suite, case, sig)
+                    rendered_lava_cases.append(row)
+                    requirement_rows.append(row)
+
+                    if sig.is_manual:
+                        manual_lava_cases += 1
+                    elif sig.not_run:
+                        not_run_lava_cases += 1
+                    elif sig.passed:
+                        passed_lava_cases += 1
+
+                    if sig.category:
+                        bucket = categories.setdefault(
+                            sig.category,
+                            {"category": sig.category, "failed": 0, "manual": 0, "total": 0},
                         )
+                        bucket["total"] += 1
+                        if sig.failed:
+                            bucket["failed"] += 1
+                        if sig.is_manual:
+                            bucket["manual"] += 1
+
+                    if sig.failed:
+                        failures.append(row)
 
             if suite_timed_out:
                 execution_note = "Execution timed out before all LAVA test cases were reported."
@@ -1412,14 +1712,50 @@ class DirectTestRunner:
 
         rendered_suites.sort(key=lambda suite: (not suite["has_issues"], suite["name"]))
         failures.sort(key=lambda item: (item["suite_name"], item["test_case_id"]))
+        requirement_rows.sort(key=lambda item: (item["requirement_id"] or item["test_case_id"], item["test_case_id"]))
+
+        category_rows = [
+            {
+                "category": data["category"],
+                "status": "Errors found" if data["failed"] else "All automated tests OK",
+                "status_class": "fail" if data["failed"] else "pass",
+                "remarks": "Has manual tests" if data["manual"] else "",
+                "total": data["total"],
+                "failed": data["failed"],
+                "manual": data["manual"],
+            }
+            for data in sorted(categories.values(), key=lambda item: item["category"])
+        ]
+
+        # Optional columns are only rendered when at least one case supplies
+        # the corresponding metadata, so plain test definitions keep the
+        # original compact table.
+        columns = {
+            "requirement_id": any(row["requirement_id"] for row in requirement_rows),
+            "description": any(row["description"] for row in requirement_rows),
+            "specification": any(row["specification"] for row in requirement_rows),
+            "version": any(row["version"] for row in requirement_rows),
+            "category": any(row["category"] for row in requirement_rows),
+        }
 
         report = {
             "total_suites": len(rendered_suites),
             "failing_suites": sum(1 for suite in rendered_suites if suite["has_issues"]),
             "total_lava_cases": total_lava_cases,
             "failed_lava_cases": failed_lava_cases,
+            "passed_lava_cases": passed_lava_cases,
+            "manual_lava_cases": manual_lava_cases,
+            "not_run_lava_cases": not_run_lava_cases,
+            "total_duration": round(total_duration, 2),
         }
-        return {"suites": rendered_suites, "failures": failures, "report": report}
+        return {
+            "suites": rendered_suites,
+            "failures": failures,
+            "report": report,
+            "categories": category_rows,
+            "requirements": requirement_rows,
+            "columns": columns,
+        }
 
     def _write_pdf_report(self, pdf_path: Path, html_content: str) -> None:
         try:
