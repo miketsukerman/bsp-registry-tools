@@ -1283,6 +1283,9 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 | `ref`      | string (opt.)   | Optional git ref (branch/tag/commit). |
 | `paths`    | list[str] (opt.)| Definition file/dir/glob paths inside the repo. |
 | `params`   | dict[str, str] (opt.) | Parameter overrides applied to `run.steps` expansion. |
+| `local_dir` | string (opt.)  | Local directory used directly as the definition root (skips cloning; `repo_url`/`ref` are ignored). |
+| `name`     | string (opt.)  | Suite name used for `--test-suite` filtering and as the reported suite name. |
+| `requirement_catalogs` | list[str] (opt.) | Requirement catalogue YAML paths providing test case descriptions, specifications, versions and categories for the generated report. Resolved inside the definition root first, then as absolute paths. Defaults to `requirements.yaml` at the definition root when present. |
 
 ### `bsp[*].testing.direct.transport` fields
 

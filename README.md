@@ -1219,6 +1219,14 @@ bsp test poky-qemuarm64-scarthgap \
   --ssh-user root \
   --ssh-key ~/.ssh/id_ed25519
 
+# Direct SSH run with an explicit requirement catalogue for the report
+bsp test modular-bsp-rsb3720-6g-wrynose \
+  --backend direct-ssh \
+  --test-job-path vendors/advantech-europe/nxp/test/jobs/rsb3720-6g-modbsp.yaml \
+  --test-requirements requirements.yaml \
+  --ssh-host 192.168.3.195 \
+  --ssh-user root
+
 # Direct serial run
 bsp test poky-qemuarm64-scarthgap \
   --backend direct-serial \
@@ -1235,9 +1243,102 @@ When `--verbose` is enabled, test execution logs include per-suite and per-case 
 
 Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including:
 
-- `direct-test-report.html` with aggregate KPIs, suite quick navigation, and a LAVA test-case-ID-focused reader view grouped by suite
+- `direct-test-report.html` with aggregate KPIs, a category roll-up, a cross-suite requirements matrix, suite quick navigation and per-suite test case tables
+- `direct-test-report.pdf` (when the `report` extra is installed)
 - `direct-test-summary.json` for machine-readable summary data
 - per-step log files linked from the HTML report
+
+#### Test report contents
+
+Each test case row of the report can show a requirement id, description,
+specification, version, category and verification status:
+
+| Column | Source |
+| --- | --- |
+| Requirement Id | requirement catalogue (linked from the signal) |
+| TEST_CASE_ID | `TEST_CASE_ID` of the LAVA signal |
+| Req. description | requirement catalogue |
+| Req. specification | requirement catalogue (falls back to the step parameters) |
+| Req. version | requirement catalogue |
+| Category | requirement catalogue |
+| Verification status | `RESULT` of the LAVA signal, with the measurement in parentheses |
+
+Optional columns are omitted entirely when no test case in the run supplies the
+corresponding metadata, so plain test definitions keep the compact
+`TEST_CASE_ID | Verification status` table.
+
+#### LAVA signal attributes
+
+Test scripts report results with the standard LAVA signal line and may add any
+number of `KEY=VALUE` attributes (values may be quoted to carry spaces):
+
+```
+<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CPU-FREQ-SCALING-MAX-cpu0 RESULT=pass MEASUREMENT=1600000>
+```
+
+`RESULT` accepts `pass`, `fail`, `skip`, `unknown` and `manual`; `skip` and
+`unknown` are reported as "not run" and `manual` as a manual test — neither
+counts as a failure. Recognised attributes are `MEASUREMENT`, `UNITS`,
+`REQUIREMENT_ID`, `DESCRIPTION`, `SPECIFICATION`, `VERSION` and `CATEGORY`;
+any other attribute is preserved in the JSON summary. Attributes always take
+precedence over catalogue values, but are normally only used for runtime data
+(the measured value) — static text belongs in the requirement catalogue.
+
+#### Requirement catalogue
+
+The catalogue holds the static metadata of each requirement and lives in the
+test-definition repository. It is discovered automatically from a
+`requirements.yaml` file at the definition root, can be pointed at explicitly
+with `--test-requirements PATH` (repeatable), or be declared per source in the
+registry:
+
+```yaml
+testing:
+  backend: direct-ssh
+  direct:
+    definitions:
+      - repo_url: https://github.com/example/test-definitions.git
+        paths: [automated/linux]
+        requirement_catalogs: [requirements.yaml]
+```
+
+A catalogue is a mapping of requirement id to entry (a top-level
+`requirements:` key and a list of entries carrying `id` are also accepted):
+
+```yaml
+L-CPU-FREQ-SCALING-MAX:
+  description: The CPU should match the specified maximum scaling frequency
+  version: 1
+  category: CPU
+  specification:
+    cpu0: 1600000
+    cpu1: 1600000
+L-AUDIO-PLAYBACK:F:
+  description: A sample WAV file shall be played back through the specified ALSA device
+  category: AUDIO
+  manual: true
+```
+
+A test case is linked to its requirement through an explicit `REQUIREMENT_ID`
+signal attribute, or — when absent — by matching the test case id against
+catalogue ids using the longest matching prefix. The remainder is used as the
+instance key, so `L-CPU-FREQ-SCALING-MAX-cpu0` and `L-CPU-FREQ-SCALING-MAX-cpu1`
+share one description while each picking its own `specification` value.
+
+Individual definitions can declare or override entries inline, which takes
+precedence over the shared catalogue for that suite only:
+
+```yaml
+metadata:
+  name: cpu-suite
+  test_cases:
+    L-CPU-MODEL:
+      description: The Linux Kernel shall enumerate the specified CPU Model
+      category: CPU
+```
+
+Catalogues are always optional: a missing or malformed catalogue logs a warning
+and never fails a test run.
 
 When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
 
