@@ -122,7 +122,7 @@ _HTML_REPORT_TEMPLATE = """\
   <h2>Categories</h2>
   <table>
     <thead>
-      <tr><th>Category</th><th>Verification status</th><th>Remarks</th></tr>
+      <tr><th>Category</th><th>State</th><th>Remarks</th></tr>
     </thead>
     <tbody>
     {% for category in categories %}
@@ -169,12 +169,12 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         <th>Suite</th>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
-        <th>TEST_CASE_ID</th>
-        {% if columns.description %}<th>Req. description</th>{% endif %}
-        {% if columns.specification %}<th>Req. specification</th>{% endif %}
+        <th>Test Case</th>
+        {% if columns.description %}<th>Description</th>{% endif %}
+        {% if columns.specification %}<th>Parameters</th>{% endif %}
         {% if columns.version %}<th>Req. version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
-        <th>Verification status</th>
+        <th>State</th>
       </tr>
     </thead>
     <tbody>
@@ -204,12 +204,12 @@ _HTML_REPORT_TEMPLATE = """\
     <thead>
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
-        <th>TEST_CASE_ID</th>
-        {% if columns.description %}<th>Req. description</th>{% endif %}
-        {% if columns.specification %}<th>Req. specification</th>{% endif %}
-        {% if columns.version %}<th>Req. version</th>{% endif %}
+        <th>Test Case</th>
+        {% if columns.description %}<th>Description</th>{% endif %}
+        {% if columns.specification %}<th>Parameters</th>{% endif %}
+        {% if columns.version %}<th>Version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
-        <th>Verification status</th>
+        <th>State</th>
       </tr>
     </thead>
     <tbody>
@@ -254,12 +254,12 @@ _HTML_REPORT_TEMPLATE = """\
     <thead>
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
-        <th>TEST_CASE_ID</th>
-        {% if columns.description %}<th>Req. description</th>{% endif %}
-        {% if columns.specification %}<th>Req. specification</th>{% endif %}
-        {% if columns.version %}<th>Req. version</th>{% endif %}
+        <th>Test Case</th>
+        {% if columns.description %}<th>Description</th>{% endif %}
+        {% if columns.specification %}<th>Parameters</th>{% endif %}
+        {% if columns.version %}<th>Version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
-        <th>Verification status</th>
+        <th>State</th>
       </tr>
     </thead>
     <tbody>
@@ -352,7 +352,7 @@ class LavaSignalCase:
 
     @property
     def report_result(self) -> str:
-        """Verification status as shown in the report, e.g. ``PASS (1600000)``."""
+        """State as shown in the report, e.g. ``PASS (1600000)``."""
         status = "MANUAL" if self.is_manual else self.result.upper()
         if self.measurement:
             measurement = self.measurement
