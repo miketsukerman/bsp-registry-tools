@@ -304,6 +304,12 @@ bsp test <bsp_name> --backend direct-ssh \
     --test-job-path jobs/rsb3720-modbsp.yaml \
     --ssh-host 192.168.3.195 --ssh-user root \
     --test-suite adv-context
+
+# Enrich the generated report with requirement descriptions/specifications
+bsp test <bsp_name> --backend direct-ssh \
+    --test-job-path jobs/rsb3720-modbsp.yaml \
+    --test-requirements requirements.yaml \
+    --ssh-host 192.168.3.195 --ssh-user root
 ```
 
 ---
