@@ -940,6 +940,12 @@ class TestDefinitionSource:
               YAML this is the ``actions[].test.definitions[].name`` value; it
               is used both for ``--test-suite`` filtering and as the reported
               suite name.
+        requirement_catalogs: Optional requirement catalogue file paths holding
+              the static test-case metadata (description, specification,
+              version, category) used to enrich direct test reports. Paths are
+              resolved inside the definition root first, then as absolute
+              paths. When empty, a conventional ``requirements.yaml`` at the
+              definition root is used if present.
     """
     repo_url: str = ""
     ref: str = ""
@@ -947,6 +953,7 @@ class TestDefinitionSource:
     params: Dict[str, str] = field(default_factory=empty_dict)
     local_dir: str = ""
     name: str = ""
+    requirement_catalogs: List[str] = field(default_factory=empty_list)
 
 
 @dataclass

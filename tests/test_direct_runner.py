@@ -252,13 +252,16 @@ actions:
 
         summary = json.loads((tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8"))
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
-        assert summary["suites"][0]["cases"][0]["lava_signals"] == [
-            {"test_case_id": "ping-gateway", "result": "pass"}
-        ]
+        signals_json = summary["suites"][0]["cases"][0]["lava_signals"]
+        assert len(signals_json) == 1
+        assert signals_json[0]["test_case_id"] == "ping-gateway"
+        assert signals_json[0]["result"] == "pass"
         assert "LAVA cases: <strong>1</strong>" in html
         parser = _TableDataCellParser()
         parser.feed(html)
-        assert parser.cells.count("ping-gateway") == 1
+        # The test case is reported exactly once per report table: the
+        # cross-suite requirements matrix and the suite's own case table.
+        assert parser.cells.count("ping-gateway") == 2
 
     def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
         repo = tmp_path / "defs-repo"
@@ -1298,8 +1301,10 @@ class TestLavaSignalParsing:
         assert summary["suites"][0]["cases"][0]["status"] == "FAIL"
         sig_json = summary["suites"][0]["cases"][0]["lava_signals"]
         assert len(sig_json) == 2
-        assert sig_json[0] == {"test_case_id": "ping-gateway", "result": "pass"}
-        assert sig_json[1] == {"test_case_id": "download-a-file", "result": "fail"}
+        assert sig_json[0]["test_case_id"] == "ping-gateway"
+        assert sig_json[0]["result"] == "pass"
+        assert sig_json[1]["test_case_id"] == "download-a-file"
+        assert sig_json[1]["result"] == "fail"
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Overall:" in html
