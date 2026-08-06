@@ -1313,7 +1313,7 @@ L-CPU-FREQ-SCALING-MAX:
   specification:
     cpu0: 1600000
     cpu1: 1600000
-L-AUDIO-PLAYBACK:F:
+"L-AUDIO-PLAYBACK:F":
   description: A sample WAV file shall be played back through the specified ALSA device
   category: AUDIO
   manual: true

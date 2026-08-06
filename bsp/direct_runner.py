@@ -1311,7 +1311,7 @@ class DirectTestRunner:
                 if entry.manual:
                     signal.manual = True
             if not signal.description:
-                signal.description = suite_description or humanize_test_case_id(signal.test_case_id)
+                signal.description = suite_description
 
     def _run_single_definition(
         self,
@@ -1616,7 +1616,11 @@ class DirectTestRunner:
             "suite_name": suite.name,
             "test_case_id": signal.test_case_id,
             "requirement_id": signal.requirement_id,
-            "description": signal.description,
+            # A humanized test case id keeps the description cell readable when
+            # no catalogue entry exists, without making the column appear for
+            # runs that carry no requirement metadata at all.
+            "description": signal.description or humanize_test_case_id(signal.test_case_id),
+            "has_description": bool(signal.description),
             "specification": specification,
             "parameters": cls._format_params(signal.params or case.params),
             "version": signal.version,
@@ -1732,7 +1736,7 @@ class DirectTestRunner:
         # original compact table.
         columns = {
             "requirement_id": any(row["requirement_id"] for row in requirement_rows),
-            "description": any(row["description"] for row in requirement_rows),
+            "description": any(row["has_description"] for row in requirement_rows),
             "specification": any(row["specification"] for row in requirement_rows),
             "version": any(row["version"] for row in requirement_rows),
             "category": any(row["category"] for row in requirement_rows),

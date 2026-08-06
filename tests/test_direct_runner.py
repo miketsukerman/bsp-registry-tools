@@ -2688,7 +2688,12 @@ class TestCatalogEnrichedReport:
             "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
         )
         result = self._run(tmp_path, definition)
-        assert result.suites[0].cases[0].lava_signals[0].description == "Ping gateway"
+        # No catalogue metadata is recorded on the signal itself, ...
+        assert result.suites[0].cases[0].lava_signals[0].description == ""
+        # ... but the report row still shows a readable description.
+        rows = DirectTestRunner._build_html_report_context(result.suites)["requirements"]
+        assert rows[0]["description"] == "Ping gateway"
+        assert rows[0]["has_description"] is False
 
     def test_description_falls_back_to_suite_description(self, tmp_path):
         definition = (
