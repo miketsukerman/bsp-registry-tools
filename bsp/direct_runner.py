@@ -84,18 +84,18 @@ _HTML_REPORT_TEMPLATE = """\
   .req-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; white-space: nowrap; }
   .req-desc { min-width: 16rem; word-break: break-word; }
   .req-spec { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; word-break: break-word; max-width: 20rem; }
-  .param-fold { margin-top: 0; padding: 0.2rem 0.35rem; }
-  .param-fold > summary { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.74rem; }
-  .param-fold .param-body { margin-top: 0.25rem; }
+  .cell-fold { margin-top: 0; padding: 0.2rem 0.35rem; }
+  .cell-fold > summary { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.74rem; }
+  .cell-fold .cell-body { margin-top: 0.25rem; }
   .num { text-align: right; }
   @page { size: A4 landscape; margin: 12mm; }
   @media print {
     body { background: #fff; padding: 0; }
     .panel, .suite-card { break-inside: avoid; }
     table { font-size: 0.7rem; }
-    /* Folded parameters must stay readable in the printed/PDF report. */
-    .param-fold > summary { display: none; }
-    .param-fold .param-body { display: block; margin-top: 0; }
+    /* Folded cells must stay readable in the printed/PDF report. */
+    .cell-fold > summary { display: none; }
+    .cell-fold .cell-body { display: block; margin-top: 0; }
   }
 </style>
 </head>
@@ -189,8 +189,8 @@ _HTML_REPORT_TEMPLATE = """\
         <td>{{ failure.suite_name }}</td>
         {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
         <td>{{ failure.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{{ failure.description }}</td>{% endif %}
-        {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="param-fold"><summary>Parameters</summary><div class="param-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}<td class="req-desc">{% if failure.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ failure.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ failure.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
         <td><span class="badge {{ failure.status_class }}">{{ failure.result }}</span></td>
@@ -223,8 +223,8 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ row.requirement_id }}</td>{% endif %}
         <td>{{ row.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{{ row.description }}</td>{% endif %}
-        {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="param-fold"><summary>Parameters</summary><div class="param-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}<td class="req-desc">{% if row.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ row.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ row.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ row.category }}</td>{% endif %}
         <td><span class="badge {{ row.status_class }}">{{ row.result }}</span></td>
@@ -273,8 +273,8 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ case.requirement_id }}</td>{% endif %}
         <td>{{ case.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{{ case.description }}</td>{% endif %}
-        {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="param-fold"><summary>Parameters</summary><div class="param-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}<td class="req-desc">{% if case.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ case.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ case.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ case.category }}</td>{% endif %}
         <td><span class="badge {{ case.status_class }}">{{ case.result }}</span></td>
