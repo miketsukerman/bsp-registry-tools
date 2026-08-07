@@ -64,6 +64,7 @@ _HTML_REPORT_TEMPLATE = """\
   .suite-header { display: flex; align-items: center; gap: 0.7rem; padding: 0.7rem 0.9rem; background: #f8fafc; border-bottom: 1px solid #e3e8f0; }
   .suite-header h3 { font-size: 1rem; flex: 1; }
   .suite-duration { color: #4b5563; font-size: 0.82rem; font-weight: 600; }
+  .suite-description { padding: 0.5rem 0.9rem; border-bottom: 1px solid #eef2f7; color: #374151; font-size: 0.85rem; }
   .suite-stats { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.55rem 0.9rem; border-bottom: 1px solid #eef2f7; font-size: 0.82rem; color: #374151; }
   .suite-stats strong { color: #111827; }
   table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
@@ -242,6 +243,9 @@ _HTML_REPORT_TEMPLATE = """\
     <h3>{{ suite.name }}</h3>
     <span class="suite-duration">{{ "%.2f"|format(suite.duration) }}s</span>
   </div>
+  {% if suite.description %}
+  <p class="suite-description">{{ suite.description }}</p>
+  {% endif %}
   <div class="suite-stats">
     <span>LAVA cases: <strong>{{ suite.lava_total }}</strong></span>
     <span>Failed LAVA cases: <strong>{{ suite.lava_failed }}</strong></span>
@@ -424,6 +428,9 @@ class DirectTestSuiteResult:
     duration: float
     log_dir: Optional[str] = None
     cases: List[DirectTestCaseResult] = field(default_factory=list)
+    # ``metadata.description`` of the Lava-Test definition: it describes the
+    # suite as a whole, not any individual test case.
+    description: str = ""
 
     @property
     def execution_succeeded(self) -> bool:
@@ -1293,12 +1300,13 @@ class DirectTestRunner:
         signals: List[LavaSignalCase],
         catalog: RequirementCatalog,
         params: Dict[str, str],
-        suite_description: str = "",
     ) -> None:
         """Fill in static metadata for *signals* from the requirement *catalog*.
 
-        Precedence per field: signal attribute > catalogue entry >
-        suite ``metadata.description`` > humanized test case id.
+        Precedence per field: signal attribute > catalogue entry.  The suite
+        ``metadata.description`` is deliberately not used here: it describes
+        the suite, not a single test case.  Cases without catalogue metadata
+        fall back to a humanized test case id when the report is rendered.
         """
         for signal in signals:
             signal.params = dict(sorted(params.items()))
@@ -1316,8 +1324,6 @@ class DirectTestRunner:
                     signal.category = entry.category
                 if entry.manual:
                     signal.manual = True
-            if not signal.description:
-                signal.description = suite_description
 
     def _run_single_definition(
         self,
@@ -1406,12 +1412,7 @@ class DirectTestRunner:
             duration = time.monotonic() - start
             status = "PASS" if rc == 0 else "FAIL"
             lava_signals = self._parse_lava_signals(stdout)
-            self._apply_catalog(
-                lava_signals,
-                effective_catalog,
-                merged_params,
-                suite_description=suite_description,
-            )
+            self._apply_catalog(lava_signals, effective_catalog, merged_params)
             lava_failures = sum(1 for sig in lava_signals if sig.failed)
 
             if status == "PASS" and lava_failures > 0:
@@ -1471,6 +1472,7 @@ class DirectTestRunner:
             duration=suite_duration,
             log_dir=str(suite_log_dir),
             cases=case_results,
+            description=suite_description,
         )
 
     def _extract_preset_info(self, resolved: "ResolvedConfig") -> Dict[str, str]:
@@ -1518,6 +1520,7 @@ class DirectTestRunner:
             "suites": [
                 {
                     "name": s.name,
+                    "description": s.description,
                     "status": s.status,
                     "duration": s.duration,
                     "log_dir": s.log_dir,
@@ -1705,6 +1708,7 @@ class DirectTestRunner:
             suite_data = {
                 "id": f"suite-{idx}",
                 "name": suite.name,
+                "description": suite.description,
                 "status": suite.report_status,
                 "status_class": suite.report_status_class,
                 "duration": suite.duration,
