@@ -1285,7 +1285,7 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 | `params`   | dict[str, str] (opt.) | Parameter overrides applied to `run.steps` expansion. |
 | `local_dir` | string (opt.)  | Local directory used directly as the definition root (skips cloning; `repo_url`/`ref` are ignored). |
 | `name`     | string (opt.)  | Suite name used for `--test-suite` filtering and as the reported suite name. |
-| `requirement_catalogs` | list[str] (opt.) | Requirement catalogue YAML paths providing test case descriptions (`description`/`purpose`), what each case verifies (`verifies`), `remarks`, specifications, versions and categories for the generated report. Resolved inside the definition root first, then as absolute paths. Defaults to `requirements.yaml` at the definition root when present. Test cases without a catalogue entry fall back to a description derived from their test case id. |
+| `requirement_catalogs` | list[str] (opt.) | Requirement catalogue YAML references providing test case descriptions (`description`/`purpose`), what each case verifies (`verifies`), `remarks`, specifications, versions and categories for the generated report. Each entry is either an `http(s)` URL (downloaded once per run; GitHub `blob` URLs are fetched as raw content) or a path resolved inside the definition root first, then as an absolute path. Defaults to `requirements.yaml` at the definition root when present. Test cases without a catalogue entry fall back to a description derived from their test case id. |
 
 ### `bsp[*].testing.direct.transport` fields
 

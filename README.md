@@ -1169,7 +1169,7 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--test-job-path PATH` | Local LAVA job YAML file (repeatable). For entries with `from: git` and `repository`, the referenced Git repository is cloned and the test definition is run from there. Entries without a `repository` are resolved relative to the job file's directory. No `--test-repo-url` is required. |
 | `--test-suite NAME` | Direct backends only: run only the named test suite(s) (repeatable). Matches `actions[].test.definitions[].name` in the LAVA job YAML, falling back to the definition's `metadata.name` / file stem for plain test definitions. |
 | `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
-| `--test-requirements PATH` | Direct backends only: requirement catalogue YAML providing test case descriptions, specifications, versions and categories for the report (repeatable) |
+| `--test-requirements PATH_OR_URL` | Direct backends only: requirement catalogue YAML providing test case descriptions, specifications, versions and categories for the report (repeatable). Accepts a local path or an `http(s)` URL, so a catalogue maintained in another repository can be reused |
 | `--show-cases` | Direct backends only: list every test case with its description in the console summary (implied by `--verbose`) |
 | `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
 | `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
@@ -1313,8 +1313,8 @@ precedence over catalogue values, but are normally only used for runtime data
 The catalogue holds the static metadata of each requirement and lives in the
 test-definition repository. It is discovered automatically from a
 `requirements.yaml` file at the definition root, can be pointed at explicitly
-with `--test-requirements PATH` (repeatable), or be declared per source in the
-registry:
+with `--test-requirements PATH_OR_URL` (repeatable), or be declared per source
+in the registry:
 
 ```yaml
 testing:
@@ -1325,6 +1325,22 @@ testing:
         paths: [automated/linux]
         requirement_catalogs: [requirements.yaml]
 ```
+
+A catalogue reference may also be an `http(s)` URL, which makes the
+descriptions maintained in another repository reusable for definitions that
+carry no catalogue of their own. GitHub `blob` (and `raw`) web URLs are
+downloaded as raw content automatically:
+
+```bash
+bsp test <bsp_name> --backend direct-ssh \
+  --test-job-path jobs/rsb3720-modbsp.yaml \
+  --test-requirements https://github.com/miketsukerman/modular-bsp-test-definitions/blob/main/requirements.yaml \
+  --ssh-host 192.168.3.195 --ssh-user root
+```
+
+The catalogue is downloaded once per run and a failing download only logs a
+warning: descriptions then fall back to the catalogue shipped with the
+definitions, or to the humanized test case id.
 
 A catalogue is a mapping of requirement id to entry (a top-level
 `requirements:` key and a list of entries carrying `id` are also accepted):

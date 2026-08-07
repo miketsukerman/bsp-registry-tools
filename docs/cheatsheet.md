@@ -311,6 +311,12 @@ bsp test <bsp_name> --backend direct-ssh \
     --test-requirements requirements.yaml \
     --ssh-host 192.168.3.195 --ssh-user root
 
+# Reuse the requirement descriptions published by another repository
+bsp test <bsp_name> --backend direct-ssh \
+    --test-job-path jobs/rsb3720-modbsp.yaml \
+    --test-requirements https://github.com/miketsukerman/modular-bsp-test-definitions/blob/main/requirements.yaml \
+    --ssh-host 192.168.3.195 --ssh-user root
+
 # Also print every test case with its description in the console summary
 bsp test <bsp_name> --backend direct-ssh \
     --test-job-path jobs/rsb3720-modbsp.yaml \

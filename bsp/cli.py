@@ -1748,11 +1748,14 @@ def main() -> int:
             "--test-requirements",
             action="append",
             dest="test_requirement_catalogs",
-            metavar="PATH",
+            metavar="PATH_OR_URL",
             help="Requirement catalogue YAML providing test case descriptions, "
                  "specifications, versions and categories for the report "
-                 "(repeatable). Resolved inside the test-definition root first, "
-                 "then as an absolute path. Defaults to 'requirements.yaml' at "
+                 "(repeatable). Accepts a path — resolved inside the "
+                 "test-definition root first, then as an absolute path — or an "
+                 "http(s) URL (GitHub blob URLs are downloaded as raw content), "
+                 "which allows the catalogue of another repository to be reused. "
+                 "Defaults to 'requirements.yaml' at "
                  "the test-definition root when present. Direct backends only."
         )
         test_parser.add_argument(
