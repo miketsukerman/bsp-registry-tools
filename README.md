@@ -1288,6 +1288,11 @@ The expanded test case cell also shows the catalogue's `verifies` text (what the
 case actually asserts) and `remarks` when present. Suites list their described steps
 under *Executed steps*, which covers steps that emit no LAVA signal at all.
 
+Failed test cases (and failed steps) additionally carry a *Log* fold with the tail of the
+step log — command, return code, stdout and stderr — embedded in the report so the HTML
+stays self-contained. The log is collapsed by default and only the last 200 lines are kept;
+when the log is longer, the fold points at the full per-step log file.
+
 Add `--show-cases` (implied by `--verbose`) to also print every test case with
 its description in the console summary.
 

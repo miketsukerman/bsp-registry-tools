@@ -1151,6 +1151,95 @@ run:
         assert "No LAVA test cases reported for this suite." in html
         assert "sleep 999" not in html
 
+    def test_html_report_folds_logs_of_failed_cases(self, tmp_path):
+        """Failed test cases carry their step log, collapsed by default."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="net-suite",
+                status="FAIL",
+                duration=1.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="FAIL",
+                        duration=0.5,
+                        command="./run-net-tests.sh",
+                        log_text="# stdout\ndownload failed: timeout\n",
+                        lava_signals=[
+                            LavaSignalCase(test_case_id="ping-gateway", result="pass"),
+                            LavaSignalCase(test_case_id="download-a-file", result="fail"),
+                        ],
+                        _execution_succeeded=False,
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="test",
+            backend="direct-local",
+            suites=suites,
+            passed=False,
+        )
+        assert '<details class="log-fold">' in html
+        # <details> without "open" renders collapsed.
+        assert "<details class=\"log-fold\" open" not in html
+        assert "download failed: timeout" in html
+
+    def test_html_report_omits_logs_for_passed_cases(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="net-suite",
+                status="PASS",
+                duration=1.0,
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="PASS",
+                        duration=0.5,
+                        command="./run-net-tests.sh",
+                        log_text="# stdout\neverything is fine\n",
+                        lava_signals=[LavaSignalCase(test_case_id="ping-gateway", result="pass")],
+                        _execution_succeeded=True,
+                    )
+                ],
+            )
+        ]
+        html = runner._render_html_report(
+            label="test",
+            backend="direct-local",
+            suites=suites,
+            passed=True,
+        )
+        assert '<details class="log-fold">' not in html
+        assert "everything is fine" not in html
+
+    def test_report_log_excerpt_read_from_log_file_and_truncated(self, tmp_path):
+        log_file = tmp_path / "step-1.log"
+        log_file.write_text("\n".join(f"line-{i}" for i in range(500)), encoding="utf-8")
+        case = DirectTestCaseResult(
+            name="step-1",
+            status="FAIL",
+            duration=0.1,
+            command="./run.sh",
+            log_path=str(log_file),
+        )
+        excerpt = DirectTestRunner._case_log_excerpt(case)
+        assert "line-0" not in excerpt
+        assert "line-499" in excerpt
+        assert "log truncated" in excerpt
+
+    def test_report_log_excerpt_missing_log_file(self, tmp_path):
+        case = DirectTestCaseResult(
+            name="step-1",
+            status="FAIL",
+            duration=0.1,
+            command="./run.sh",
+            log_path=str(tmp_path / "does-not-exist.log"),
+        )
+        assert DirectTestRunner._case_log_excerpt(case) == ""
+
     def test_pdf_skipped_when_weasyprint_missing(self, tmp_path):
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         with patch.dict("sys.modules", {"weasyprint": None}):
