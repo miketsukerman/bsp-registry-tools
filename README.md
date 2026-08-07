@@ -1270,9 +1270,10 @@ corresponding metadata, so plain test definitions keep a compact table.
 **Every test case always carries a description.** It is resolved in this order:
 
 1. the `DESCRIPTION=` attribute of the LAVA signal,
-2. the matching requirement catalogue entry,
-3. the definition's inline `metadata.test_cases` entry (which overrides the
+2. the definition's inline `metadata.test_cases` entry (which overrides the
    shared catalogue for that suite),
+3. the matching requirement catalogue entry (local or downloaded; when several
+   catalogues are given, the last one carrying the requirement wins),
 4. a humanized test case id (`ping-gateway` → "Ping gateway").
 
 Descriptions are shown by expanding the *Test Case* cell; there is no separate
