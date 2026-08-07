@@ -21,10 +21,14 @@ from bsp.direct_runner import (
 )
 from bsp.models import DirectTestConfig, DirectTransportConfig, TestDefinitionSource
 from bsp.requirements_catalog import (
+    clear_catalog_url_cache,
     discover_catalog,
     humanize_test_case_id,
     inline_catalog,
+    is_catalog_url,
     load_catalog_file,
+    load_catalog_url,
+    raw_catalog_url,
 )
 
 
@@ -2588,6 +2592,141 @@ class TestRequirementCatalog:
             encoding="utf-8",
         )
         assert load_catalog_file(path).get("L-X").verifies == "first check second check"
+
+
+class _FakeResponse:
+    def __init__(self, text="", error=None):
+        self.text = text
+        self._error = error
+
+    def raise_for_status(self):
+        if self._error is not None:
+            raise self._error
+
+
+class TestRemoteRequirementCatalog:
+    """Tests for requirement catalogues referenced by an http(s) URL."""
+
+    _CATALOG_URL = (
+        "https://github.com/miketsukerman/modular-bsp-test-definitions/"
+        "blob/main/requirements.yaml"
+    )
+    _RAW_URL = (
+        "https://raw.githubusercontent.com/miketsukerman/"
+        "modular-bsp-test-definitions/main/requirements.yaml"
+    )
+    _CATALOG_TEXT = (
+        "requirements:\n"
+        "  L-CAN-DEV:\n"
+        "    description: The configured CAN network interface exists on the target.\n"
+        "    verifies: Runs `ip addr show <iface>` and requires it to succeed.\n"
+        "    category: CAN\n"
+        "    version: 1\n"
+    )
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        clear_catalog_url_cache()
+        yield
+        clear_catalog_url_cache()
+
+    def _patch_requests(self, monkeypatch, response, calls=None):
+        def _get(url, timeout=None):
+            if calls is not None:
+                calls.append((url, timeout))
+            return response
+
+        monkeypatch.setattr("requests.get", _get)
+
+    def test_is_catalog_url(self):
+        assert is_catalog_url(self._CATALOG_URL) is True
+        assert is_catalog_url("http://example.com/requirements.yaml") is True
+        assert is_catalog_url("requirements.yaml") is False
+        assert is_catalog_url("/etc/requirements.yaml") is False
+
+    def test_github_blob_url_is_converted_to_raw(self):
+        assert raw_catalog_url(self._CATALOG_URL) == self._RAW_URL
+        assert raw_catalog_url(self._CATALOG_URL.replace("/blob/", "/raw/")) == self._RAW_URL
+
+    def test_non_github_url_is_left_unchanged(self):
+        url = "https://example.com/catalogs/requirements.yaml"
+        assert raw_catalog_url(url) == url
+
+    def test_download_catalog(self, monkeypatch):
+        calls = []
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT), calls)
+        catalog = load_catalog_url(self._CATALOG_URL)
+        entry = catalog.get("L-CAN-DEV")
+        assert entry.description == "The configured CAN network interface exists on the target."
+        assert entry.category == "CAN"
+        # The GitHub web URL is fetched as raw content, not as an HTML page.
+        assert calls[0][0] == self._RAW_URL
+
+    def test_download_is_cached_per_run(self, monkeypatch):
+        calls = []
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT), calls)
+        load_catalog_url(self._CATALOG_URL)
+        load_catalog_url(self._CATALOG_URL)
+        assert len(calls) == 1
+
+    def test_failing_download_yields_empty_catalog(self, monkeypatch, caplog):
+        self._patch_requests(monkeypatch, _FakeResponse(error=RuntimeError("404")))
+        with caplog.at_level(logging.WARNING):
+            catalog = load_catalog_url(self._CATALOG_URL)
+        assert len(catalog) == 0
+        assert any("Failed to download requirement catalogue" in r.getMessage() for r in caplog.records)
+
+    def test_failing_download_is_not_cached(self, monkeypatch):
+        calls = []
+        self._patch_requests(monkeypatch, _FakeResponse(error=RuntimeError("boom")), calls)
+        load_catalog_url(self._CATALOG_URL)
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT), calls)
+        assert len(load_catalog_url(self._CATALOG_URL)) == 1
+
+    def test_discover_catalog_accepts_url(self, monkeypatch, tmp_path):
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT))
+        catalog = discover_catalog(tmp_path, explicit_paths=[self._CATALOG_URL])
+        assert catalog.get("L-CAN-DEV").version == "1"
+
+    def test_local_catalog_overrides_remote_entry(self, monkeypatch, tmp_path):
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT))
+        (tmp_path / "local.yaml").write_text(
+            "L-CAN-DEV:\n  description: Board specific text\n", encoding="utf-8"
+        )
+        catalog = discover_catalog(
+            tmp_path, explicit_paths=[self._CATALOG_URL, "local.yaml"]
+        )
+        assert catalog.get("L-CAN-DEV").description == "Board specific text"
+
+    def test_remote_descriptions_reach_the_report(self, monkeypatch, tmp_path):
+        self._patch_requests(monkeypatch, _FakeResponse(self._CATALOG_TEXT))
+        definition = (
+            "metadata:\n  name: can-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=L-CAN-DEV-can0 RESULT=pass>\\n'\"\n"
+        )
+        repo = tmp_path / "defs"
+        repo.mkdir()
+        (repo / "suite.yaml").write_text(definition, encoding="utf-8")
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        cfg = DirectTestConfig(
+            definitions=[TestDefinitionSource(local_dir=str(repo), paths=["suite.yaml"])],
+            timeout=30,
+        )
+        result = runner.run(
+            resolved=SimpleNamespace(build_path=str(tmp_path / "build")),
+            direct_config=cfg,
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                output_dir=str(tmp_path / "out"),
+                requirement_catalog_paths=[self._CATALOG_URL],
+            ),
+            label="remote-catalog",
+        )
+        row = DirectTestRunner._build_html_report_context(result.suites)["requirements"][0]
+        assert row["description_source"] == "catalogue"
+        assert row["description"] == "The configured CAN network interface exists on the target."
+        assert row["category"] == "CAN"
 
 
 class TestCatalogEnrichedReport:

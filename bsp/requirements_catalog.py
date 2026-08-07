@@ -5,19 +5,28 @@ A requirement catalogue carries the *static* metadata of a test case
 test scripts only have to emit the *runtime* outcome via
 ``<LAVA_SIGNAL_TESTCASE ...>`` lines.
 
-Two catalogue forms are supported:
+Three catalogue forms are supported:
 
 ``requirements.yaml``-style shared file
     A file in the test-definition repository listing requirements for all
     suites.  Either a top-level ``requirements:`` mapping/list or a bare
     mapping of requirement id to entry.
 
+Remote ``requirements.yaml`` URL
+    The same file referenced by an ``http(s)://`` URL, so the descriptions
+    maintained in a test-definition repository (for example
+    ``https://github.com/miketsukerman/modular-bsp-test-definitions/blob/main/requirements.yaml``)
+    can be reused for runs whose definitions come from elsewhere.  GitHub
+    ``blob``/``raw`` web URLs are converted to their raw content URL
+    automatically.
+
 Inline ``metadata.test_cases`` block
     Declared inside a single Lava-Test definition YAML.  Inline entries take
     precedence over shared entries for the suite that declares them.
 
-Catalogue files are always optional and never fatal: malformed content is
-logged and skipped so that a broken catalogue can never fail a test run.
+Catalogue sources are always optional and never fatal: malformed content and
+failing downloads are logged and skipped so that a broken catalogue can never
+fail a test run.
 """
 
 import logging
@@ -25,6 +34,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import yaml
 
@@ -39,6 +49,15 @@ DEFAULT_CATALOG_FILENAMES = (
 )
 
 _INSTANCE_SEPARATORS = ("-", "_", ".", ":", "/")
+
+# Remote catalogues are downloaded with a short timeout: a slow or unreachable
+# host must never hold up (or fail) a test run.
+CATALOG_DOWNLOAD_TIMEOUT = 15
+_GITHUB_WEB_PATH_RE = re.compile(r"^/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?:blob|raw)/(?P<rest>.+)$")
+
+# Downloaded catalogues, keyed by raw URL, so a catalogue shared by all suites
+# of a run is fetched only once.
+_URL_CATALOG_CACHE: Dict[str, "RequirementCatalog"] = {}
 
 
 @dataclass
@@ -228,6 +247,68 @@ def catalog_from_raw(raw: Any, source: str = "", logger: Optional[logging.Logger
     return RequirementCatalog(entries)
 
 
+def is_catalog_url(reference: str) -> bool:
+    """Return ``True`` when *reference* is an ``http(s)`` catalogue URL."""
+    return str(reference).strip().lower().startswith(("http://", "https://"))
+
+
+def raw_catalog_url(url: str) -> str:
+    """Return the raw-content URL for *url*.
+
+    GitHub web URLs (``.../blob/<ref>/<path>`` and ``.../raw/<ref>/<path>``)
+    serve an HTML page, so they are rewritten to their
+    ``raw.githubusercontent.com`` equivalent.  Any other URL is returned
+    unchanged.
+    """
+    url = str(url).strip()
+    parsed = urlparse(url)
+    if parsed.netloc.lower() not in ("github.com", "www.github.com"):
+        return url
+    match = _GITHUB_WEB_PATH_RE.match(parsed.path)
+    if not match:
+        return url
+    return (
+        f"https://raw.githubusercontent.com/{match.group('owner')}/"
+        f"{match.group('repo')}/{match.group('rest')}"
+    )
+
+
+def load_catalog_url(
+    url: str,
+    logger: Optional[logging.Logger] = None,
+    timeout: int = CATALOG_DOWNLOAD_TIMEOUT,
+) -> RequirementCatalog:
+    """Download a requirement catalogue from *url*.
+
+    Results are cached per process so a catalogue shared by every suite of a
+    run is downloaded only once.  Never raises: unreachable hosts, HTTP errors
+    and malformed content log a warning and yield an empty catalogue, so a
+    remote catalogue can never fail a test run.
+    """
+    log = logger or logging.getLogger(__name__)
+    fetch_url = raw_catalog_url(url)
+    cached = _URL_CATALOG_CACHE.get(fetch_url)
+    if cached is not None:
+        return cached
+    try:
+        import requests  # imported lazily so offline runs never need it
+
+        response = requests.get(fetch_url, timeout=timeout)
+        response.raise_for_status()
+        raw = yaml.safe_load(response.text)
+    except Exception as exc:  # noqa: BLE001 - a catalogue is always optional
+        log.warning("Failed to download requirement catalogue '%s': %s", fetch_url, exc)
+        return RequirementCatalog()
+    catalog = catalog_from_raw(raw, source=fetch_url, logger=log)
+    _URL_CATALOG_CACHE[fetch_url] = catalog
+    return catalog
+
+
+def clear_catalog_url_cache() -> None:
+    """Drop the cache of downloaded catalogues (used by tests)."""
+    _URL_CATALOG_CACHE.clear()
+
+
 def load_catalog_file(path: Path, logger: Optional[logging.Logger] = None) -> RequirementCatalog:
     """Load a requirement catalogue from *path*.
 
@@ -250,15 +331,20 @@ def discover_catalog(
 ) -> RequirementCatalog:
     """Load the shared catalogue for a test-definition source.
 
-    *explicit_paths* entries are resolved relative to *repo_dir* first, then as
-    absolute/CWD-relative paths.  When no explicit path is given, conventional
-    file names at the repository root are used.
+    *explicit_paths* entries may be ``http(s)`` URLs — which are downloaded, so
+    a catalogue maintained in another repository can be reused — or file paths,
+    resolved relative to *repo_dir* first, then as absolute/CWD-relative paths.
+    When no explicit reference is given, conventional file names at the
+    repository root are used.
     """
     log = logger or logging.getLogger(__name__)
     catalog = RequirementCatalog()
 
     if explicit_paths:
         for raw_path in explicit_paths:
+            if is_catalog_url(raw_path):
+                catalog = catalog.merged_with(load_catalog_url(raw_path, logger=log))
+                continue
             candidate = (repo_dir / raw_path)
             if not candidate.is_file():
                 candidate = Path(raw_path).expanduser()
