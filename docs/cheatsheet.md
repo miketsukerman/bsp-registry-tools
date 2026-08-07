@@ -310,6 +310,13 @@ bsp test <bsp_name> --backend direct-ssh \
     --test-job-path jobs/rsb3720-modbsp.yaml \
     --test-requirements requirements.yaml \
     --ssh-host 192.168.3.195 --ssh-user root
+
+# Also print every test case with its description in the console summary
+bsp test <bsp_name> --backend direct-ssh \
+    --test-job-path jobs/rsb3720-modbsp.yaml \
+    --test-requirements requirements.yaml \
+    --show-cases \
+    --ssh-host 192.168.3.195 --ssh-user root
 ```
 
 ---

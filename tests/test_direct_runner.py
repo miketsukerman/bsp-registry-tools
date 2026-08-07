@@ -1,6 +1,7 @@
 """Tests for direct test-definition execution backend."""
 
 import json
+import logging
 import subprocess
 from html.parser import HTMLParser
 
@@ -2553,6 +2554,40 @@ class TestRequirementCatalog:
     def test_humanize_test_case_id(self):
         assert humanize_test_case_id("ping-gateway") == "Ping gateway"
 
+    def test_verifies_and_remarks_are_loaded(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text(
+            "L-CPU-MODEL:\n"
+            "  description: The Linux Kernel shall enumerate the specified CPU Model\n"
+            "  verifies: 'lscpu reports the model name configured for the device'\n"
+            "  remarks: Requires a booted userspace\n",
+            encoding="utf-8",
+        )
+        entry = load_catalog_file(path).get("L-CPU-MODEL")
+        assert entry.verifies == "lscpu reports the model name configured for the device"
+        assert entry.remarks == "Requires a booted userspace"
+
+    def test_purpose_is_an_alias_for_description(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text("L-X:\n  purpose: Why this case exists\n", encoding="utf-8")
+        assert load_catalog_file(path).get("L-X").description == "Why this case exists"
+
+    def test_string_only_entry_keeps_working(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text("L-X: A plain description\n", encoding="utf-8")
+        entry = load_catalog_file(path).get("L-X")
+        assert entry.description == "A plain description"
+        assert entry.verifies == ""
+        assert entry.remarks == ""
+
+    def test_malformed_verifies_value_is_stringified(self, tmp_path):
+        path = tmp_path / "requirements.yaml"
+        path.write_text(
+            "L-X:\n  description: X\n  verifies:\n    - first check\n    - second check\n",
+            encoding="utf-8",
+        )
+        assert load_catalog_file(path).get("L-X").verifies == "first check second check"
+
 
 class TestCatalogEnrichedReport:
     """Tests for report rows enriched by the requirement catalogue."""
@@ -2738,6 +2773,151 @@ class TestCatalogEnrichedReport:
         assert "Requirement Id" not in html
         assert "Req. version" not in html
         assert "Categories" not in html
+
+    def test_description_column_is_always_rendered(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        self._run(tmp_path, definition)
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        # Without any catalogue the derived description still reaches the report,
+        # rendered in the muted style that marks generated text.
+        assert "<th>Description</th>" in html
+        assert "Ping gateway" in html
+        assert 'class="desc-derived"' in html
+
+    def test_description_source_precedence(self, tmp_path):
+        catalog = "ping-gateway:\n  description: catalogue text\n"
+        signal_definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass "
+            "DESCRIPTION=\\\"signal text\\\">\\n'\"\n"
+        )
+        plain_definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+
+        def _row(result):
+            return DirectTestRunner._build_html_report_context(result.suites)["requirements"][0]
+
+        row = _row(self._run(tmp_path / "signal", signal_definition, catalog))
+        assert (row["description"], row["description_source"]) == ("signal text", "signal")
+
+        row = _row(self._run(tmp_path / "catalog", plain_definition, catalog))
+        assert (row["description"], row["description_source"]) == ("catalogue text", "catalogue")
+
+        row = _row(self._run(tmp_path / "derived", plain_definition))
+        assert (row["description"], row["description_source"]) == ("Ping gateway", "derived")
+
+    def test_verifies_and_remarks_reach_report_and_summary(self, tmp_path):
+        catalog = (
+            "ping-gateway:\n"
+            "  description: The device shall reach its default gateway\n"
+            "  verifies: 'ping -c1 the gateway address exits with status 0'\n"
+            "  remarks: Needs a configured network\n"
+        )
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        result = self._run(tmp_path, definition, catalog)
+        signal = result.suites[0].cases[0].lava_signals[0]
+        assert signal.verifies == "ping -c1 the gateway address exits with status 0"
+        assert signal.remarks == "Needs a configured network"
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Verifies: ping -c1 the gateway address exits with status 0" in html
+        assert "Remarks: Needs a configured network" in html
+
+        summary = json.loads(
+            (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
+        )
+        signal_json = summary["suites"][0]["cases"][0]["lava_signals"][0]
+        assert signal_json["verifies"] == "ping -c1 the gateway address exits with status 0"
+        assert signal_json["remarks"] == "Needs a configured network"
+        assert signal_json["description_source"] == "catalogue"
+
+    def test_signal_attributes_override_verifies_and_remarks(self, tmp_path):
+        catalog = (
+            "ping-gateway:\n  description: d\n  verifies: catalogue verifies\n"
+            "  remarks: catalogue remarks\n"
+        )
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass "
+            "VERIFIES=\\\"signal verifies\\\" REMARKS=\\\"signal remarks\\\">\\n'\"\n"
+        )
+        signal = self._run(tmp_path, definition, catalog).suites[0].cases[0].lava_signals[0]
+        assert signal.verifies == "signal verifies"
+        assert signal.remarks == "signal remarks"
+
+    def test_step_description_reaches_report_and_summary(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - command: \"true\"\n"
+            "      description: Bring the network interface up\n"
+        )
+        result = self._run(tmp_path, definition)
+        assert result.suites[0].cases[0].description == "Bring the network interface up"
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Executed steps (1)" in html
+        assert "Bring the network interface up" in html
+
+        summary = json.loads(
+            (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
+        )
+        assert summary["suites"][0]["cases"][0]["description"] == "Bring the network interface up"
+
+    def test_step_description_from_metadata_steps(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "  steps:\n    step-1: Bring the network interface up\n"
+            "run:\n  steps:\n    - \"true\"\n"
+        )
+        result = self._run(tmp_path, definition)
+        assert result.suites[0].cases[0].description == "Bring the network interface up"
+
+    def test_undescribed_steps_are_not_listed(self, tmp_path):
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n    - \"true\"\n"
+        )
+        self._run(tmp_path, definition)
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Executed steps" not in html
+
+    def test_description_coverage_kpi_and_warning(self, tmp_path, caplog):
+        catalog = "described-case:\n  description: A described test case\n"
+        definition = (
+            "metadata:\n  name: net-suite\n"
+            "run:\n  steps:\n"
+            "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=described-case RESULT=pass>\\n"
+            "<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
+        )
+        with caplog.at_level(logging.WARNING):
+            result = self._run(tmp_path, definition, catalog)
+
+        context = DirectTestRunner._build_html_report_context(result.suites)
+        assert context["report"]["described_lava_cases"] == 1
+        assert context["report"]["total_lava_cases"] == 2
+        assert context["undescribed_cases"] == ["ping-gateway"]
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert "Described tests" in html
+
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any("ping-gateway" in message for message in warnings)
 
 
 class TestReportContextAggregation:

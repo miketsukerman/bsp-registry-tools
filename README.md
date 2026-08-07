@@ -1169,6 +1169,8 @@ bsp test --device <device> --release <release> [--feature FEATURE...] [--backend
 | `--test-job-path PATH` | Local LAVA job YAML file (repeatable). For entries with `from: git` and `repository`, the referenced Git repository is cloned and the test definition is run from there. Entries without a `repository` are resolved relative to the job file's directory. No `--test-repo-url` is required. |
 | `--test-suite NAME` | Direct backends only: run only the named test suite(s) (repeatable). Matches `actions[].test.definitions[].name` in the LAVA job YAML, falling back to the definition's `metadata.name` / file stem for plain test definitions. |
 | `--test-param KEY=VALUE` | Direct backend parameter override (repeatable) |
+| `--test-requirements PATH` | Direct backends only: requirement catalogue YAML providing test case descriptions, specifications, versions and categories for the report (repeatable) |
+| `--show-cases` | Direct backends only: list every test case with its description in the console summary (implied by `--verbose`) |
 | `--direct-timeout SECONDS` / `--direct-output-dir PATH` | Direct execution timeout and output controls |
 | `--ssh-host/--ssh-user/--ssh-port/--ssh-key/--ssh-password` | SSH transport overrides for `direct-ssh` / `direct-serial` |
 | `--ssh-known-hosts-file` / `--ssh-no-strict-host-key-checking` | SSH host key verification controls |
@@ -1256,16 +1258,37 @@ specification, version, category and verification status:
 | Column | Source |
 | --- | --- |
 | Requirement Id | requirement catalogue (linked from the signal) |
-| TEST_CASE_ID | `TEST_CASE_ID` of the LAVA signal |
-| Req. description | requirement catalogue |
-| Req. specification | requirement catalogue (falls back to the step parameters) |
-| Req. version | requirement catalogue |
+| Test Case | `TEST_CASE_ID` of the LAVA signal |
+| Description | `DESCRIPTION` signal attribute › requirement catalogue › humanized test case id |
+| Parameters | requirement catalogue `specification` (falls back to the step parameters) |
+| Version | requirement catalogue |
 | Category | requirement catalogue |
-| Verification status | `RESULT` of the LAVA signal, with the measurement in parentheses |
+| State | `RESULT` of the LAVA signal, with the measurement in parentheses |
 
 Optional columns are omitted entirely when no test case in the run supplies the
-corresponding metadata, so plain test definitions keep the compact
-`TEST_CASE_ID | Verification status` table.
+corresponding metadata, so plain test definitions keep a compact table.
+
+**Every test case always carries a description.** It is resolved in this order:
+
+1. the `DESCRIPTION=` attribute of the LAVA signal,
+2. the matching requirement catalogue entry,
+3. the definition's inline `metadata.test_cases` entry (which overrides the
+   shared catalogue for that suite),
+4. a humanized test case id (`ping-gateway` → "Ping gateway").
+
+Descriptions derived from the test case id are rendered in a muted, italic
+style so a generated fallback can be told apart from authored text, and the
+*Described tests* KPI reports how many cases carry an authored description. Test
+case ids that fall back to the derived description are also listed in a single
+warning after the run, which makes a missing or mistyped requirement id visible
+without ever failing the run.
+
+The description cell also shows the catalogue's `verifies` text (what the case
+actually asserts) and `remarks` when present. Suites list their described steps
+under *Executed steps*, which covers steps that emit no LAVA signal at all.
+
+Add `--show-cases` (implied by `--verbose`) to also print every test case with
+its description in the console summary.
 
 #### LAVA signal attributes
 
@@ -1279,7 +1302,8 @@ number of `KEY=VALUE` attributes (values may be quoted to carry spaces):
 `RESULT` accepts `pass`, `fail`, `skip`, `unknown` and `manual`; `skip` and
 `unknown` are reported as "not run" and `manual` as a manual test — neither
 counts as a failure. Recognised attributes are `MEASUREMENT`, `UNITS`,
-`REQUIREMENT_ID`, `DESCRIPTION`, `SPECIFICATION`, `VERSION` and `CATEGORY`;
+`REQUIREMENT_ID`, `DESCRIPTION`, `VERIFIES`, `REMARKS`, `SPECIFICATION`,
+`VERSION` and `CATEGORY`;
 any other attribute is preserved in the JSON summary. Attributes always take
 precedence over catalogue values, but are normally only used for runtime data
 (the measured value) — static text belongs in the requirement catalogue.
@@ -1308,6 +1332,8 @@ A catalogue is a mapping of requirement id to entry (a top-level
 ```yaml
 L-CPU-FREQ-SCALING-MAX:
   description: The CPU should match the specified maximum scaling frequency
+  verifies: scaling_max_freq of every CPU equals the configured specification
+  remarks: Requires the cpufreq driver to be loaded
   version: 1
   category: CPU
   specification:
@@ -1318,6 +1344,17 @@ L-CPU-FREQ-SCALING-MAX:
   category: AUDIO
   manual: true
 ```
+
+| Field | Meaning |
+| --- | --- |
+| `description` (alias `desc`, `purpose`) | What the test case means and why it exists |
+| `verifies` (alias `verification`) | What is actually asserted and how |
+| `remarks` | Preconditions or caveats worth showing next to the result |
+| `specification` (alias `spec`) | Expected value, optionally a mapping keyed by instance |
+| `version`, `category`, `manual` | Requirement version, roll-up category, manual test flag |
+
+An entry may also be a plain string, which is taken as its description
+(`L-CPU-MODEL: The kernel shall enumerate the specified CPU model`).
 
 A test case is linked to its requirement through an explicit `REQUIREMENT_ID`
 signal attribute, or — when absent — by matching the test case id against
@@ -1339,6 +1376,25 @@ metadata:
 
 Catalogues are always optional: a missing or malformed catalogue logs a warning
 and never fails a test run.
+
+#### Step descriptions
+
+A `run.steps` entry may carry a `description` explaining what the step does,
+which is shown in the report's per-suite *Executed steps* table. This is useful
+for steps that emit no LAVA signal:
+
+```yaml
+metadata:
+  name: net-suite
+run:
+  steps:
+    - command: ./setup-network.sh
+      description: Bring the network interface up before the checks run
+```
+
+Descriptions may equally be declared in a `metadata.steps` mapping keyed by the
+generated step name (`step-1`, `step-2`, …) or by the raw command; an inline
+`description` on the step wins. Steps without a description are not listed.
 
 When `--test-definition-path` points to a LAVA job YAML, direct backends execute only entries under `actions[].test.definitions[].path`. If both the source and a job entry define parameters, entry `parameters` override source-level values with the same key.
 
