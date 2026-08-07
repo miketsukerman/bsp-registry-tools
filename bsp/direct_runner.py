@@ -29,6 +29,9 @@ from .resolver import ResolvedConfig
 
 
 _HTML_REPORT_TEMPLATE = """\
+{%- macro description_cell(row) -%}
+<td class="req-desc">{% if row.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% endif %}</td>
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -88,6 +91,9 @@ _HTML_REPORT_TEMPLATE = """\
   .cell-fold { margin-top: 0; padding: 0.2rem 0.35rem; }
   .cell-fold > summary { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.74rem; }
   .cell-fold .cell-body { margin-top: 0.25rem; }
+  .desc-derived { color: #6b7280; font-style: italic; }
+  .desc-extra { margin-top: 0.25rem; color: #4b5563; font-size: 0.78rem; }
+  .step-desc { color: #4b5563; }
   .num { text-align: right; }
   @page { size: A4 landscape; margin: 12mm; }
   @media print {
@@ -120,6 +126,7 @@ _HTML_REPORT_TEMPLATE = """\
     <div class="kpi"><div class="name">Failed tests</div><div class="value">{{ report.failed_lava_cases }}</div></div>
     <div class="kpi"><div class="name">Not run</div><div class="value">{{ report.not_run_lava_cases }}</div></div>
     <div class="kpi"><div class="name">Manual tests</div><div class="value">{{ report.manual_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Described tests</div><div class="value">{{ report.described_lava_cases }}/{{ report.total_lava_cases }}</div></div>
     <div class="kpi"><div class="name">Duration</div><div class="value">{{ "%.2f"|format(report.total_duration) }}s</div></div>
   </div>
 </div>
@@ -190,7 +197,7 @@ _HTML_REPORT_TEMPLATE = """\
         <td>{{ failure.suite_name }}</td>
         {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
         <td>{{ failure.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{% if failure.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ failure.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}{{ description_cell(failure) }}{% endif %}
         {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ failure.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
@@ -224,7 +231,7 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ row.requirement_id }}</td>{% endif %}
         <td>{{ row.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{% if row.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ row.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}{{ description_cell(row) }}{% endif %}
         {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ row.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ row.category }}</td>{% endif %}
@@ -277,7 +284,7 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ case.requirement_id }}</td>{% endif %}
         <td>{{ case.test_case_id }}</td>
-        {% if columns.description %}<td class="req-desc">{% if case.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body">{{ case.description }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.description %}{{ description_cell(case) }}{% endif %}
         {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ case.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ case.category }}</td>{% endif %}
@@ -290,6 +297,26 @@ _HTML_REPORT_TEMPLATE = """\
   <div class="panel" style="border: none; border-top: 1px solid #edf1f7; border-radius: 0; margin-bottom: 0;">
     <p class="muted">No LAVA test cases reported for this suite.</p>
   </div>
+  {% endif %}
+
+  {% if suite.steps %}
+  <details>
+    <summary>Executed steps ({{ suite.steps | length }})</summary>
+    <table class="mini-table">
+      <thead>
+        <tr><th>Step</th><th>Description</th><th>State</th></tr>
+      </thead>
+      <tbody>
+      {% for step in suite.steps %}
+        <tr>
+          <td>{{ step.name }}</td>
+          <td class="step-desc">{{ step.description }}</td>
+          <td><span class="badge {{ step.status_class }}">{{ step.status }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
   {% endif %}
 </div>
 {% endfor %}
@@ -328,12 +355,18 @@ class LavaSignalCase:
 
     ``test_case_id`` and ``result`` come from the signal itself.  The remaining
     fields are resolved against the requirement catalogue (or overridden by
-    signal attributes) when the report is built.
+    signal attributes) when the report is built.  ``description_source``
+    records where the description text came from (``"signal"``,
+    ``"catalogue"`` or — once the report row is built — ``"derived"``) so the
+    report can distinguish authored text from a generated fallback.
     """
     test_case_id: str
     result: str  # "pass", "fail", "skip", "unknown" or "manual"
     requirement_id: str = ""
     description: str = ""
+    description_source: str = ""
+    verifies: str = ""
+    remarks: str = ""
     specification: str = ""
     version: str = ""
     category: str = ""
@@ -386,6 +419,9 @@ class DirectTestCaseResult:
     status: str
     duration: float
     command: str
+    # Optional ``run.steps[].description`` (or ``metadata.steps``) text
+    # explaining what the step does.
+    description: str = ""
     params: Dict[str, str] = field(default_factory=dict)
     log_path: Optional[str] = None
     timed_out: bool = False
@@ -1178,20 +1214,46 @@ class DirectTestRunner:
             raise RuntimeError(f"Invalid test-definition format in '{path}'.")
         return raw
 
-    def _extract_steps(self, definition: Dict) -> List[str]:
+    def _extract_steps(self, definition: Dict) -> List[Tuple[str, str]]:
+        """Return the ``run.steps`` commands paired with their descriptions.
+
+        A step description may be declared inline on a mapping step
+        (``description:`` next to ``command:``) or in a ``metadata.steps``
+        mapping keyed by the generated step name (``step-1``, ``step-2``, …)
+        or by the raw command.  Inline descriptions win.
+        """
         run = definition.get("run") or {}
         steps = run.get("steps") if isinstance(run, dict) else None
         if not isinstance(steps, list):
             return []
 
-        commands: List[str] = []
+        metadata = definition.get("metadata")
+        step_descriptions = metadata.get("steps") if isinstance(metadata, dict) else None
+        if not isinstance(step_descriptions, dict):
+            step_descriptions = {}
+
+        commands: List[Tuple[str, str]] = []
         for step in steps:
+            description = ""
             if isinstance(step, str):
-                commands.append(step)
+                cmd = step
             elif isinstance(step, dict):
                 cmd = step.get("command") or step.get("run") or ""
-                if cmd:
-                    commands.append(str(cmd))
+                raw_description = step.get("description")
+                if isinstance(raw_description, str):
+                    description = raw_description
+            else:
+                continue
+            if not cmd:
+                continue
+            cmd = str(cmd)
+            if not description:
+                fallback = step_descriptions.get(f"step-{len(commands) + 1}")
+                if not isinstance(fallback, str):
+                    fallback = step_descriptions.get(cmd)
+                if isinstance(fallback, str):
+                    description = fallback
+            commands.append((cmd, description))
         return commands
 
     def _extract_lava_job_test_definitions(self, definition: Dict) -> List[Tuple[str, Dict[str, str], str]]:
@@ -1279,11 +1341,15 @@ class DirectTestRunner:
                 continue
 
             manual = result == "manual"
+            description = attrs.pop("DESCRIPTION", "")
             case = LavaSignalCase(
                 test_case_id=test_case_id,
                 result=result,
                 requirement_id=attrs.pop("REQUIREMENT_ID", ""),
-                description=attrs.pop("DESCRIPTION", ""),
+                description=description,
+                description_source="signal" if description else "",
+                verifies=attrs.pop("VERIFIES", ""),
+                remarks=attrs.pop("REMARKS", ""),
                 specification=attrs.pop("SPECIFICATION", attrs.pop("SPEC", "")),
                 version=attrs.pop("VERSION", ""),
                 category=attrs.pop("CATEGORY", ""),
@@ -1316,6 +1382,12 @@ class DirectTestRunner:
                     signal.requirement_id = entry.id
                 if not signal.description:
                     signal.description = entry.description
+                    if entry.description:
+                        signal.description_source = "catalogue"
+                if not signal.verifies:
+                    signal.verifies = entry.verifies
+                if not signal.remarks:
+                    signal.remarks = entry.remarks
                 if not signal.specification:
                     signal.specification = entry.specification_for(instance)
                 if not signal.version:
@@ -1369,7 +1441,7 @@ class DirectTestRunner:
 
         run_cwd = str(Path(repo_exec_root))
 
-        for idx, raw_cmd in enumerate(steps, start=1):
+        for idx, (raw_cmd, step_description) in enumerate(steps, start=1):
             expanded = self._expand_vars(str(raw_cmd), merged_params)
             step_name = f"step-{idx}"
             log_file = suite_log_dir / f"{step_name}.log"
@@ -1449,6 +1521,7 @@ class DirectTestRunner:
                     status=status,
                     duration=duration,
                     command=expanded,
+                    description=self._expand_vars(step_description, merged_params),
                     params=dict(sorted(merged_params.items())),
                     log_path=str(log_file),
                     timed_out=timed_out,
@@ -1530,6 +1603,7 @@ class DirectTestRunner:
                             "status": c.status,
                             "duration": c.duration,
                             "command": c.command,
+                            "description": c.description,
                             "params": c.params,
                             "log_path": c.log_path,
                             "timed_out": c.timed_out,
@@ -1539,6 +1613,9 @@ class DirectTestRunner:
                                     "result": sig.result,
                                     "requirement_id": sig.requirement_id,
                                     "description": sig.description,
+                                    "description_source": sig.description_source,
+                                    "verifies": sig.verifies,
+                                    "remarks": sig.remarks,
                                     "specification": sig.specification,
                                     "version": sig.version,
                                     "category": sig.category,
@@ -1564,6 +1641,7 @@ class DirectTestRunner:
         summary["requirements"] = report_context["requirements"]
         if preset_info:
             summary["preset"] = preset_info
+        self._log_description_coverage(report_context)
         (output_dir / "direct-test-summary.json").write_text(
             json.dumps(summary, indent=2),
             encoding="utf-8",
@@ -1581,6 +1659,25 @@ class DirectTestRunner:
         self.logger.debug("HTML test report written to %s", html_path)
 
         self._write_pdf_report(output_dir / "direct-test-report.pdf", html_content)
+
+    def _log_description_coverage(self, report_context: Dict[str, Any]) -> None:
+        """Warn once about test cases falling back to a derived description.
+
+        A missing or mistyped requirement id silently degrades to a humanized
+        test case id, so the ids are listed to make the gap visible.  This is
+        informational only and never fails a run.
+        """
+        undescribed = report_context.get("undescribed_cases") or []
+        if not undescribed:
+            return
+        self.logger.warning(
+            "%d of %d test case(s) have no authored description and fall back to "
+            "their test case id: %s. Add them to a requirement catalogue or to "
+            "the definition's metadata.test_cases block.",
+            len(undescribed),
+            report_context["report"]["total_lava_cases"],
+            ", ".join(undescribed),
+        )
 
     def _render_html_report(
         self,
@@ -1621,15 +1718,21 @@ class DirectTestRunner:
     ) -> Dict[str, Any]:
         """Build one requirement/test-case row of the report."""
         specification = signal.specification or cls._format_params(signal.params or case.params)
+        # Resolution order: signal attribute > catalogue/inline entry >
+        # humanized test case id.  A humanized id keeps the description cell
+        # readable when no catalogue entry exists, so every test case carries
+        # an explanation even for plain test definitions.
+        description = signal.description or humanize_test_case_id(signal.test_case_id)
+        description_source = signal.description_source if signal.description else "derived"
         return {
             "suite_name": suite.name,
             "test_case_id": signal.test_case_id,
             "requirement_id": signal.requirement_id,
-            # A humanized test case id keeps the description cell readable when
-            # no catalogue entry exists, without making the column appear for
-            # runs that carry no requirement metadata at all.
-            "description": signal.description or humanize_test_case_id(signal.test_case_id),
+            "description": description,
+            "description_source": description_source,
             "has_description": bool(signal.description),
+            "verifies": signal.verifies,
+            "remarks": signal.remarks,
             "specification": specification,
             "parameters": cls._format_params(signal.params or case.params),
             "version": signal.version,
@@ -1714,6 +1817,21 @@ class DirectTestRunner:
                 "duration": suite.duration,
                 "log_dir": suite.log_dir,
                 "lava_cases": rendered_lava_cases,
+                # Only described steps are listed: the step table exists to
+                # explain what a step does (especially when it emits no LAVA
+                # signal), not to duplicate the executed commands.
+                "steps": [
+                    {
+                        "name": case.name,
+                        "description": case.description,
+                        "status": case.report_status,
+                        "status_class": case.report_status_class,
+                        "duration": case.duration,
+                        "log_path": case.log_path,
+                    }
+                    for case in suite.cases
+                    if case.description
+                ],
                 "lava_total": suite_lava_total,
                 "lava_failed": suite_lava_failed,
                 "execution_note": execution_note,
@@ -1743,14 +1861,27 @@ class DirectTestRunner:
 
         # Optional columns are only rendered when at least one case supplies
         # the corresponding metadata, so plain test definitions keep the
-        # original compact table.
+        # original compact table.  The description column is an exception: a
+        # description is always available (derived from the test case id when
+        # nothing else is known), so it is always rendered.
         columns = {
             "requirement_id": any(row["requirement_id"] for row in requirement_rows),
-            "description": any(row["has_description"] for row in requirement_rows),
+            "description": any(row["description"] for row in requirement_rows),
             "specification": any(row["specification"] for row in requirement_rows),
             "version": any(row["version"] for row in requirement_rows),
             "category": any(row["category"] for row in requirement_rows),
         }
+
+        described_cases = sum(
+            1 for row in requirement_rows if row["description_source"] != "derived"
+        )
+        undescribed_cases = sorted(
+            {
+                row["test_case_id"]
+                for row in requirement_rows
+                if row["description_source"] == "derived"
+            }
+        )
 
         report = {
             "total_suites": len(rendered_suites),
@@ -1760,6 +1891,7 @@ class DirectTestRunner:
             "passed_lava_cases": passed_lava_cases,
             "manual_lava_cases": manual_lava_cases,
             "not_run_lava_cases": not_run_lava_cases,
+            "described_lava_cases": described_cases,
             "total_duration": round(total_duration, 2),
         }
         return {
@@ -1769,6 +1901,7 @@ class DirectTestRunner:
             "categories": category_rows,
             "requirements": requirement_rows,
             "columns": columns,
+            "undescribed_cases": undescribed_cases,
         }
 
     def _write_pdf_report(self, pdf_path: Path, html_content: str) -> None:

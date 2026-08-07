@@ -1756,6 +1756,13 @@ def main() -> int:
                  "the test-definition root when present. Direct backends only."
         )
         test_parser.add_argument(
+            "--show-cases",
+            action="store_true",
+            dest="show_cases",
+            help="List every test case with its description in the console "
+                 "summary (implied by --verbose). Direct backends only."
+        )
+        test_parser.add_argument(
             "--test-suite",
             action="append",
             dest="test_suites",
@@ -2499,6 +2506,7 @@ def main() -> int:
             test_job_paths = getattr(args, "test_job_paths", None)
             test_suites = getattr(args, "test_suites", None)
             test_requirement_catalogs = getattr(args, "test_requirement_catalogs", None)
+            show_cases = getattr(args, "show_cases", False)
             direct_timeout = getattr(args, "direct_timeout", None)
             direct_output_dir = getattr(args, "direct_output_dir", None)
             ssh_host = getattr(args, "ssh_host", None)
@@ -2546,6 +2554,7 @@ def main() -> int:
                     ssh_remote_workdir=ssh_remote_workdir,
                     ssh_serial_device=ssh_serial_device,
                     ssh_serial_baudrate=ssh_serial_baudrate,
+                    show_cases=show_cases,
                 )
             elif device and release:
                 passed = bsp_mgr.test_by_components(
@@ -2576,6 +2585,7 @@ def main() -> int:
                     ssh_remote_workdir=ssh_remote_workdir,
                     ssh_serial_device=ssh_serial_device,
                     ssh_serial_baudrate=ssh_serial_baudrate,
+                    show_cases=show_cases,
                 )
             else:
                 logging.error(

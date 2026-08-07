@@ -43,10 +43,16 @@ _INSTANCE_SEPARATORS = ("-", "_", ".", ":", "/")
 
 @dataclass
 class RequirementEntry:
-    """Static metadata for a single requirement (one or more test cases)."""
+    """Static metadata for a single requirement (one or more test cases).
+
+    ``description`` states what the test case means (its purpose) while
+    ``verifies`` states what is actually asserted and how, so a report reader
+    can tell the intent apart from the verification method.
+    """
 
     id: str
     description: str = ""
+    verifies: str = ""
     specification: Any = ""
     version: str = ""
     category: str = ""
@@ -169,7 +175,10 @@ def _entry_from_mapping(entry_id: str, raw: Any) -> Optional[RequirementEntry]:
         return None
     return RequirementEntry(
         id=entry_id,
-        description=_stringify(raw.get("description") or raw.get("desc") or ""),
+        description=_stringify(
+            raw.get("description") or raw.get("desc") or raw.get("purpose") or ""
+        ),
+        verifies=_stringify(raw.get("verifies") or raw.get("verification") or ""),
         specification=raw.get("specification", raw.get("spec", "")),
         version=_stringify(raw.get("version", raw.get("req_version", ""))),
         category=_stringify(raw.get("category", "")),
