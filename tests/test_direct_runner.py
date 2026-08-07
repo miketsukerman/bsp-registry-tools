@@ -888,7 +888,7 @@ class TestReportGeneration:
         assert "Aggregate summary" in content
         assert "Failures first" in content
         assert "Suite navigation" in content
-        assert "TEST_CASE_ID" in content
+        assert "Test Case" in content
         assert "echo hello" not in content
         assert "href=\"file:///tmp/logs/smoke-suite/step-1.log\"" not in content
 
@@ -1350,7 +1350,7 @@ class TestLavaSignalParsing:
         )
         assert "ping-gateway" in html
         assert "download-a-file" in html
-        assert "TEST_CASE_ID" in html
+        assert "Test Case" in html
         assert "step-1" not in html
         assert "./run-net-tests.sh" not in html
 
@@ -2616,9 +2616,9 @@ class TestCatalogEnrichedReport:
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Requirement Id" in html
-        assert "Req. description" in html
-        assert "Req. specification" in html
-        assert "Req. version" in html
+        assert "Description" in html
+        assert "Parameters" in html
+        assert "Version" in html
         assert "The CPU should match the specified maximum scaling frequency" in html
         assert "PASS (1600000)" in html
         assert "Requirements, specification, and verification" in html

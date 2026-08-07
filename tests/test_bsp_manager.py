@@ -4504,6 +4504,7 @@ class TestTestBackendDispatch:
             ssh_remote_workdir=None,
             ssh_serial_device=None,
             ssh_serial_baudrate=None,
+            show_cases=False,
             label="",
         )
 

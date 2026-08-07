@@ -3742,11 +3742,15 @@ class BspManager:
         suites: List[dict],
         extra: str = "",
         case_summary: Optional[dict] = None,
+        cases: Optional[List[dict]] = None,
     ) -> None:
         """Print a backend-neutral test summary table.
 
         *case_summary* optionally carries aggregate per-test-case counts
         (total/passed/failed/not run/manual) collected from LAVA signals.
+        *cases* optionally carries per-test-case rows (``suite``, ``id``,
+        ``status``, ``description``) that are listed below the suite table so
+        a terminal run also explains what each test case means.
         """
         if extra:
             print(extra)
@@ -3775,6 +3779,15 @@ class BspManager:
                 f"{'PASS' if passed else 'FAIL'}  "
                 f"({total - failures}/{total} passed){duration_str}"
             )
+        if cases:
+            print("\nTest Cases:")
+            for case in cases:
+                description = str(case.get("description", ""))
+                suffix = f" — {description}" if description else ""
+                print(
+                    f"  {str(case.get('status', '')):<10} "
+                    f"{case.get('suite', '')}/{case.get('id', '')}{suffix}"
+                )
 
     def _test_resolved_lava(
         self,
@@ -3984,10 +3997,12 @@ class BspManager:
         ssh_remote_workdir: Optional[str] = None,
         ssh_serial_device: Optional[str] = None,
         ssh_serial_baudrate: Optional[int] = None,
+        show_cases: bool = False,
         label: str = "",
     ) -> bool:
         """Run the direct-local/direct-ssh/direct-serial backend test flow."""
         from .direct_runner import DirectRunOverrides, DirectTestRunner
+        from .requirements_catalog import humanize_test_case_id
 
         direct_cfg = testing_config.direct if (testing_config and testing_config.direct) else None
         runner = DirectTestRunner(config_path=self.config_path)
@@ -4088,6 +4103,24 @@ class BspManager:
             f"Direct ({result.backend})",
             summary_suites,
             case_summary=case_summary,
+            cases=(
+                [
+                    {
+                        "suite": suite.name,
+                        "id": signal.test_case_id,
+                        "status": signal.report_result,
+                        "description": (
+                            signal.description
+                            or humanize_test_case_id(signal.test_case_id)
+                        ),
+                    }
+                    for suite in result.suites
+                    for case in suite.cases
+                    for signal in case.lava_signals
+                ]
+                if (show_cases or self.verbose)
+                else None
+            ),
         )
         return result.passed
 
@@ -4119,6 +4152,7 @@ class BspManager:
         ssh_remote_workdir: Optional[str] = None,
         ssh_serial_device: Optional[str] = None,
         ssh_serial_baudrate: Optional[int] = None,
+        show_cases: bool = False,
         label: str = "",
     ) -> bool:
         """
@@ -4178,6 +4212,7 @@ class BspManager:
             ssh_remote_workdir=ssh_remote_workdir,
             ssh_serial_device=ssh_serial_device,
             ssh_serial_baudrate=ssh_serial_baudrate,
+            show_cases=show_cases,
             label=label,
         )
 
@@ -4208,6 +4243,7 @@ class BspManager:
         ssh_remote_workdir: Optional[str] = None,
         ssh_serial_device: Optional[str] = None,
         ssh_serial_baudrate: Optional[int] = None,
+        show_cases: bool = False,
     ) -> bool:
         """
         Submit a LAVA HIL test job for a BSP preset.
@@ -4258,6 +4294,7 @@ class BspManager:
                 ssh_remote_workdir=ssh_remote_workdir,
                 ssh_serial_device=ssh_serial_device,
                 ssh_serial_baudrate=ssh_serial_baudrate,
+                show_cases=show_cases,
                 label=f"{preset.name} - {preset.description}",
             )
 
@@ -4290,6 +4327,7 @@ class BspManager:
         ssh_remote_workdir: Optional[str] = None,
         ssh_serial_device: Optional[str] = None,
         ssh_serial_baudrate: Optional[int] = None,
+        show_cases: bool = False,
     ) -> bool:
         """
         Submit a LAVA HIL test job by specifying device, release, and features.
@@ -4345,6 +4383,7 @@ class BspManager:
             ssh_remote_workdir=ssh_remote_workdir,
             ssh_serial_device=ssh_serial_device,
             ssh_serial_baudrate=ssh_serial_baudrate,
+            show_cases=show_cases,
             label=f"{device_slug}/{release_slug}",
         )
 
