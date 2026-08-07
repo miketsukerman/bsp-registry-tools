@@ -29,8 +29,8 @@ from .resolver import ResolvedConfig
 
 
 _HTML_REPORT_TEMPLATE = """\
-{%- macro description_cell(row) -%}
-<td class="req-desc">{% if row.description %}<details class="cell-fold"><summary>Description</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% endif %}</td>
+{%- macro test_case_cell(row) -%}
+<td class="req-case">{% if row.description %}<details class="cell-fold"><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}</td>
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -86,7 +86,7 @@ _HTML_REPORT_TEMPLATE = """\
   .log-link { white-space: nowrap; }
   .log-link a { color: #1d4ed8; text-decoration: none; }
   .req-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; white-space: nowrap; }
-  .req-desc { min-width: 16rem; word-break: break-word; }
+  .req-case { min-width: 16rem; word-break: break-word; }
   .req-spec { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; word-break: break-word; max-width: 20rem; }
   .cell-fold { margin-top: 0; padding: 0.2rem 0.35rem; }
   .cell-fold > summary { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.74rem; }
@@ -184,7 +184,6 @@ _HTML_REPORT_TEMPLATE = """\
         <th>Suite</th>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
         <th>Test Case</th>
-        {% if columns.description %}<th>Description</th>{% endif %}
         {% if columns.specification %}<th>Parameters</th>{% endif %}
         {% if columns.version %}<th>Req. version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
@@ -196,8 +195,7 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         <td>{{ failure.suite_name }}</td>
         {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
-        <td>{{ failure.test_case_id }}</td>
-        {% if columns.description %}{{ description_cell(failure) }}{% endif %}
+        {{ test_case_cell(failure) }}
         {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ failure.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
@@ -219,7 +217,6 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
         <th>Test Case</th>
-        {% if columns.description %}<th>Description</th>{% endif %}
         {% if columns.specification %}<th>Parameters</th>{% endif %}
         {% if columns.version %}<th>Version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
@@ -230,8 +227,7 @@ _HTML_REPORT_TEMPLATE = """\
     {% for row in requirements %}
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ row.requirement_id }}</td>{% endif %}
-        <td>{{ row.test_case_id }}</td>
-        {% if columns.description %}{{ description_cell(row) }}{% endif %}
+        {{ test_case_cell(row) }}
         {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ row.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ row.category }}</td>{% endif %}
@@ -272,7 +268,6 @@ _HTML_REPORT_TEMPLATE = """\
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
         <th>Test Case</th>
-        {% if columns.description %}<th>Description</th>{% endif %}
         {% if columns.specification %}<th>Parameters</th>{% endif %}
         {% if columns.version %}<th>Version</th>{% endif %}
         {% if columns.category %}<th>Category</th>{% endif %}
@@ -283,8 +278,7 @@ _HTML_REPORT_TEMPLATE = """\
     {% for case in suite.lava_cases %}
       <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ case.requirement_id }}</td>{% endif %}
-        <td>{{ case.test_case_id }}</td>
-        {% if columns.description %}{{ description_cell(case) }}{% endif %}
+        {{ test_case_cell(case) }}
         {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ case.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ case.category }}</td>{% endif %}
@@ -1861,12 +1855,10 @@ class DirectTestRunner:
 
         # Optional columns are only rendered when at least one case supplies
         # the corresponding metadata, so plain test definitions keep the
-        # original compact table.  The description column is an exception: a
-        # description is always available (derived from the test case id when
-        # nothing else is known), so it is always rendered.
+        # original compact table.  The description has no column of its own: it
+        # is folded into the expandable Test Case cell.
         columns = {
             "requirement_id": any(row["requirement_id"] for row in requirement_rows),
-            "description": any(row["description"] for row in requirement_rows),
             "specification": any(row["specification"] for row in requirement_rows),
             "version": any(row["version"] for row in requirement_rows),
             "category": any(row["category"] for row in requirement_rows),
