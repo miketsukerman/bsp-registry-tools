@@ -1737,6 +1737,10 @@ class DirectTestRunner:
         excerpt = "\n".join(lines)
         if len(excerpt) > _REPORT_LOG_MAX_CHARS:
             excerpt = excerpt[-_REPORT_LOG_MAX_CHARS:]
+            # Drop the leading partial line left over by the character cut.
+            newline = excerpt.find("\n")
+            if newline != -1:
+                excerpt = excerpt[newline + 1:]
             truncated = True
         if truncated:
             excerpt = f"[log truncated — see {case.log_path or 'the log file'} for the full output]\n{excerpt}"

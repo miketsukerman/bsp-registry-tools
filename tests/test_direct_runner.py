@@ -1230,6 +1230,19 @@ run:
         assert "line-499" in excerpt
         assert "log truncated" in excerpt
 
+    def test_report_log_excerpt_char_limit_drops_partial_line(self, tmp_path):
+        case = DirectTestCaseResult(
+            name="step-1",
+            status="FAIL",
+            duration=0.1,
+            command="./run.sh",
+            log_text="\n".join("x" * 4000 for _ in range(10)),
+        )
+        excerpt = DirectTestRunner._case_log_excerpt(case)
+        body = excerpt.split("\n", 1)[1]
+        assert "log truncated" in excerpt
+        assert all(len(line) == 4000 for line in body.splitlines())
+
     def test_report_log_excerpt_missing_log_file(self, tmp_path):
         case = DirectTestCaseResult(
             name="step-1",
