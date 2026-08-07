@@ -30,7 +30,10 @@ from .resolver import ResolvedConfig
 
 _HTML_REPORT_TEMPLATE = """\
 {%- macro test_case_cell(row) -%}
-<td class="req-case">{% if row.description %}<details class="cell-fold"><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}</td>
+<td class="req-case">{% if row.description %}<details class="cell-fold"><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}{{ log_fold(row) }}</td>
+{%- endmacro -%}
+{%- macro log_fold(row) -%}
+{% if row.log_excerpt %}<details class="log-fold"><summary>Log</summary><pre class="log-body">{{ row.log_excerpt }}</pre></details>{% endif %}
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -94,6 +97,9 @@ _HTML_REPORT_TEMPLATE = """\
   .desc-derived { color: #6b7280; font-style: italic; }
   .desc-extra { margin-top: 0.25rem; color: #4b5563; font-size: 0.78rem; }
   .step-desc { color: #4b5563; }
+  .log-fold { margin-top: 0.35rem; padding: 0.2rem 0.35rem; background: #fff7f7; border: 1px dashed #f0c6c6; }
+  .log-fold > summary { color: #991b1b; font-size: 0.74rem; }
+  .log-body { margin-top: 0.3rem; padding: 0.4rem 0.5rem; background: #1f2937; color: #f3f4f6; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; line-height: 1.3; white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
   .num { text-align: right; }
   @page { size: A4 landscape; margin: 12mm; }
   @media print {
@@ -304,7 +310,7 @@ _HTML_REPORT_TEMPLATE = """\
       {% for step in suite.steps %}
         <tr>
           <td>{{ step.name }}</td>
-          <td class="step-desc">{{ step.description }}</td>
+          <td class="step-desc">{{ step.description }}{{ log_fold(step) }}</td>
           <td><span class="badge {{ step.status_class }}">{{ step.status }}</span></td>
         </tr>
       {% endfor %}
@@ -341,6 +347,10 @@ _SIGNAL_ATTR_RE = re.compile(
 # counted as failures either.
 _NON_FAILING_RESULTS = ("skip", "unknown", "manual")
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+# Only the tail of a step log is embedded in the report: it keeps the HTML
+# small while retaining the part that explains a failure.
+_REPORT_LOG_MAX_LINES = 200
+_REPORT_LOG_MAX_CHARS = 20000
 
 
 @dataclass
@@ -418,6 +428,10 @@ class DirectTestCaseResult:
     description: str = ""
     params: Dict[str, str] = field(default_factory=dict)
     log_path: Optional[str] = None
+    # Raw log content of the step (command, return code, stdout, stderr).  It
+    # is embedded in the report for failed test cases so the HTML stays
+    # self-contained even when the log files are not shipped along with it.
+    log_text: str = ""
     timed_out: bool = False
     lava_signals: List["LavaSignalCase"] = field(default_factory=list)
     _execution_succeeded: Optional[bool] = None
@@ -1501,13 +1515,13 @@ class DirectTestRunner:
                 flush=True,
             )
 
-            log_file.write_text(
+            log_content = (
                 f"# command\n{expanded}\n\n"
                 f"# return_code\n{rc}\n\n"
                 f"# stdout\n{stdout}\n\n"
-                f"# stderr\n{stderr}\n",
-                encoding="utf-8",
+                f"# stderr\n{stderr}\n"
             )
+            log_file.write_text(log_content, encoding="utf-8")
 
             case_results.append(
                 DirectTestCaseResult(
@@ -1518,6 +1532,7 @@ class DirectTestRunner:
                     description=self._expand_vars(step_description, merged_params),
                     params=dict(sorted(merged_params.items())),
                     log_path=str(log_file),
+                    log_text=log_content,
                     timed_out=timed_out,
                     lava_signals=lava_signals,
                     _execution_succeeded=(rc == 0),
@@ -1699,6 +1714,35 @@ class DirectTestRunner:
         )
 
     @staticmethod
+    def _case_log_excerpt(case: DirectTestCaseResult) -> str:
+        """Return the tail of the step log of *case* for embedding in the report.
+
+        The captured log text is preferred; when it is missing (results
+        restored without it) the log file is read back.  Only the last
+        ``_REPORT_LOG_MAX_LINES`` lines are kept so a chatty step cannot bloat
+        the report.
+        """
+        text = case.log_text
+        if not text and case.log_path:
+            try:
+                text = Path(case.log_path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+        if not text:
+            return ""
+        lines = text.splitlines()
+        truncated = len(lines) > _REPORT_LOG_MAX_LINES
+        if truncated:
+            lines = lines[-_REPORT_LOG_MAX_LINES:]
+        excerpt = "\n".join(lines)
+        if len(excerpt) > _REPORT_LOG_MAX_CHARS:
+            excerpt = excerpt[-_REPORT_LOG_MAX_CHARS:]
+            truncated = True
+        if truncated:
+            excerpt = f"[log truncated — see {case.log_path or 'the log file'} for the full output]\n{excerpt}"
+        return excerpt
+
+    @staticmethod
     def _format_params(params: Dict[str, str]) -> str:
         """Render step parameters as a compact ``key=value`` listing."""
         return " ".join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -1735,6 +1779,9 @@ class DirectTestRunner:
             "status_class": signal.report_status_class,
             "step_name": case.name,
             "log_path": case.log_path,
+            # Logs are only carried for failing cases: they are the only ones
+            # where the raw output helps with the analysis.
+            "log_excerpt": cls._case_log_excerpt(case) if signal.failed else "",
         }
 
     @classmethod
@@ -1822,6 +1869,11 @@ class DirectTestRunner:
                         "status_class": case.report_status_class,
                         "duration": case.duration,
                         "log_path": case.log_path,
+                        "log_excerpt": (
+                            cls._case_log_excerpt(case)
+                            if not case.execution_succeeded
+                            else ""
+                        ),
                     }
                     for case in suite.cases
                     if case.description
