@@ -1252,14 +1252,13 @@ Direct backends also persist collected artifacts under `<build-path>/test-result
 
 #### Test report contents
 
-Each test case row of the report can show a requirement id, description,
+Each test case row of the report can show a requirement id, test case,
 specification, version, category and verification status:
 
 | Column | Source |
 | --- | --- |
 | Requirement Id | requirement catalogue (linked from the signal) |
-| Test Case | `TEST_CASE_ID` of the LAVA signal |
-| Description | `DESCRIPTION` signal attribute › requirement catalogue › humanized test case id |
+| Test Case | `TEST_CASE_ID` of the LAVA signal, expandable to reveal the description (`DESCRIPTION` signal attribute › requirement catalogue › humanized test case id) |
 | Parameters | requirement catalogue `specification` (falls back to the step parameters) |
 | Version | requirement catalogue |
 | Category | requirement catalogue |
@@ -1276,15 +1275,16 @@ corresponding metadata, so plain test definitions keep a compact table.
    shared catalogue for that suite),
 4. a humanized test case id (`ping-gateway` → "Ping gateway").
 
-Descriptions derived from the test case id are rendered in a muted, italic
-style so a generated fallback can be told apart from authored text, and the
+Descriptions are shown by expanding the *Test Case* cell; there is no separate
+description column.  Descriptions derived from the test case id are rendered in
+a muted, italic style so a generated fallback can be told apart from authored text, and the
 *Described tests* KPI reports how many cases carry an authored description. Test
 case ids that fall back to the derived description are also listed in a single
 warning after the run, which makes a missing or mistyped requirement id visible
 without ever failing the run.
 
-The description cell also shows the catalogue's `verifies` text (what the case
-actually asserts) and `remarks` when present. Suites list their described steps
+The expanded test case cell also shows the catalogue's `verifies` text (what the
+case actually asserts) and `remarks` when present. Suites list their described steps
 under *Executed steps*, which covers steps that emit no LAVA signal at all.
 
 Add `--show-cases` (implied by `--verbose`) to also print every test case with

@@ -267,8 +267,9 @@ actions:
         parser = _TableDataCellParser()
         parser.feed(html)
         # The test case is reported exactly once per report table: the
-        # cross-suite requirements matrix and the suite's own case table.
-        assert parser.cells.count("ping-gateway") == 2
+        # cross-suite requirements matrix and the suite's own case table.  The
+        # cell also carries the folded description text.
+        assert sum(1 for cell in parser.cells if cell.startswith("ping-gateway")) == 2
 
     def test_lava_job_definition_parameters_override_source_params(self, tmp_path):
         repo = tmp_path / "defs-repo"
@@ -2651,7 +2652,8 @@ class TestCatalogEnrichedReport:
 
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
         assert "Requirement Id" in html
-        assert "Description" in html
+        assert "<th>Description</th>" not in html
+        assert "<summary>L-CPU-FREQ-SCALING-MAX-cpu0</summary>" in html
         assert "Parameters" in html
         assert "Version" in html
         assert "The CPU should match the specified maximum scaling frequency" in html
@@ -2774,7 +2776,7 @@ class TestCatalogEnrichedReport:
         assert "Req. version" not in html
         assert "Categories" not in html
 
-    def test_description_column_is_always_rendered(self, tmp_path):
+    def test_description_is_folded_into_test_case_cell(self, tmp_path):
         definition = (
             "metadata:\n  name: net-suite\n"
             "run:\n  steps:\n"
@@ -2782,9 +2784,10 @@ class TestCatalogEnrichedReport:
         )
         self._run(tmp_path, definition)
         html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
-        # Without any catalogue the derived description still reaches the report,
-        # rendered in the muted style that marks generated text.
-        assert "<th>Description</th>" in html
+        # The description has no column of its own; it expands from the test
+        # case id cell.  Derived text keeps the muted style that marks it.
+        assert "<th>Description</th>" not in html
+        assert "<summary>ping-gateway</summary>" in html
         assert "Ping gateway" in html
         assert 'class="desc-derived"' in html
 
