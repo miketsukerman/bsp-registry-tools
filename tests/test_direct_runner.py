@@ -2695,14 +2695,24 @@ class TestCatalogEnrichedReport:
         assert rows[0]["description"] == "Ping gateway"
         assert rows[0]["has_description"] is False
 
-    def test_description_falls_back_to_suite_description(self, tmp_path):
+    def test_suite_description_is_reported_on_the_suite(self, tmp_path):
         definition = (
             "metadata:\n  name: net-suite\n  description: Networking checks\n"
             "run:\n  steps:\n"
             "    - \"printf '<LAVA_SIGNAL_TESTCASE TEST_CASE_ID=ping-gateway RESULT=pass>\\n'\"\n"
         )
         result = self._run(tmp_path, definition)
-        assert result.suites[0].cases[0].lava_signals[0].description == "Networking checks"
+        # The suite description describes the suite, not its test cases.
+        assert result.suites[0].description == "Networking checks"
+        assert result.suites[0].cases[0].lava_signals[0].description == ""
+
+        html = (tmp_path / "out" / "direct-test-report.html").read_text(encoding="utf-8")
+        assert '<p class="suite-description">Networking checks</p>' in html
+
+        summary = json.loads(
+            (tmp_path / "out" / "direct-test-summary.json").read_text(encoding="utf-8")
+        )
+        assert summary["suites"][0]["description"] == "Networking checks"
 
     def test_params_reach_report_rows(self, tmp_path):
         definition = (
