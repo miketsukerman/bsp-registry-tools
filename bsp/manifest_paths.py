@@ -85,7 +85,7 @@ class ManifestPathSanitizer:
         if self.build_root is not None:
             pairs.append((self.build_root, BUILD_TOKEN))
         pairs.append((self.home, HOME_TOKEN))
-        pairs.sort(key=lambda item: len(str(item[0])), reverse=True)
+        pairs.sort(key=lambda item: len(item[0].parts), reverse=True)
         return [(str(path), token) for path, token in pairs]
 
     # -- structured paths ------------------------------------------------
@@ -157,12 +157,15 @@ class ManifestPathSanitizer:
         text = _MOUNT_HOST_PATH.sub(lambda m: str(self.relativize(m.group(1))), text)
         return text
 
-    def scrub_argv(self, argv: Sequence[str]) -> List[str]:
+    def scrub_argv(self, argv: Sequence[Any]) -> List[str]:
         """Sanitize a command line: bare program name plus scrubbed arguments."""
         if not argv:
             return []
         program = Path(str(argv[0])).name or str(argv[0])
-        return [program] + [str(self.scrub_text(str(arg))) for arg in argv[1:]]
+        scrubbed = [program]
+        for arg in argv[1:]:
+            scrubbed.append(self.scrub_text(arg) if isinstance(arg, str) else str(arg))
+        return scrubbed
 
 
 def _looks_like_single_path(value: str) -> bool:

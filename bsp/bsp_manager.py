@@ -1723,7 +1723,6 @@ class BspManager:
         """Create the path sanitizer used to keep manifest paths relative."""
         config_path = self.config_path
         registry_root = config_path.parent if config_path.is_file() else config_path
-        registry_root = Path(registry_root)
 
         build_root: Optional[Path] = None
         if build_path and str(build_path).strip():
