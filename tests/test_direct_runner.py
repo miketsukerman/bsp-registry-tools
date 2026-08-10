@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import subprocess
 from html.parser import HTMLParser
 
@@ -1268,6 +1269,137 @@ run:
             runner._write_pdf_report(tmp_path / "out.pdf", "<html></html>")
         mock_wp.HTML.assert_called_once_with(string="<html></html>", base_url=None)
         mock_html_instance.write_pdf.assert_called_once_with(str(tmp_path / "out.pdf"))
+
+    def test_pdf_flavour_expands_every_details(self, tmp_path):
+        """The print renderer drops collapsed <details>, so the PDF opens them.
+
+        Without this the executed-steps table and every log excerpt are
+        silently missing from the PDF even though they exist in the HTML.
+        """
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        kwargs = dict(
+            label="my-label",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        screen = runner._render_html_report(**kwargs)
+        pdf = runner._render_html_report(**kwargs, for_pdf=True)
+
+        assert "<details" in screen
+        assert " open>" not in screen
+        # Every details element of the PDF flavour carries the open attribute.
+        opened = re.findall(r"<details[^>]*>", pdf)
+        assert opened
+        assert all(tag.endswith(" open>") for tag in opened), opened
+
+    def test_pdf_flavour_uses_paged_media_stylesheet(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        kwargs = dict(
+            label="my-label",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        screen = runner._render_html_report(**kwargs)
+        pdf = runner._render_html_report(**kwargs, for_pdf=True)
+
+        # Grid and flex are unsupported or partial in the print renderer.
+        assert ".kpi-grid { display: block; }" in pdf
+        assert "table-layout: fixed" in pdf
+        assert "display: table-header-group" in pdf
+        assert 'counter(page)' in pdf
+        assert "target-counter(attr(href), page)" in pdf
+        assert "bookmark-level" in pdf
+        # Fixed column widths are only emitted for the PDF flavour.
+        assert "<colgroup>" in pdf
+        assert "<colgroup>" not in screen
+        assert "target-counter" not in screen
+
+    def test_pdf_flavour_marks_rows_carrying_a_log_excerpt(self, tmp_path):
+        """Rows taller than the page box must stay breakable."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name="smoke-suite",
+                status="FAIL",
+                duration=1.0,
+                log_dir=str(tmp_path),
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="FAIL",
+                        duration=0.5,
+                        command="false",
+                        description="Exercise the failing path",
+                        log_text="\n".join(f"log line {i}" for i in range(50)),
+                        lava_signals=[
+                            LavaSignalCase(test_case_id="ping-gateway", result="fail")
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        pdf = runner._render_html_report(
+            label="my-label",
+            backend="direct-local",
+            suites=suites,
+            passed=False,
+            for_pdf=True,
+        )
+        assert 'class="has-log"' in pdf
+        assert "tr.has-log, tr.has-log td, tr.has-log details { break-inside: auto; }" in pdf
+
+    def test_pdf_column_widths_track_optional_columns(self):
+        widths = DirectTestRunner._pdf_column_widths(
+            {
+                "requirement_id": False,
+                "specification": False,
+                "version": False,
+                "category": False,
+            }
+        )
+        # Test Case + State only.
+        assert len(widths["results"]) == 2
+        # The failures table carries an extra leading Suite column.
+        assert len(widths["failures"]) == 3
+        assert len(widths["steps"]) == 3
+        for key in ("results", "failures", "steps"):
+            total = sum(float(value.rstrip("%")) for value in widths[key])
+            assert total == pytest.approx(100.0, abs=0.05)
+
+    def test_pdf_column_widths_include_every_optional_column(self):
+        widths = DirectTestRunner._pdf_column_widths(
+            {
+                "requirement_id": True,
+                "specification": True,
+                "version": True,
+                "category": True,
+            }
+        )
+        assert len(widths["results"]) == 6
+        assert len(widths["failures"]) == 7
+        total = sum(float(value.rstrip("%")) for value in widths["failures"])
+        assert total == pytest.approx(100.0, abs=0.05)
+
+    def test_summary_renders_pdf_from_the_pdf_flavour(self, tmp_path):
+        """The PDF must not be built from the screen HTML."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        with patch.object(runner, "_write_pdf_report") as write_pdf:
+            runner._write_summary(
+                output_dir=tmp_path,
+                label="ci-run",
+                backend="direct-local",
+                suites=self._make_suites(),
+                passed=False,
+            )
+        write_pdf.assert_called_once()
+        pdf_html = write_pdf.call_args.args[1]
+        screen_html = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
+        assert pdf_html != screen_html
+        assert "<colgroup>" in pdf_html
+        assert "<colgroup>" not in screen_html
+        assert write_pdf.call_args.kwargs["base_url"] == str(tmp_path)
 
     def test_integration_html_report_from_full_run(self, tmp_path):
         """Integration: full run generates HTML report alongside JSON summary."""
