@@ -15,6 +15,20 @@ from bsp import BspManager, BspPreset, Docker, V2Resolver
 from .conftest import EMPTY_REGISTRY_YAML, REGISTRY_WITH_FEATURES_YAML, REGISTRY_WITH_FRAMEWORKS_YAML, REGISTRY_WITH_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_SOC_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_FEATURE_VENDOR_OVERRIDES_YAML, REGISTRY_WITH_PRESET_LOCAL_CONF_AND_TARGETS_YAML
 
 
+def _assert_no_absolute_paths(data, path="$"):
+    """Recursively assert that no manifest value exposes an absolute host path."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            _assert_no_absolute_paths(key, f"{path}.<key>")
+            _assert_no_absolute_paths(value, f"{path}.{key}")
+    elif isinstance(data, list):
+        for index, value in enumerate(data):
+            _assert_no_absolute_paths(value, f"{path}[{index}]")
+    elif isinstance(data, str):
+        assert not data.startswith("/"), f"absolute path at {path}: {data}"
+        assert not data.startswith("~"), f"home path at {path}: {data}"
+
+
 class TestBspManagerInit:
     def test_init(self, tmp_dir):
         manager = BspManager(config_path=str(tmp_dir / "bsp-registry.yaml"))
@@ -788,6 +802,12 @@ class TestBspManagerBuildByComponents:
         assert data["provenance"]["tool"]["version"] == "9.9.9"
         assert data["provenance"]["cli"]["argv"] == ["bsp", "build", "imx8-scarthgap-ota"]
         assert data["provenance"]["cli"]["command"] == "bsp build imx8-scarthgap-ota"
+        assert data["schema_version"] == "2"
+        assert data["registry"]["path"] == registry_with_features_file.name
+        assert data["roots"]["registry"] == "."
+        assert data["roots"]["build"] == data["build"]["path"]
+        assert data["build"]["name"] == output_dir.name
+        _assert_no_absolute_paths(data)
 
     def test_build_by_components_writes_build_manifest(self, registry_with_features_file, tmp_path):
         manager = BspManager(config_path=str(registry_with_features_file))
@@ -815,6 +835,7 @@ class TestBspManagerBuildByComponents:
         assert [feature["slug"] for feature in data["components"]["features"]] == ["ota"]
         assert data["build"]["target"] == "custom-image"
         assert data["build"]["resolved_targets"] == ["custom-image"]
+        _assert_no_absolute_paths(data)
 
     def test_build_by_components_manifest_uses_dump_targets_when_cli_target_missing(
         self, registry_with_features_file, tmp_path
@@ -949,8 +970,93 @@ registry:
         data = json.loads(manifest_path.read_text())
         assert data["components"]["device"]["soc_family"] == "imx8"
         assert data["components"]["container"]["runtime_args"] == \
-            "--ipc host -v /tmp/cache-root/sstate:/sstate:ro"
+            "--ipc host -v <external>/sstate:/sstate:ro"
         assert data["components"]["container"]["build_options"] == "--network host"
+        assert data["components"]["container"]["file"] == "Dockerfile.ubuntu"
+        assert data["inputs"]["kas_files"] == ["test.yaml"]
+        assert data["schema_version"] == "2"
+        _assert_no_absolute_paths(data)
+
+    def test_build_manifest_relativizes_absolute_inputs(self, tmp_dir, tmp_path):
+        registry_dir = tmp_dir / "manifest_absolute_inputs"
+        registry_dir.mkdir()
+        kas_file = registry_dir / "device.yaml"
+        kas_file.write_text("header:\n  version: 14\n")
+        (registry_dir / "scripts").mkdir()
+        copy_source = registry_dir / "scripts" / "setup.sh"
+        copy_source.write_text("#!/bin/sh\n")
+
+        registry_content = f"""
+specification:
+  version: "2.2"
+environments:
+  default:
+    container: "ubuntu-22.04"
+    variables:
+      - name: "DL_DIR"
+        value: "/opt/yocto/downloads"
+containers:
+  ubuntu-22.04:
+    image: "test/ubuntu:latest"
+    file: {registry_dir / 'Dockerfile.ubuntu'}
+    args:
+      - name: "CACHE"
+        value: "/opt/yocto/cache"
+registry:
+  devices:
+    - slug: qemu-arm64
+      description: "QEMU arm64"
+      vendor: qemu
+      soc_vendor: arm
+      architecture: arm64
+      environment: default
+      local_conf:
+        - 'SSTATE_DIR = "/opt/yocto/sstate"'
+      copy:
+        - {copy_source}: build/
+      build:
+        includes:
+          - {kas_file}
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap"
+      includes: []
+  features: []
+  bsp:
+    - name: qemu-scarthgap
+      description: "QEMU Scarthgap"
+      device: qemu-arm64
+      release: scarthgap
+      features: []
+      build:
+        container: "ubuntu-22.04"
+        path: build/qemu-scarthgap
+"""
+        registry_file = registry_dir / "bsp-registry.yaml"
+        registry_file.write_text(registry_content)
+
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        output_dir = tmp_path / "build-manifest-absolute-inputs"
+        with patch("bsp.bsp_manager.build_docker"), \
+             patch("bsp.kas_manager.KasManager.build_project"), \
+             patch("bsp.kas_manager.KasManager.dump_config", return_value=None), \
+             patch("bsp.kas_manager.KasManager.validate_kas_files", return_value=True), \
+             patch("bsp.kas_manager.KasManager.check_kas_available", return_value=True):
+            manager.build_bsp("qemu-scarthgap", build_path_override=str(output_dir))
+
+        data = json.loads((output_dir / "build-manifest.json").read_text())
+        assert data["inputs"]["kas_files"] == ["device.yaml"]
+        assert data["inputs"]["copy"] == [{"scripts/setup.sh": "build/"}]
+        assert data["inputs"]["local_conf"] == ['SSTATE_DIR = "<external>/sstate"']
+        assert data["inputs"]["environment_variables"] == [
+            {"name": "DL_DIR", "value": "<external>/downloads"}
+        ]
+        assert data["components"]["container"]["file"] == "Dockerfile.ubuntu"
+        assert data["components"]["container"]["args"] == [
+            {"name": "CACHE", "value": "<external>/cache"}
+        ]
+        _assert_no_absolute_paths(data)
 
     def test_build_manifest_records_registry_git_provenance_when_available(
         self, registry_with_features_file, tmp_path

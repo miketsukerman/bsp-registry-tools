@@ -716,9 +716,20 @@ bsp build --device <device> --release <release> [--feature FEATURE...] [--vendor
 | `--docker-no-cache` | Disable Docker layer cache when building the BSP container image |
 | `--docker-build-options OPTIONS` | Extra flags passed verbatim to `docker build` (e.g. `--network host`). Overrides `build_options` from the registry container definition and uses the same environment-variable syntax (e.g. `$ENV{MY_FLAGS}`). |
 
-Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, exact CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).  `bsp deploy` uploads this file
+Each `bsp build` run writes `build-manifest.json` into the selected build directory (`--path` or resolved preset path). The manifest records the resolved device/release/features/container and build inputs used for that run, plus a `provenance` section with the tool name/version, the CLI invocation (`argv` and shell command), Python version, and registry git metadata (`commit_sha` / `is_dirty` when available).  `bsp deploy` uploads this file
 to `<prefix>/build-manifest.json` by default; pass `--no-build-manifest` to
 skip it.
+
+The manifest (`schema_version: "2"`) never contains absolute host paths, so it
+stays meaningful on any machine that consumes it.  All paths are emitted
+relative to the anchors listed in the `roots` section — the registry root
+(`.`, the directory holding the registry YAML) and the build root
+(`roots.build`, relative to the registry root).  Paths outside both anchors are
+replaced with placeholders: `${HOME}/<relative>` for paths under the user's
+home directory and `<external>/<name>` for anything else.  Free-form values
+that embed paths (`local_conf` lines, container `runtime_args`, environment
+variable values, build options and the CLI command line) are scrubbed the same
+way, and `argv[0]` is reduced to the bare program name.
 
 **Examples:**
 
