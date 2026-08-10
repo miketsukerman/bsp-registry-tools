@@ -416,5 +416,5 @@ bsp --local build <bsp_name>
 |----------|---------|
 | Build log | `<build_dir>/bsp-build-YYYYMMDD-HHMMSS-ffffff.log` |
 | KAS invocation log | `<build_dir>/bsp-invocation-YYYYMMDD-HHMMSS-ffffff.log` |
-| Build manifest | `<build_dir>/build-manifest.json` (also uploaded by `bsp deploy` unless `--no-build-manifest`) |
+| Build manifest | `<build_dir>/build-manifest.json` (paths are relative to the `roots` anchors; also uploaded by `bsp deploy` unless `--no-build-manifest`) |
 | CVE / SBOM reports | `<build_dir>/reports/` (default) |

@@ -860,6 +860,26 @@ under the `build_manifest` key of `manifest.json`.
 Pass `--no-build-manifest` to `bsp deploy` (or to `bsp build --deploy`) to
 skip the upload for a single run.
 
+### Relative paths
+
+The build manifest (`schema_version: "2"`) never contains absolute host paths.
+Every path is emitted relative to one of the anchors described in its `roots`
+section:
+
+| Anchor | Meaning |
+|--------|---------|
+| `roots.registry` | The directory containing the registry YAML (always `.`) |
+| `roots.build` | The build directory, relative to the registry root |
+
+Paths that fall outside both anchors are replaced by placeholders:
+`${HOME}/<relative>` when below the user's home directory, and
+`<external>/<name>` otherwise.  Free-form values that may embed paths
+(`inputs.local_conf` lines, `components.container.runtime_args`,
+`inputs.environment_variables[].value`, build options and
+`provenance.cli.command`) are scrubbed with the same rules, using the
+`${registry}` and `${build}` tokens for anchor prefixes.  `provenance.cli.argv[0]`
+is reduced to the bare program name (e.g. `bsp`).
+
 ## Artifact manifest
 
 When `include_manifest: true` (default), a `manifest.json` file is uploaded
@@ -1684,6 +1704,26 @@ under the `build_manifest` key of `manifest.json`.
 
 Pass `--no-build-manifest` to `bsp deploy` (or to `bsp build --deploy`) to
 skip the upload for a single run.
+
+### Relative paths
+
+The build manifest (`schema_version: "2"`) never contains absolute host paths.
+Every path is emitted relative to one of the anchors described in its `roots`
+section:
+
+| Anchor | Meaning |
+|--------|---------|
+| `roots.registry` | The directory containing the registry YAML (always `.`) |
+| `roots.build` | The build directory, relative to the registry root |
+
+Paths that fall outside both anchors are replaced by placeholders:
+`${HOME}/<relative>` when below the user's home directory, and
+`<external>/<name>` otherwise.  Free-form values that may embed paths
+(`inputs.local_conf` lines, `components.container.runtime_args`,
+`inputs.environment_variables[].value`, build options and
+`provenance.cli.command`) are scrubbed with the same rules, using the
+`${registry}` and `${build}` tokens for anchor prefixes.  `provenance.cli.argv[0]`
+is reduced to the bare program name (e.g. `bsp`).
 
 ## Artifact manifest
 

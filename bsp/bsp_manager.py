@@ -24,6 +24,7 @@ from .exceptions import COLORAMA_AVAILABLE
 from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
+from .manifest_paths import ManifestPathSanitizer
 from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, YoctoCacheConfig, FlashConfig, ScanConfig
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
@@ -1718,6 +1719,19 @@ class BspManager:
             "is_dirty": bool(status.stdout.strip()),
         }
 
+    def _build_manifest_path_sanitizer(self, build_path: str) -> ManifestPathSanitizer:
+        """Create the path sanitizer used to keep manifest paths relative."""
+        config_path = self.config_path
+        registry_root = config_path.parent if config_path.is_file() else config_path
+        registry_root = Path(registry_root)
+
+        build_root: Optional[Path] = None
+        if build_path and str(build_path).strip():
+            candidate = Path(os.path.expanduser(str(build_path).strip()))
+            build_root = candidate if candidate.is_absolute() else registry_root / candidate
+
+        return ManifestPathSanitizer(registry_root=registry_root, build_root=build_root)
+
     def _generate_build_manifest(
         self,
         resolved: ResolvedConfig,
@@ -1730,7 +1744,13 @@ class BspManager:
         docker_build_options: Optional[str],
         resolved_runtime_args: Optional[str],
     ) -> Dict[str, Any]:
-        """Build a JSON-serializable manifest with resolved build components."""
+        """Build a JSON-serializable manifest with resolved build components.
+
+        All paths are emitted relative to the registry root or the build root
+        (see the ``roots`` section); paths outside both anchors are replaced
+        with ``${HOME}/...`` or ``<external>/<name>`` placeholders so that no
+        absolute host path ends up in the manifest.
+        """
         effective_distro = resolved.effective_distro or resolved.release.distro or ""
         distro_obj = None
         if effective_distro:
@@ -1738,6 +1758,9 @@ class BspManager:
                 (d for d in self.model.registry.distro if d.slug == effective_distro),
                 None,
             )
+
+        paths = self._build_manifest_path_sanitizer(build_path)
+        relative_build_path = paths.relativize_to_registry(build_path) if build_path else ""
 
         selected_targets = [target] if target else self._extract_targets_from_kas_config(config_output)
         manifest_soc_family = self._resolve_manifest_soc_family(resolved, preset)
@@ -1753,11 +1776,17 @@ class BspManager:
                     container_name = name
                     break
 
+        scrubbed_argv = paths.scrub_argv(list(sys.argv))
+
         return {
-            "schema_version": "1",
+            "schema_version": "2",
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "roots": {
+                "registry": ".",
+                "build": relative_build_path,
+            },
             "registry": {
-                "path": str(self.config_path),
+                "path": self.config_path.name if self.config_path.is_file() else ".",
             },
             "provenance": {
                 "tool": {
@@ -1765,8 +1794,8 @@ class BspManager:
                     "version": get_installed_package_version("bsp-registry-tools"),
                 },
                 "cli": {
-                    "argv": list(sys.argv),
-                    "command": shlex.join(sys.argv),
+                    "argv": scrubbed_argv,
+                    "command": shlex.join(scrubbed_argv),
                 },
                 "python": {
                     "version": platform.python_version(),
@@ -1792,11 +1821,12 @@ class BspManager:
                 else None
             ),
             "build": {
-                "path": build_path,
+                "path": relative_build_path,
+                "name": Path(str(build_path)).name if build_path else "",
                 "checkout_only": checkout_only,
                 "target": target,
                 "task": task,
-                "docker_build_options": docker_build_options,
+                "docker_build_options": paths.scrub_text(docker_build_options),
                 "resolved_targets": selected_targets,
             },
             "components": {
@@ -1824,12 +1854,12 @@ class BspManager:
                     {
                         "name": container_name,
                         "image": resolved.container.image,
-                        "file": resolved.container.file,
-                        "runtime_args": resolved_runtime_args,
-                        "build_options": manifest_container_build_options,
+                        "file": paths.relativize(resolved.container.file),
+                        "runtime_args": paths.scrub_text(resolved_runtime_args),
+                        "build_options": paths.scrub_text(manifest_container_build_options),
                         "privileged": resolved.container.privileged,
                         "args": [
-                            {"name": arg.name, "value": arg.value}
+                            {"name": arg.name, "value": paths.scrub_text(arg.value)}
                             for arg in resolved.container.args
                         ],
                     }
@@ -1838,13 +1868,19 @@ class BspManager:
                 ),
             },
             "inputs": {
-                "kas_files": list(resolved.kas_files),
-                "local_conf": list(resolved.local_conf),
+                "kas_files": [paths.relativize(kas_file) for kas_file in resolved.kas_files],
+                "local_conf": [paths.scrub_text(line) for line in resolved.local_conf],
                 "environment_variables": [
-                    {"name": env_var.name, "value": env_var.value}
+                    {"name": env_var.name, "value": paths.scrub_text(env_var.value)}
                     for env_var in resolved.env
                 ],
-                "copy": list(resolved.copy),
+                "copy": [
+                    {
+                        paths.relativize(source): paths.relativize(destination)
+                        for source, destination in entry.items()
+                    }
+                    for entry in resolved.copy
+                ],
             },
         }
 
