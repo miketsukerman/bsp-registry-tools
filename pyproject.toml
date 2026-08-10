@@ -65,7 +65,9 @@ completions = [
     "argcomplete>=3.0",
 ]
 report = [
-    "weasyprint>=60.0",
+    # 62.0 is the first release with usable flex/grid handling; the PDF report
+    # also relies on target-counter() and @page margin boxes.
+    "weasyprint>=62.0",
 ]
 # flash: intentionally empty — bmaptool is a system package, not a Python package.
 # Install it separately:  sudo apt install bmap-tools

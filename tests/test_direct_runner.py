@@ -1266,7 +1266,7 @@ run:
         mock_wp.HTML.return_value = mock_html_instance
         with patch.dict("sys.modules", {"weasyprint": mock_wp}):
             runner._write_pdf_report(tmp_path / "out.pdf", "<html></html>")
-        mock_wp.HTML.assert_called_once_with(string="<html></html>")
+        mock_wp.HTML.assert_called_once_with(string="<html></html>", base_url=None)
         mock_html_instance.write_pdf.assert_called_once_with(str(tmp_path / "out.pdf"))
 
     def test_integration_html_report_from_full_run(self, tmp_path):

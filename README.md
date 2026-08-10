@@ -1246,7 +1246,13 @@ When `--verbose` is enabled, test execution logs include per-suite and per-case 
 Direct backends also persist collected artifacts under `<build-path>/test-results` (or `--direct-output-dir` when set), including:
 
 - `direct-test-report.html` with aggregate KPIs, a category roll-up, a cross-suite requirements matrix, suite quick navigation and per-suite test case tables
-- `direct-test-report.pdf` (when the `report` extra is installed)
+- `direct-test-report.pdf` (when the `report` extra is installed) — rendered from a
+  dedicated paged-media flavour of the report: A4 landscape, repeated table
+  headers, page numbers, a PDF outline and a table of contents with page
+  references, and every collapsible section expanded so nothing is lost on
+  paper. WeasyPrint needs the system Pango/cairo libraries; on Debian/Ubuntu
+  install them with
+  `sudo apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libffi-dev`.
 - `direct-test-summary.json` for machine-readable summary data
 - per-step log files linked from the HTML report
 
