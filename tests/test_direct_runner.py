@@ -17,6 +17,8 @@ from bsp.direct_runner import (
     DirectTestSuiteResult,
     DirectTestCaseResult,
     LavaSignalCase,
+    _PDF_MAX_FAILURE_ROWS,
+    _PDF_MAX_SUITE_ROWS,
     _LocalTransport,
     _SshTransport,
 )
@@ -1270,54 +1272,8 @@ run:
         mock_wp.HTML.assert_called_once_with(string="<html></html>", base_url=None)
         mock_html_instance.write_pdf.assert_called_once_with(str(tmp_path / "out.pdf"))
 
-    def test_pdf_flavour_expands_every_details(self, tmp_path):
-        """The print renderer drops collapsed <details>, so the PDF opens them.
-
-        Without this the executed-steps table and every log excerpt are
-        silently missing from the PDF even though they exist in the HTML.
-        """
-        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
-        kwargs = dict(
-            label="my-label",
-            backend="direct-local",
-            suites=self._make_suites(),
-            passed=False,
-        )
-        screen = runner._render_html_report(**kwargs)
-        pdf = runner._render_html_report(**kwargs, for_pdf=True)
-
-        assert "<details" in screen
-        assert " open>" not in screen
-        # Every details element of the PDF flavour carries the open attribute.
-        opened = re.findall(r"<details[^>]*>", pdf)
-        assert opened
-        assert all(tag.endswith(" open>") for tag in opened), opened
-
-    def test_pdf_flavour_uses_paged_media_stylesheet(self, tmp_path):
-        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
-        kwargs = dict(
-            label="my-label",
-            backend="direct-local",
-            suites=self._make_suites(),
-            passed=False,
-        )
-        screen = runner._render_html_report(**kwargs)
-        pdf = runner._render_html_report(**kwargs, for_pdf=True)
-
-        # Grid and flex are unsupported or partial in the print renderer.
-        assert ".kpi-grid { display: block; }" in pdf
-        assert "table-layout: fixed" in pdf
-        assert "display: table-header-group" in pdf
-        assert 'counter(page)' in pdf
-        assert "target-counter(attr(href), page)" in pdf
-        assert "bookmark-level" in pdf
-        # Fixed column widths are only emitted for the PDF flavour.
-        assert "<colgroup>" in pdf
-        assert "<colgroup>" not in screen
-        assert "target-counter" not in screen
-
-    def test_pdf_flavour_marks_rows_carrying_a_log_excerpt(self, tmp_path):
-        """Rows taller than the page box must stay breakable."""
+    def test_pdf_flavour_is_a_condensed_summary(self, tmp_path):
+        """The PDF is an executive summary: no logs, no per-test detail."""
         runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
         suites = [
             DirectTestSuiteResult(
@@ -1340,6 +1296,76 @@ run:
                 ],
             ),
         ]
+        kwargs = dict(
+            label="my-label",
+            backend="direct-local",
+            suites=suites,
+            passed=False,
+        )
+        screen = runner._render_html_report(**kwargs)
+        pdf = runner._render_html_report(**kwargs, for_pdf=True)
+
+        # Logs and expandable per-test detail belong to the HTML report only.
+        assert "log line 49" in screen
+        assert "log line 49" not in pdf
+        assert "<details" in screen
+        assert "<details" not in pdf
+        assert "Executed steps" not in pdf
+        assert "Requirements, specification, and verification" not in pdf
+        # The verdict, the roll-ups and the failures are kept.
+        assert "Aggregate summary" in pdf
+        assert "ping-gateway" in pdf
+        assert "smoke-suite" in pdf
+        assert "direct-test-report.html" in pdf
+
+    def test_pdf_flavour_uses_a4_portrait_paged_media(self, tmp_path):
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        kwargs = dict(
+            label="my-label",
+            backend="direct-local",
+            suites=self._make_suites(),
+            passed=False,
+        )
+        screen = runner._render_html_report(**kwargs)
+        pdf = runner._render_html_report(**kwargs, for_pdf=True)
+
+        assert "size: A4 portrait" in pdf
+        assert "A4 landscape" not in pdf
+        assert "table-layout: fixed" in pdf
+        assert "display: table-header-group" in pdf
+        assert "counter(page)" in pdf
+        assert "bookmark-level" in pdf
+        # Fixed column widths are only emitted for the PDF flavour.
+        assert "<colgroup>" in pdf
+        assert "<colgroup>" not in screen
+
+    def test_pdf_flavour_caps_the_suite_and_failure_tables(self, tmp_path):
+        """Row budgets keep the document within a handful of pages."""
+        runner = DirectTestRunner(config_path=tmp_path / "registry.yaml")
+        suites = [
+            DirectTestSuiteResult(
+                name=f"suite-{index:03d}",
+                status="FAIL",
+                duration=1.0,
+                log_dir=str(tmp_path),
+                cases=[
+                    DirectTestCaseResult(
+                        name="step-1",
+                        status="FAIL",
+                        duration=0.1,
+                        command="false",
+                        lava_signals=[
+                            LavaSignalCase(
+                                test_case_id=f"case-{index:03d}-{case:02d}",
+                                result="fail",
+                            )
+                            for case in range(3)
+                        ],
+                    ),
+                ],
+            )
+            for index in range(_PDF_MAX_SUITE_ROWS + 5)
+        ]
         pdf = runner._render_html_report(
             label="my-label",
             backend="direct-local",
@@ -1347,40 +1373,13 @@ run:
             passed=False,
             for_pdf=True,
         )
-        assert 'class="has-log"' in pdf
-        assert "tr.has-log, tr.has-log td, tr.has-log details { break-inside: auto; }" in pdf
-
-    def test_pdf_column_widths_track_optional_columns(self):
-        widths = DirectTestRunner._pdf_column_widths(
-            {
-                "requirement_id": False,
-                "specification": False,
-                "version": False,
-                "category": False,
-            }
+        assert "5 further suite(s) omitted" in pdf
+        total_failures = len(suites) * 3
+        assert (
+            f"{total_failures - _PDF_MAX_FAILURE_ROWS} further failure(s) omitted"
+            in pdf
         )
-        # Test Case + State only.
-        assert len(widths["results"]) == 2
-        # The failures table carries an extra leading Suite column.
-        assert len(widths["failures"]) == 3
-        assert len(widths["steps"]) == 3
-        for key in ("results", "failures", "steps"):
-            total = sum(float(value.rstrip("%")) for value in widths[key])
-            assert total == pytest.approx(100.0, abs=0.05)
-
-    def test_pdf_column_widths_include_every_optional_column(self):
-        widths = DirectTestRunner._pdf_column_widths(
-            {
-                "requirement_id": True,
-                "specification": True,
-                "version": True,
-                "category": True,
-            }
-        )
-        assert len(widths["results"]) == 6
-        assert len(widths["failures"]) == 7
-        total = sum(float(value.rstrip("%")) for value in widths["failures"])
-        assert total == pytest.approx(100.0, abs=0.05)
+        assert pdf.count("<tr>") <= _PDF_MAX_SUITE_ROWS + _PDF_MAX_FAILURE_ROWS + 10
 
     def test_summary_renders_pdf_from_the_pdf_flavour(self, tmp_path):
         """The PDF must not be built from the screen HTML."""
@@ -1397,6 +1396,7 @@ run:
         pdf_html = write_pdf.call_args.args[1]
         screen_html = (tmp_path / "direct-test-report.html").read_text(encoding="utf-8")
         assert pdf_html != screen_html
+        assert "size: A4 portrait" in pdf_html
         assert "<colgroup>" in pdf_html
         assert "<colgroup>" not in screen_html
         assert write_pdf.call_args.kwargs["base_url"] == str(tmp_path)
