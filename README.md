@@ -54,7 +54,7 @@ pip install ".[server]"
 
 ### Dependencies
 
-- Python 3.8+
+- Python 3.9+
 - [PyYAML](https://pyyaml.org/) >= 6.0
 - [dacite](https://github.com/konradhalas/dacite) >= 1.6.0
 - [kas](https://kas.readthedocs.io/) >= 4.7
@@ -349,37 +349,52 @@ bsp build poky-qemuarm64-scarthgap --test --wait
 ## CLI Reference
 
 ```
-usage: bsp [-h] [--verbose] [--registry REGISTRY] [--no-color]
-           [--remote REMOTE] [--branch BRANCH] [--update | --no-update]
-           [--local]
-           {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes} ...
+usage: bsp [-h] [--version] [--verbose] [--registry REGISTRY] [--no-color]
+           [--remote URL[@BRANCH][@name=NAME]] [--branch BRANCH] [--update]
+           [--no-update] [--local]
+           {build,fetch,list,containers,tree,export,server,shell,deploy,gather,scan,flash,test,remotes,completions}
+           ...
 
 Advantech Board Support Package Registry
 
 positional arguments:
-  {build,list,containers,tree,export,shell,server,deploy,gather,test,remotes}
+  {build,fetch,list,containers,tree,export,server,shell,deploy,gather,scan,flash,test,remotes,completions}
                         Command to execute
     build               Build an image for BSP
+    fetch               Fetch sources for BSP
     list                List available BSPs and components
-    containers          List available containers
+    containers          List or build container images from the registry
     tree                Display a tree view of the BSP registry
     export              Export BSP configuration
-    shell               Enter interactive shell for BSP
     server              Start a GraphQL / REST HTTP server
+    shell               Enter interactive shell for BSP
     deploy              Deploy build artifacts to cloud storage
     gather              Download BSP build artifacts from cloud storage
-    test                Submit a LAVA HIL test job for a BSP
-    remotes             Manage named remote BSP registry sources
+    scan                Scan built artifacts for CVEs and generate an SBOM
+                        (CRA compliance)
+    flash               Flash a built image to an SD card or block device
+                        using bmap-tools
+    test                Submit a LAVA HIL test job for a BSP preset or
+                        component combination
+    remotes             Manage named remote BSP registry sources (like git
+                        remote)
+    completions         Print the shell completion registration snippet
 
 options:
   -h, --help            show this help message and exit
+  --version             Show program version and supported model description
+                        version
   --verbose, -v         Verbose output
   --registry REGISTRY, -r REGISTRY
-                        BSP Registry file (local path; skips remote fetch)
+                        BSP Registry file (local path)
   --no-color            Disable colored output
-  --remote REMOTE       Remote registry git URL
-                        (default: https://github.com/Advantech-EECC/bsp-registry.git)
-  --branch BRANCH       Remote registry branch (default: main)
+  --remote URL[@BRANCH][@name=NAME]
+                        Remote registry git URL. May be specified multiple
+                        times for multi-registry mode. Each value may embed a
+                        branch and an optional display name using the format
+                        ``URL@BRANCH@name=NAME``. (default: None)
+  --branch BRANCH       Remote registry branch for a single --remote (default:
+                        main)
   --update              Update the cached registry clone before use (default)
   --no-update           Skip updating the cached registry clone
   --local               Force local registry lookup only (do not use remote)
@@ -401,10 +416,11 @@ The tool determines which registry file to use in the following order:
 
 | Option | Description |
 |--------|-------------|
+| `--version` | Show program version and supported model description version |
 | `--verbose`, `-v` | Enable verbose/debug output |
 | `--registry REGISTRY`, `-r REGISTRY` | Path to BSP registry file (local override) |
 | `--no-color` | Disable colored output |
-| `--remote REMOTE` | Remote registry git URL (default: Advantech BSP registry) |
+| `--remote URL[@BRANCH][@name=NAME]` | Remote registry git URL; repeatable for multi-registry mode |
 | `--branch BRANCH` | Remote registry branch (default: `main`) |
 | `--update` / `--no-update` | Update cached registry clone before use (default: update) |
 | `--local` | Force local lookup; never contact remote |
@@ -2019,6 +2035,9 @@ result = deployer.deploy("build/poky-qemuarm64-scarthgap", device="qemuarm64", r
 git clone https://github.com/Advantech-EECC/bsp-registry-tools.git
 cd bsp-registry-tools
 pip install -e .
+
+# With the test tooling used by CI (pytest, pytest-cov):
+pip install -e ".[dev]"
 ```
 
 ### Running Tests
@@ -2034,7 +2053,7 @@ pytest -v
 pytest --cov=bsp --cov-report=term-missing
 
 # Run specific test class
-pytest tests/test_bsp.py::TestEnvironmentManager -v
+pytest tests/test_environment.py::TestEnvironmentManager -v
 ```
 
 ### Project Structure
@@ -2052,11 +2071,13 @@ bsp-registry-tools/
 │   ├── path_resolver.py      # Path utilities
 │   ├── models.py             # Dataclass models (v2.2 schema)
 │   ├── resolver.py           # V2 resolver: device + release + features → ResolvedConfig
-│   ├── registry_writer.py    # RegistryWriter: CRUD + validation for registry entities
 │   ├── lava_client.py        # LAVA REST API wrapper (submit, poll, results)
 │   ├── lava_job_builder.py   # Jinja2 LAVA job YAML renderer
 │   ├── gatherer.py           # ArtifactGatherer: download build artifacts from cloud
 │   ├── deployer.py           # ArtifactDeployer: collect & upload build artifacts
+│   ├── scanner.py            # ImageScanner: CVE scanning & SBOM generation (bsp scan)
+│   ├── flasher.py            # ImageFlasher: write images to SD card / block device
+│   ├── completions.py        # argcomplete completers & shell registration snippets
 │   ├── utils.py              # YAML / Docker utilities
 │   ├── exceptions.py         # Custom exceptions
 │   ├── server/               # Optional HTTP server (requires [server] extras)
@@ -2079,13 +2100,20 @@ bsp-registry-tools/
 │   ├── registry-v1.md        # Legacy v1.0 schema reference
 │   ├── migration-v1-to-v2.md # Migration guide from v1 to v2
 │   ├── server.md             # HTTP server (REST + GraphQL) reference
+│   ├── cheatsheet.md         # Condensed CLI command cheatsheet
+│   ├── cra-scanning.md       # CRA vulnerability scanning & SBOM guide
+│   ├── sd-card-flashing.md   # SD card / block device flashing guide
 │   └── artifact-deployment.md # Cloud deployment guide (Azure / AWS)
 ├── tests/
 │   ├── conftest.py
 │   ├── test_bsp_manager.py
 │   ├── test_cli_basic.py
+│   ├── test_cli_build_fetch_overrides.py # build/fetch CLI override tests
 │   ├── test_cli_remote_flags.py
+│   ├── test_completions.py   # Shell completion tests
 │   ├── test_deploy.py        # Deployment tests
+│   ├── test_exceptions.py
+│   ├── test_flasher.py       # Image flashing tests
 │   ├── test_gatherer.py      # Gather (download) tests
 │   ├── test_lava_client.py   # LAVA client unit tests (HTTP mocked)
 │   ├── test_lava_job_builder.py # LAVA job template renderer tests
@@ -2094,6 +2122,8 @@ bsp-registry-tools/
 │   ├── test_environment.py
 │   ├── test_path_resolver.py
 │   ├── test_registry_fetcher.py
+│   ├── test_remotes_manager.py # Named remote CRUD tests
+│   ├── test_scanner.py       # CVE scanning / SBOM tests
 │   └── test_utils.py
 ├── examples/
 │   ├── bsp-registry.yaml      # Sample v2.0 BSP registry for QEMU targets
