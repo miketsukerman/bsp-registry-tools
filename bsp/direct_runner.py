@@ -84,6 +84,16 @@ _HTML_REPORT_TEMPLATE = """\
   .mini-table th { background: #eef2f7; padding: 0.3rem 0.45rem; border-bottom: 1px solid #dde5f0; }
   .mini-table td { padding: 0.28rem 0.45rem; border-bottom: 1px solid #ebeff5; }
   .mini-table tr:last-child td { border-bottom: none; }
+  /* Highlight the hovered data row.  Scoped to tbody so header rows never
+     light up; tables written without an explicit tbody still match because
+     browsers insert one implicitly. */
+  tbody tr { transition: background-color 0.12s ease-in-out; }
+  tbody tr:hover { background: #eef3fa; }
+  .failure-table tbody tr:hover { background: #fdecec; }
+  .mini-table tbody tr:hover { background: #f4f7fc; }
+  @media (prefers-reduced-motion: reduce) {
+    tbody tr { transition: none; }
+  }
   .issue-note { color: #7f1d1d; font-size: 0.76rem; margin-top: 0.2rem; font-weight: 600; }
   .muted { color: #4b5563; }
   .log-link { white-space: nowrap; }
@@ -106,6 +116,10 @@ _HTML_REPORT_TEMPLATE = """\
     body { background: #fff; padding: 0; }
     .panel, .suite-card { break-inside: avoid; }
     table { font-size: 0.7rem; }
+    /* Never let a simulated hover state bleed into the printed/PDF report. */
+    tbody tr, tbody tr:hover,
+    .failure-table tbody tr:hover,
+    .mini-table tbody tr:hover { background: transparent; transition: none; }
     /* Folded cells must stay readable in the printed/PDF report. */
     .cell-fold > summary { display: none; }
     .cell-fold .cell-body { display: block; margin-top: 0; }
