@@ -30,13 +30,10 @@ from .resolver import ResolvedConfig
 
 _HTML_REPORT_TEMPLATE = """\
 {%- macro test_case_cell(row) -%}
-<td class="req-case">{% if row.description %}<details class="cell-fold"{{ ' open' if pdf }}><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}{{ log_fold(row) }}</td>
+<td class="req-case">{% if row.description %}<details class="cell-fold"><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}{{ log_fold(row) }}</td>
 {%- endmacro -%}
 {%- macro log_fold(row) -%}
-{% if row.log_excerpt %}<details class="log-fold"{{ ' open' if pdf }}><summary>Log</summary><pre class="log-body">{{ row.log_excerpt }}</pre></details>{% endif %}
-{%- endmacro -%}
-{%- macro colgroup(widths) -%}
-{% if pdf %}<colgroup>{% for width in widths %}<col style="width: {{ width }}"/>{% endfor %}</colgroup>{% endif %}
+{% if row.log_excerpt %}<details class="log-fold"><summary>Log</summary><pre class="log-body">{{ row.log_excerpt }}</pre></details>{% endif %}
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -128,88 +125,6 @@ _HTML_REPORT_TEMPLATE = """\
     .cell-fold .cell-body { display: block; margin-top: 0; }
   }
 </style>
-{%- if pdf %}
-<style>
-  /* Paged-media stylesheet, emitted only for the PDF flavour of the report.
-     It is deliberately kept apart from the screen sheet above: the print
-     renderer has no grid support, only partial flex support, and no viewport
-     to scroll, so the screen layout primitives are replaced here by the
-     table and inline-block boxes the renderer handles reliably. */
-  body {
-    font-family: "DejaVu Sans", "Liberation Sans", "Noto Sans", Arial, sans-serif;
-    background: #fff;
-    padding: 0;
-    font-size: 9pt;
-  }
-  .page { max-width: none; }
-  .page-title { string-set: doctitle content(); }
-  .gen-stamp { string-set: genstamp content(); }
-  @page {
-    size: A4 landscape;
-    margin: 14mm 12mm 16mm 12mm;
-    @top-left { content: string(doctitle); font-size: 7.5pt; color: #4b5563; }
-    @top-right { content: "Generated " string(genstamp); font-size: 7.5pt; color: #4b5563; }
-    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #4b5563; }
-  }
-  /* A navigable outline turns a long report into something usable. */
-  h1 { bookmark-level: 1; bookmark-label: content(); }
-  h2 { bookmark-level: 2; bookmark-label: content(); }
-  .suite-header h3 { bookmark-level: 2; bookmark-label: content(); }
-  h1, h2, h3 { break-after: avoid; }
-  /* Long suites must be allowed to flow across pages; forcing them to stay
-     whole pushes half-empty pages and eventually overflows. */
-  .panel, .suite-card { break-inside: auto; }
-  thead { display: table-header-group; }
-  tfoot { display: table-footer-group; }
-  tr { break-inside: avoid; }
-  /* A row carrying a log excerpt can easily be taller than the page box.
-     Keeping it atomic would leave the renderer nowhere to put it and waste a
-     mostly blank page before it, so those rows are allowed to split. */
-  tr.has-log, tr.has-log td, tr.has-log details { break-inside: auto; }
-  table { table-layout: fixed; width: 100%; font-size: 8pt; word-wrap: break-word; overflow-wrap: break-word; }
-  /* The screen sheet sets these per table flavour with class specificity, so
-     the paged overrides have to match it to win. */
-  .failure-table, .mini-table { font-size: 8pt; }
-  th, td,
-  .failure-table th, .failure-table td,
-  .mini-table th, .mini-table td { word-wrap: break-word; overflow-wrap: break-word; padding: 0.2rem 0.28rem; }
-  /* Screen width hints fight the fixed column widths set via <colgroup>. */
-  .req-case { min-width: 0; }
-  .req-spec { max-width: none; }
-  .cmd { word-break: break-all; }
-  /* No grid support: lay the KPI cards out as inline blocks instead. */
-  .kpi-grid { display: block; }
-  .kpi { display: inline-block; width: 32.4%; margin: 0 0.6% 0.5rem 0; vertical-align: top; }
-  /* Flex gap/wrap are unreliable in the print renderer; use inline boxes. */
-  .label-row, .suite-stats, .suite-header { display: block; }
-  .label-row > *, .suite-stats > span { display: inline-block; margin-right: 0.9rem; }
-  .suite-header > * { display: inline-block; vertical-align: middle; margin-right: 0.6rem; }
-  .suite-header h3 { font-size: 10pt; }
-  /* Details are rendered open in this flavour, so the disclosure affordances
-     are noise.  The Test Case summary carries the case id and must stay. */
-  details { break-inside: avoid; }
-  details > summary { list-style: none; }
-  details > summary::marker { content: ""; }
-  .req-spec .cell-fold > summary { display: none; }
-  .req-case .cell-fold > summary { display: block; }
-  .cell-fold, .log-fold { background: transparent; }
-  /* Paged media cannot scroll, so a clipped log excerpt is a silent loss.
-     Dark-on-light also prints far better than the screen's inverted block. */
-  .log-body {
-    max-height: none;
-    overflow: visible;
-    background: #f8fafc;
-    color: #1f2937;
-    border: 1px solid #e5e7eb;
-    font-size: 7pt;
-  }
-  /* In-page anchors mean nothing on paper; resolve them to page numbers. */
-  .toc-pdf { list-style: none; column-count: 2; column-gap: 1.4rem; }
-  .toc-pdf li { break-inside: avoid; font-size: 8pt; }
-  .toc-pdf a { text-decoration: none; color: #1f2937; }
-  .toc-pdf a::after { content: " — page " target-counter(attr(href), page); color: #4b5563; }
-</style>
-{%- endif %}
 </head>
 <body>
 <div class="page">
@@ -270,19 +185,11 @@ _HTML_REPORT_TEMPLATE = """\
 <div class="panel">
   <h2>Suite navigation</h2>
   {% if suites %}
-  {% if pdf %}
-  <ul class="toc-pdf">
-    {% for suite in suites %}
-    <li><a href="#{{ suite.id }}">{{ suite.name }}</a></li>
-    {% endfor %}
-  </ul>
-  {% else %}
   <ul class="toc-list">
     {% for suite in suites %}
     <li><a href="#{{ suite.id }}">{{ suite.name }}</a></li>
     {% endfor %}
   </ul>
-  {% endif %}
   {% else %}
   <p class="muted">No suites available.</p>
   {% endif %}
@@ -292,7 +199,6 @@ _HTML_REPORT_TEMPLATE = """\
   <h2>Failures first</h2>
   {% if failures %}
   <table class="failure-table">
-  {{ colgroup(col_widths.failures) }}
     <thead>
       <tr>
         <th>Suite</th>
@@ -306,11 +212,11 @@ _HTML_REPORT_TEMPLATE = """\
     </thead>
     <tbody>
       {% for failure in failures %}
-      <tr{% if failure.log_excerpt %} class="has-log"{% endif %}>
+      <tr>
         <td>{{ failure.suite_name }}</td>
         {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
         {{ test_case_cell(failure) }}
-        {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="cell-fold"{{ ' open' if pdf }}><summary>Parameters</summary><div class="cell-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ failure.parameters }}">{% if failure.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ failure.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ failure.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
         <td><span class="badge {{ failure.status_class }}">{{ failure.result }}</span></td>
@@ -327,7 +233,6 @@ _HTML_REPORT_TEMPLATE = """\
 <div class="panel">
   <h2>Requirements, specification, and verification</h2>
   <table>
-  {{ colgroup(col_widths.results) }}
     <thead>
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
@@ -340,10 +245,10 @@ _HTML_REPORT_TEMPLATE = """\
     </thead>
     <tbody>
     {% for row in requirements %}
-      <tr{% if row.log_excerpt %} class="has-log"{% endif %}>
+      <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ row.requirement_id }}</td>{% endif %}
         {{ test_case_cell(row) }}
-        {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="cell-fold"{{ ' open' if pdf }}><summary>Parameters</summary><div class="cell-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ row.parameters }}">{% if row.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ row.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ row.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ row.category }}</td>{% endif %}
         <td><span class="badge {{ row.status_class }}">{{ row.result }}</span></td>
@@ -379,7 +284,6 @@ _HTML_REPORT_TEMPLATE = """\
 
   {% if suite.lava_cases %}
   <table>
-  {{ colgroup(col_widths.results) }}
     <thead>
       <tr>
         {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
@@ -392,10 +296,10 @@ _HTML_REPORT_TEMPLATE = """\
     </thead>
     <tbody>
     {% for case in suite.lava_cases %}
-      <tr{% if case.log_excerpt %} class="has-log"{% endif %}>
+      <tr>
         {% if columns.requirement_id %}<td class="req-id">{{ case.requirement_id }}</td>{% endif %}
         {{ test_case_cell(case) }}
-        {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="cell-fold"{{ ' open' if pdf }}><summary>Parameters</summary><div class="cell-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
+        {% if columns.specification %}<td class="req-spec" title="{{ case.parameters }}">{% if case.specification %}<details class="cell-fold"><summary>Parameters</summary><div class="cell-body">{{ case.specification }}</div></details>{% endif %}</td>{% endif %}
         {% if columns.version %}<td class="num">{{ case.version }}</td>{% endif %}
         {% if columns.category %}<td>{{ case.category }}</td>{% endif %}
         <td><span class="badge {{ case.status_class }}">{{ case.result }}</span></td>
@@ -410,16 +314,15 @@ _HTML_REPORT_TEMPLATE = """\
   {% endif %}
 
   {% if suite.steps %}
-  <details{{ ' open' if pdf }}>
+  <details>
     <summary>Executed steps ({{ suite.steps | length }})</summary>
     <table class="mini-table">
-    {{ colgroup(col_widths.steps) }}
       <thead>
         <tr><th>Step</th><th>Description</th><th>State</th></tr>
       </thead>
       <tbody>
       {% for step in suite.steps %}
-        <tr{% if step.log_excerpt %} class="has-log"{% endif %}>
+        <tr>
           <td>{{ step.name }}</td>
           <td class="step-desc">{{ step.description }}{{ log_fold(step) }}</td>
           <td><span class="badge {{ step.status_class }}">{{ step.status }}</span></td>
@@ -439,6 +342,205 @@ _HTML_REPORT_TEMPLATE = """\
 </body>
 </html>
 """
+
+
+# The PDF is an executive summary rather than a paper copy of the HTML report:
+# it carries the verdict, the aggregate numbers, a suite roll-up and the list of
+# failures, and nothing else.  Logs, per-case tables, executed steps and folded
+# descriptions live in the HTML report, which stays the reference for analysis.
+_PDF_REPORT_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>BSP Test Report{% if label %} — {{ label }}{% endif %}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm 15mm 12mm;
+    @top-left { content: string(doctitle); font-size: 7.5pt; color: #4b5563; }
+    @top-right { content: "Generated " string(genstamp); font-size: 7.5pt; color: #4b5563; }
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #4b5563; }
+  }
+  body {
+    font-family: "DejaVu Sans", "Liberation Sans", "Noto Sans", Arial, sans-serif;
+    color: #1f2937;
+    background: #fff;
+    font-size: 8.5pt;
+    line-height: 1.25;
+  }
+  h1 { font-size: 14pt; margin-bottom: 0.15rem; bookmark-level: 1; bookmark-label: content(); }
+  h2 { font-size: 10pt; margin-bottom: 0.25rem; bookmark-level: 2; bookmark-label: content(); }
+  h1, h2 { break-after: avoid; }
+  .page-title { string-set: doctitle content(); }
+  .gen-stamp { string-set: genstamp content(); }
+  .meta { color: #4b5563; font-size: 8pt; margin-bottom: 0.6rem; }
+  .panel { border: 1px solid #d7dde6; border-radius: 4px; padding: 0.4rem 0.5rem; margin-bottom: 0.55rem; }
+  .badge { display: inline-block; padding: 0.05rem 0.35rem; border-radius: 999px; font-weight: 700; font-size: 7pt; white-space: nowrap; }
+  .pass  { background: #d1fae5; color: #065f46; }
+  .fail  { background: #fee2e2; color: #991b1b; }
+  .warn  { background: #fef3c7; color: #92400e; }
+  .manual { background: #e5e7eb; color: #374151; }
+  .timeout { background: #ffedd5; color: #9a3412; }
+  .kpi { display: inline-block; width: 24.2%; margin: 0 0.6% 0.3rem 0; vertical-align: top; border: 1px solid #e3e7ee; border-radius: 3px; padding: 0.25rem 0.35rem; }
+  .kpi .name { font-size: 6.5pt; color: #4b5563; text-transform: uppercase; letter-spacing: 0.03em; }
+  .kpi .value { font-size: 10pt; font-weight: 700; color: #111827; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; word-wrap: break-word; overflow-wrap: break-word; }
+  th { text-align: left; padding: 0.16rem 0.24rem; background: #f3f6fb; border-bottom: 1px solid #dbe2ec; }
+  td { padding: 0.14rem 0.24rem; border-bottom: 1px solid #edf1f7; vertical-align: top; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  .failure-table th { background: #fee2e2; color: #7f1d1d; border-bottom: 1px solid #fecaca; }
+  .req-id { font-family: "DejaVu Sans Mono", monospace; font-size: 7pt; }
+  .num { text-align: right; }
+  .muted { color: #4b5563; }
+  .note { color: #4b5563; font-size: 7pt; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+<h1 class="page-title">BSP Test Report{% if label %}: {{ label }}{% endif %}</h1>
+<p class="meta">
+  Generated: <span class="gen-stamp">{{ generated_at }}</span> &nbsp;|&nbsp;
+  Backend: <strong>{{ backend }}</strong> &nbsp;|&nbsp;
+  Overall:
+  <span class="badge {{ 'pass' if passed else 'fail' }}">{{ 'PASS' if passed else 'FAIL' }}</span>
+</p>
+
+<div class="panel">
+  <h2>Aggregate summary</h2>
+  <div>
+    <div class="kpi"><div class="name">Suites</div><div class="value">{{ report.total_suites }}</div></div>
+    <div class="kpi"><div class="name">Suites with issues</div><div class="value">{{ report.failing_suites }}</div></div>
+    <div class="kpi"><div class="name">Total tests</div><div class="value">{{ report.total_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Passed</div><div class="value">{{ report.passed_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Failed</div><div class="value">{{ report.failed_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Not run</div><div class="value">{{ report.not_run_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Manual</div><div class="value">{{ report.manual_lava_cases }}</div></div>
+    <div class="kpi"><div class="name">Duration</div><div class="value">{{ "%.2f"|format(report.total_duration) }}s</div></div>
+  </div>
+</div>
+
+{% if preset_info %}
+<div class="panel">
+  <h2>Preset info</h2>
+  <table>
+    <colgroup><col style="width: 18%"/><col style="width: 82%"/></colgroup>
+    {% if preset_info.device %}<tr><td>Device</td><td>{{ preset_info.device }}{% if preset_info.device_description %} — {{ preset_info.device_description }}{% endif %}</td></tr>{% endif %}
+    {% if preset_info.release %}<tr><td>Release</td><td>{{ preset_info.release }}{% if preset_info.release_description %} — {{ preset_info.release_description }}{% endif %}</td></tr>{% endif %}
+    {% if preset_info.features %}<tr><td>Features</td><td>{{ preset_info.features }}</td></tr>{% endif %}
+  </table>
+</div>
+{% endif %}
+
+{% if categories %}
+<div class="panel">
+  <h2>Categories</h2>
+  <table>
+    <colgroup><col style="width: 34%"/><col style="width: 10%"/><col style="width: 10%"/><col style="width: 22%"/><col style="width: 24%"/></colgroup>
+    <thead>
+      <tr><th>Category</th><th class="num">Tests</th><th class="num">Failed</th><th>State</th><th>Remarks</th></tr>
+    </thead>
+    <tbody>
+    {% for category in categories %}
+      <tr>
+        <td>{{ category.category }}</td>
+        <td class="num">{{ category.total }}</td>
+        <td class="num">{{ category.failed }}</td>
+        <td><span class="badge {{ category.status_class }}">{{ category.status }}</span></td>
+        <td>{{ category.remarks }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if categories_omitted %}
+  <p class="note">{{ categories_omitted }} further category(ies) omitted — see the HTML report.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Suites</h2>
+  {% if suites %}
+  <table>
+    <colgroup><col style="width: 46%"/><col style="width: 14%"/><col style="width: 11%"/><col style="width: 11%"/><col style="width: 18%"/></colgroup>
+    <thead>
+      <tr><th>Suite</th><th>State</th><th class="num">Tests</th><th class="num">Failed</th><th class="num">Duration</th></tr>
+    </thead>
+    <tbody>
+    {% for suite in suites %}
+      <tr>
+        <td>{{ suite.name }}</td>
+        <td><span class="badge {{ suite.status_class }}">{{ suite.status }}</span></td>
+        <td class="num">{{ suite.lava_total }}</td>
+        <td class="num">{{ suite.lava_failed }}</td>
+        <td class="num">{{ "%.2f"|format(suite.duration) }}s</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if suites_omitted %}
+  <p class="note">{{ suites_omitted }} further suite(s) omitted — see the HTML report.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No test suites were executed.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Failures</h2>
+  {% if failures %}
+  <table class="failure-table">
+    <colgroup>
+      <col style="width: 24%"/>
+      {% if columns.requirement_id %}<col style="width: 18%"/>{% endif %}
+      <col style="width: {{ '30%' if columns.requirement_id else '48%' }}"/>
+      {% if columns.category %}<col style="width: 15%"/>{% endif %}
+      <col style="width: 13%"/>
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Suite</th>
+        {% if columns.requirement_id %}<th>Requirement Id</th>{% endif %}
+        <th>Test Case</th>
+        {% if columns.category %}<th>Category</th>{% endif %}
+        <th>State</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for failure in failures %}
+      <tr>
+        <td>{{ failure.suite_name }}</td>
+        {% if columns.requirement_id %}<td class="req-id">{{ failure.requirement_id }}</td>{% endif %}
+        <td>{{ failure.test_case_id }}</td>
+        {% if columns.category %}<td>{{ failure.category }}</td>{% endif %}
+        <td><span class="badge {{ failure.status_class }}">{{ failure.result }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if failures_omitted %}
+  <p class="note">{{ failures_omitted }} further failure(s) omitted — see the HTML report.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No failures detected.</p>
+  {% endif %}
+</div>
+
+<p class="note">
+  Condensed summary. Per-test details, parameters, executed steps and log
+  excerpts are available in <strong>direct-test-report.html</strong>.
+</p>
+</body>
+</html>
+"""
+
+# Row budgets for the condensed PDF report.  They keep the document within a
+# handful of A4 pages no matter how large the run was; the HTML report remains
+# the complete record.
+_PDF_MAX_CATEGORY_ROWS = 25
+_PDF_MAX_SUITE_ROWS = 30
+_PDF_MAX_FAILURE_ROWS = 60
 
 
 _VAR_BRACE_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -1824,73 +1926,45 @@ class DirectTestRunner:
         preset_info: Optional[Dict[str, str]] = None,
         for_pdf: bool = False,
     ) -> str:
-        """Render the report template.
+        """Render the report.
 
         The same data context feeds both flavours.  With *for_pdf* set the
-        template switches to its paged-media layout: every ``<details>`` is
-        rendered open so no content is lost, tables get explicit column
-        widths, and a print stylesheet replaces the screen one.
+        condensed PDF template is used instead of the screen one: it is an A4
+        portrait executive summary (verdict, aggregate numbers, category and
+        suite roll-ups, failures) with no logs and no per-test detail, so the
+        document stays a handful of pages regardless of the size of the run.
         """
         report_context = self._build_html_report_context(suites)
         env = Environment(autoescape=True)
-        tmpl = env.from_string(_HTML_REPORT_TEMPLATE)
-        return tmpl.render(
+        common = dict(
             label=label,
             backend=backend,
-            suites=report_context["suites"],
             report=report_context["report"],
-            failures=report_context["failures"],
-            categories=report_context["categories"],
-            requirements=report_context["requirements"],
             columns=report_context["columns"],
-            col_widths=self._pdf_column_widths(report_context["columns"]),
-            pdf=for_pdf,
             passed=passed,
             preset_info=preset_info or {},
             generated_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
-
-    @staticmethod
-    def _pdf_column_widths(columns: Dict[str, bool]) -> Dict[str, List[str]]:
-        """Return per-column percentage widths for the PDF flavour tables.
-
-        The PDF stylesheet uses ``table-layout: fixed`` because the print
-        renderer will not shrink an over-wide table to the page box; it simply
-        lets it run off the edge.  Fixed layout needs explicit widths, so the
-        relative weights below are filtered by the optional-column flags
-        already computed for the template and normalised to 100%.
-        """
-        weights = {
-            "suite": 10.0,
-            "requirement_id": 11.0,
-            "test_case": 27.0,
-            "specification": 18.0,
-            "version": 8.0,
-            "category": 13.0,
-            "state": 11.0,
-        }
-
-        def _widths(keys: List[str]) -> List[str]:
-            present = [weights[key] for key in keys]
-            total = sum(present)
-            return [f"{value / total * 100:.2f}%" for value in present]
-
-        results_keys = ["requirement_id"] if columns.get("requirement_id") else []
-        results_keys.append("test_case")
-        if columns.get("specification"):
-            results_keys.append("specification")
-        if columns.get("version"):
-            results_keys.append("version")
-        if columns.get("category"):
-            results_keys.append("category")
-        results_keys.append("state")
-
-        return {
-            "results": _widths(results_keys),
-            "failures": _widths(["suite"] + results_keys),
-            # The steps table is fixed at Step / Description / State.
-            "steps": ["25.00%", "60.00%", "15.00%"],
-        }
+        if for_pdf:
+            all_categories = report_context["categories"]
+            all_suites = report_context["suites"]
+            all_failures = report_context["failures"]
+            return env.from_string(_PDF_REPORT_TEMPLATE).render(
+                categories=all_categories[:_PDF_MAX_CATEGORY_ROWS],
+                categories_omitted=max(0, len(all_categories) - _PDF_MAX_CATEGORY_ROWS),
+                suites=all_suites[:_PDF_MAX_SUITE_ROWS],
+                suites_omitted=max(0, len(all_suites) - _PDF_MAX_SUITE_ROWS),
+                failures=all_failures[:_PDF_MAX_FAILURE_ROWS],
+                failures_omitted=max(0, len(all_failures) - _PDF_MAX_FAILURE_ROWS),
+                **common,
+            )
+        return env.from_string(_HTML_REPORT_TEMPLATE).render(
+            suites=report_context["suites"],
+            failures=report_context["failures"],
+            requirements=report_context["requirements"],
+            categories=report_context["categories"],
+            **common,
+        )
 
     @staticmethod
     def _case_log_excerpt(case: DirectTestCaseResult) -> str:
