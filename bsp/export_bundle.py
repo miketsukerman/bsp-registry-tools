@@ -174,7 +174,7 @@ git -C "$MANIFEST_REPO" add default.xml
 git -C "$MANIFEST_REPO" -c user.email=bsp@example.com -c user.name=bsp \\
     commit -q -m "Exported manifest"
 
-echo "Initialising repo workspace ..."
+echo "Initializing repo workspace ..."
 repo init -u "$MANIFEST_REPO" -m default.xml
 repo sync "$@"
 

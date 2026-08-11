@@ -2645,9 +2645,8 @@ class BspManager:
         if output_dir:
             export_dir = Path(output_dir)
             export_dir.mkdir(parents=True, exist_ok=True)
-            if output_file:
-                config_name = Path(output_file).name
-            else:
+            config_name = Path(output_file).name if output_file else ""
+            if not config_name:
                 config_name = (
                     DEFAULT_REPO_MANIFEST_NAME if repo_manifest else DEFAULT_KAS_CONFIG_NAME
                 )
