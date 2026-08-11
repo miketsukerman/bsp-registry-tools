@@ -5149,6 +5149,32 @@ class TestExportBundle:
         assert "test/ubuntu-22.04:latest" in setup
         assert "environment.sh" in setup
 
+        readme = (export_dir / "README.md").read_text()
+        assert "kas.yml" in readme
+        assert "container/Dockerfile.ubuntu" in readme
+        assert "environment.sh" in readme
+        assert "setup.sh" in readme
+
+    def test_export_bundle_can_skip_readme(self, registry_with_env_file, tmp_dir):
+        (tmp_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu\n")
+        manager = BspManager(config_path=str(registry_with_env_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        def _fake_export(output_file, lock=False):
+            Path(output_file).write_text("header:\n  version: 14\n")
+            return "header:\n  version: 14\n"
+
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+            manager.export_bsp_config(
+                "qemu-arm64",
+                output_dir=str(export_dir),
+                include_readme=False,
+            )
+
+        assert not (export_dir / "README.md").exists()
+
     def test_export_bundle_can_skip_container_and_environment(self, registry_with_env_file, tmp_dir):
         (tmp_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu\n")
         manager = BspManager(config_path=str(registry_with_env_file))

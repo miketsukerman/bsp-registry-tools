@@ -29,6 +29,7 @@ from .export_bundle import (
     copy_patches,
     generate_setup_script,
     write_environment_file,
+    write_readme,
 )
 from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
@@ -2648,6 +2649,7 @@ class BspManager:
         setup_script: bool = True,
         include_container: bool = True,
         include_environment: bool = True,
+        include_readme: bool = True,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -2667,12 +2669,14 @@ class BspManager:
                 the bundle
             include_environment: Write the build environment variables into
                 the bundle
+            include_readme: Generate the bundle readme documenting its contents
         """
         export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
         logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
 
         export_dir: Optional[Path] = None
         config_name: Optional[str] = None
+        copied_patches: List[Path] = []
         if output_dir:
             export_dir = Path(output_dir)
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -2730,7 +2734,7 @@ class BspManager:
                     exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
 
                 if export_dir is not None and include_patches:
-                    copy_patches(
+                    copied_patches = copy_patches(
                         kas_mgr.collect_patch_files(),
                         str(export_dir),
                         base_dir=str(self.config_path.parent),
@@ -2767,6 +2771,18 @@ class BspManager:
                 environment_file=environment_file,
             )
 
+        if export_dir is not None and include_readme:
+            write_readme(
+                str(export_dir),
+                config_name,
+                repo_manifest=repo_manifest,
+                label=label or resolved.device.slug,
+                patches=copied_patches,
+                container=exported_container,
+                environment_file=environment_file,
+                setup_script=setup_script,
+            )
+
         if not output_file:
             target_label = label or resolved.device.slug
             title = (
@@ -2793,6 +2809,7 @@ class BspManager:
         setup_script: bool = True,
         include_container: bool = True,
         include_environment: bool = True,
+        include_readme: bool = True,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2811,6 +2828,7 @@ class BspManager:
                 the bundle
             include_environment: Write the build environment variables into
                 the bundle
+            include_readme: Generate the bundle readme documenting its contents
 
         Raises:
             SystemExit: If preset not found or export fails
@@ -2829,6 +2847,7 @@ class BspManager:
                 setup_script=setup_script,
                 include_container=include_container,
                 include_environment=include_environment,
+                include_readme=include_readme,
             )
 
     def export_by_components(
@@ -2844,6 +2863,7 @@ class BspManager:
         setup_script: bool = True,
         include_container: bool = True,
         include_environment: bool = True,
+        include_readme: bool = True,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2864,6 +2884,7 @@ class BspManager:
                 the bundle
             include_environment: Write the build environment variables into
                 the bundle
+            include_readme: Generate the bundle readme documenting its contents
 
         Raises:
             SystemExit: If any component is not found or export fails
@@ -2884,6 +2905,7 @@ class BspManager:
             setup_script=setup_script,
             include_container=include_container,
             include_environment=include_environment,
+            include_readme=include_readme,
         )
 
     # ------------------------------------------------------------------

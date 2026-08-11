@@ -122,6 +122,7 @@ registry:
             setup_script=True,
             include_container=True,
             include_environment=True,
+            include_readme=True,
         )
 
     def test_main_export_repo_manifest_components(self, registry_file):
@@ -145,6 +146,7 @@ registry:
             setup_script=True,
             include_container=True,
             include_environment=True,
+            include_readme=True,
         )
 
     def test_main_export_repo_manifest_with_output(self, registry_file, tmp_dir):
@@ -178,6 +180,7 @@ registry:
             setup_script=True,
             include_container=True,
             include_environment=True,
+            include_readme=True,
         )
 
     def test_main_export_with_lock_components(self, registry_file):
@@ -200,6 +203,7 @@ registry:
             setup_script=True,
             include_container=True,
             include_environment=True,
+            include_readme=True,
         )
 
     def test_main_export_repo_manifest_rejects_preset_and_components_mix(self, registry_file):

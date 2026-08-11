@@ -13,12 +13,14 @@ from bsp import KasManager
 from bsp.export_bundle import (
     DEFAULT_KAS_CONFIG_NAME,
     ENVIRONMENT_FILE_NAME,
+    README_FILE_NAME,
     SETUP_SCRIPT_NAME,
     ExportedContainer,
     copy_container,
     copy_patches,
     generate_setup_script,
     write_environment_file,
+    write_readme,
 )
 from bsp.models import Docker, DockerArg, EnvironmentVariable
 
@@ -331,3 +333,66 @@ class TestSetupScriptContainerAndEnvironment:
         )
         for path in (script, export_dir / ENVIRONMENT_FILE_NAME):
             assert subprocess.run(["sh", "-n", str(path)]).returncode == 0
+
+
+class TestWriteReadme:
+    def test_readme_documents_bundle_contents(self, tmp_dir):
+        export_dir = tmp_dir / "export"
+        readme = write_readme(
+            str(export_dir),
+            DEFAULT_KAS_CONFIG_NAME,
+            label="my-bsp - description",
+            patches=[Path("patches/meta-foo/0001-fix.patch")],
+            container=ExportedContainer(
+                image="test/ubuntu:latest",
+                dockerfile=Path("container") / "Dockerfile.ubuntu",
+                args=[("DISTRO", "ubuntu:22.04")],
+                privileged=True,
+                runtime_args="--net=host",
+            ),
+            environment_file=ENVIRONMENT_FILE_NAME,
+        )
+
+        assert readme.name == README_FILE_NAME
+        content = readme.read_text()
+        assert content.startswith("# my-bsp - description")
+        assert DEFAULT_KAS_CONFIG_NAME in content
+        assert "`patches/meta-foo/`" in content
+        assert "container/Dockerfile.ubuntu" in content
+        assert ENVIRONMENT_FILE_NAME in content
+        assert SETUP_SCRIPT_NAME in content
+        assert "kas-container" in content
+        assert "test/ubuntu:latest" in content
+        assert "DISTRO=ubuntu:22.04" in content
+        assert "--net=host" in content
+
+    def test_readme_without_extras_mentions_plain_kas(self, tmp_dir):
+        readme = write_readme(str(tmp_dir / "export"), DEFAULT_KAS_CONFIG_NAME)
+        content = readme.read_text()
+        assert "kas-container" not in content
+        assert ENVIRONMENT_FILE_NAME not in content
+        assert "Build container" not in content
+        assert SETUP_SCRIPT_NAME in content
+
+    def test_readme_without_setup_script_documents_manual_commands(self, tmp_dir):
+        readme = write_readme(
+            str(tmp_dir / "export"),
+            DEFAULT_KAS_CONFIG_NAME,
+            setup_script=False,
+        )
+        content = readme.read_text()
+        assert SETUP_SCRIPT_NAME not in content
+        assert f"kas checkout {DEFAULT_KAS_CONFIG_NAME}" in content
+
+    def test_repo_manifest_readme_mentions_repo_tool(self, tmp_dir):
+        readme = write_readme(
+            str(tmp_dir / "export"),
+            "manifest.xml",
+            repo_manifest=True,
+            label="android-bsp",
+        )
+        content = readme.read_text()
+        assert "android-bsp" in content
+        assert "manifest.xml" in content
+        assert "repo" in content
+        assert "kas" not in content

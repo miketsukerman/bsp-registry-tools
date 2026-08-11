@@ -1013,6 +1013,12 @@ def main() -> int:
             dest="no_environment",
             help="Do not write the build environment variables into the export bundle"
         )
+        export_parser.add_argument(
+            "--no-readme",
+            action="store_true",
+            dest="no_readme",
+            help="Do not generate the readme documenting the export bundle"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -2297,6 +2303,7 @@ def main() -> int:
             setup_script = not getattr(args, "no_setup_script", False)
             include_container = not getattr(args, "no_container", False)
             include_environment = not getattr(args, "no_environment", False)
+            include_readme = not getattr(args, "no_readme", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
@@ -2311,6 +2318,7 @@ def main() -> int:
                     setup_script=setup_script,
                     include_container=include_container,
                     include_environment=include_environment,
+                    include_readme=include_readme,
                 )
             elif device and release:
                 bsp_mgr.export_by_components(
@@ -2325,6 +2333,7 @@ def main() -> int:
                     setup_script=setup_script,
                     include_container=include_container,
                     include_environment=include_environment,
+                    include_readme=include_readme,
                 )
             else:
                 logging.error(

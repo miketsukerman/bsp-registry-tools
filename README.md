@@ -868,6 +868,7 @@ bsp export <bsp_name> --output-dir DIR
 | `--no-setup-script` | Do not generate `setup.sh` in the bundle |
 | `--no-container` | Do not copy the build container definition into the bundle |
 | `--no-environment` | Do not write the build environment variables into the bundle |
+| `--no-readme` | Do not generate `README.md` in the bundle |
 
 **Examples:**
 
@@ -899,7 +900,8 @@ export/
 ├── patches/...                      # patch files referenced by the KAS configuration
 ├── container/Dockerfile...          # Dockerfile of the container used for the build
 ├── environment.sh                   # build environment variables from the registry
-└── setup.sh                         # initial build setup script
+├── setup.sh                         # initial build setup script
+└── README.md                        # documentation of the bundle contents and usage
 ```
 
 Patch files declared as `repos.<repo>.patches` in the registry KAS files are
@@ -926,6 +928,11 @@ is bundled) is available, runs `checkout` for the exported configuration and
 can continue with a build when invoked as `./setup.sh --build`. For
 `--repo-manifest` exports the script wraps the manifest in a local git
 repository and runs `repo init` / `repo sync` instead.
+
+The generated `README.md` documents the bundle: it lists the exported files
+(configuration, patches, Dockerfile, environment file and setup script),
+describes the build container and shows the commands needed to fetch the layers
+and start a build on the target machine.
 
 When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
 manifest generated from `kas dump --lock --sort` plus an unlocked

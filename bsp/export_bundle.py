@@ -10,7 +10,8 @@ on another machine:
   defines one),
 * an ``environment.sh`` file with the environment variables coming from the
   BSP registry model used for the build,
-* a ``setup.sh`` shell script performing the initial build setup.
+* a ``setup.sh`` shell script performing the initial build setup,
+* a ``README.md`` documenting the bundle contents and how to use them.
 """
 
 import logging
@@ -33,6 +34,8 @@ EXTERNAL_PATCH_DIR = "patches"
 CONTAINER_DIR = "container"
 # Name of the generated environment file sourced by the setup script.
 ENVIRONMENT_FILE_NAME = "environment.sh"
+# Name of the generated bundle documentation file.
+README_FILE_NAME = "README.md"
 # Image tag used when a container defines a Dockerfile but no image name.
 DEFAULT_CONTAINER_IMAGE = "bsp-export-build:latest"
 
@@ -476,3 +479,203 @@ def generate_setup_script(
 
     logging.info(f"Setup script generated: {script_path}")
     return script_path
+
+
+def _readme_contents_section(
+    config_name: str,
+    repo_manifest: bool,
+    patches: Optional[List[Path]],
+    container: Optional[ExportedContainer],
+    environment_file: Optional[str],
+    setup_script: bool,
+) -> List[str]:
+    """Return the markdown lines describing the files of the bundle."""
+    config_description = (
+        "Exported Android `repo` manifest"
+        if repo_manifest
+        else "Exported KAS configuration"
+    )
+    lines = [
+        "## Contents",
+        "",
+        "| Path | Description |",
+        "| --- | --- |",
+        f"| `{config_name}` | {config_description} |",
+    ]
+
+    if patches:
+        directories = sorted({(patch.parent.as_posix() or ".") for patch in patches})
+        listed = ", ".join(f"`{directory}/`" for directory in directories)
+        lines.append(
+            f"| {listed} | {len(patches)} patch file(s) referenced by the configuration |"
+        )
+    if container is not None and container.dockerfile is not None:
+        lines.append(
+            f"| `{container.dockerfile.as_posix()}` | Dockerfile of the build container |"
+        )
+    if environment_file:
+        lines.append(
+            f"| `{environment_file}` | Build environment variables of the exported build |"
+        )
+    if setup_script:
+        lines.append(f"| `{SETUP_SCRIPT_NAME}` | Initial build setup script |")
+
+    lines.append("")
+    return lines
+
+
+def _readme_container_section(container: ExportedContainer) -> List[str]:
+    """Return the markdown lines describing the build container."""
+    lines = ["## Build container", ""]
+    image = container.image or DEFAULT_CONTAINER_IMAGE
+    lines.append(f"* Image: `{image}`")
+    if container.dockerfile is not None:
+        lines.append(
+            f"* Dockerfile: `{container.dockerfile.as_posix()}` (the image is built "
+            "automatically when it is not available locally)"
+        )
+    else:
+        lines.append("* The image is pulled from the registry, no Dockerfile is bundled.")
+    for name, value in container.args:
+        lines.append(f"* Build argument: `{name}={value}`")
+    if container.privileged:
+        lines.append("* Runs in privileged mode (`kas-container --isar`).")
+    if container.runtime_args:
+        lines.append(f"* Runtime arguments: `{container.runtime_args}`")
+    lines.append("")
+    return lines
+
+
+def _readme_usage_section(
+    config_name: str,
+    repo_manifest: bool,
+    container: Optional[ExportedContainer],
+    setup_script: bool,
+) -> List[str]:
+    """Return the markdown lines describing how to use the bundle."""
+    lines = ["## Usage", ""]
+
+    if repo_manifest:
+        lines.extend([
+            "Requires the [`repo`](https://gerrit.googlesource.com/git-repo) tool.",
+            "",
+        ])
+        if setup_script:
+            lines.extend([
+                "```sh",
+                f"./{SETUP_SCRIPT_NAME}",
+                "```",
+                "",
+                "The script wraps the exported manifest in a local git repository and "
+                "runs `repo init` / `repo sync` in the bundle directory.  Additional "
+                "arguments are forwarded to `repo sync`.",
+                "",
+            ])
+        else:
+            lines.extend([
+                "Initialize a workspace from the exported manifest with `repo init` "
+                f"pointing at `{config_name}`, then run `repo sync`.",
+                "",
+            ])
+        return lines
+
+    kas_default, kas_hint, kas_flags = _kas_command(container)
+    hint_flags = kas_flags.replace('\\"', "'").replace('"', "'")
+    lines.extend([
+        f"Requires `{kas_default}`. {kas_hint}",
+        "",
+    ])
+    if setup_script:
+        lines.extend([
+            "```sh",
+            f"./{SETUP_SCRIPT_NAME}           # fetch the layers",
+            f"./{SETUP_SCRIPT_NAME} --build   # fetch the layers and start the build",
+            "```",
+            "",
+            "The build directory defaults to `build/` inside the bundle and can be "
+            "changed with `KAS_BUILD_DIR`.  Open a shell in the build environment "
+            f"with `{kas_default}{hint_flags} shell {config_name}`.",
+            "",
+        ])
+    else:
+        lines.extend([
+            "```sh",
+            f"{kas_default}{hint_flags} checkout {config_name}",
+            f"{kas_default}{hint_flags} build {config_name}",
+            "```",
+            "",
+        ])
+    return lines
+
+
+def write_readme(
+    export_dir: str,
+    config_name: str,
+    repo_manifest: bool = False,
+    label: str = "",
+    patches: Optional[List[Path]] = None,
+    container: Optional[ExportedContainer] = None,
+    environment_file: Optional[str] = None,
+    setup_script: bool = True,
+) -> Path:
+    """
+    Write the documentation of the export bundle.
+
+    The generated ``README.md`` describes which files the bundle contains and
+    how to reproduce the exported build from it.
+
+    Args:
+        export_dir: Bundle directory the readme is written to
+        config_name: Bundle-relative name of the exported configuration
+        repo_manifest: Whether the configuration is an Android repo manifest
+        label: Human readable description of the exported configuration
+        patches: Bundle-relative paths of the copied patch files
+        container: Container information of the exported build
+        environment_file: Bundle-relative name of the exported environment file
+        setup_script: Whether the bundle contains the setup script
+
+    Returns:
+        Path to the generated readme
+    """
+    export_path = Path(export_dir)
+    export_path.mkdir(parents=True, exist_ok=True)
+    readme_path = export_path / README_FILE_NAME
+
+    title = _sanitize_comment(label) or "BSP export"
+    lines = [
+        f"# {title}",
+        "",
+        "Self-contained build bundle generated by "
+        "[bsp-registry-tools](https://github.com/miketsukerman/bsp-registry-tools).",
+        "It contains everything needed to reproduce the exported build on "
+        "another machine.",
+        "",
+    ]
+    lines.extend(
+        _readme_contents_section(
+            config_name,
+            repo_manifest,
+            patches,
+            container,
+            environment_file,
+            setup_script,
+        )
+    )
+    lines.extend(
+        _readme_usage_section(config_name, repo_manifest, container, setup_script)
+    )
+    if container is not None and not repo_manifest:
+        lines.extend(_readme_container_section(container))
+    if environment_file:
+        lines.extend([
+            "## Environment",
+            "",
+            f"`{environment_file}` holds the environment variables of the exported "
+            "build.  Every variable is only assigned when it is not already set, so "
+            "the values can be overridden from the calling environment.",
+            "",
+        ])
+
+    readme_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    logging.info(f"Bundle readme generated: {readme_path}")
+    return readme_path

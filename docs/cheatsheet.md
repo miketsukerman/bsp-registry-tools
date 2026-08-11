@@ -182,11 +182,12 @@ bsp export <bsp_name>                          # print merged KAS YAML to stdout
 bsp export <bsp_name> --output config.yaml     # save to file
 bsp export --device <device> --release <release> [--feature <feat>]
 
-bsp export <bsp_name> --output-dir ./export        # bundle: config + patches + container + env + setup.sh
+bsp export <bsp_name> --output-dir ./export        # bundle: config + patches + container + env + setup.sh + README.md
 bsp export <bsp_name> --output-dir ./export --no-patches
 bsp export <bsp_name> --output-dir ./export --no-setup-script
 bsp export <bsp_name> --output-dir ./export --no-container
 bsp export <bsp_name> --output-dir ./export --no-environment
+bsp export <bsp_name> --output-dir ./export --no-readme
 ```
 
 ---
