@@ -266,11 +266,11 @@ def _sanitize_comment(text: str) -> str:
     return " ".join(str(text).split())
 
 
-def _environment_snippet(config_name: str) -> str:
+def _environment_snippet(env_file_name: str) -> str:
     """Return the shell snippet sourcing the exported environment file."""
     return f"""
-if [ -f "$SCRIPT_DIR/{config_name}" ]; then
-    . "$SCRIPT_DIR/{config_name}"
+if [ -f "$SCRIPT_DIR/{env_file_name}" ]; then
+    . "$SCRIPT_DIR/{env_file_name}"
 fi
 """
 
