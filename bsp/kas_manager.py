@@ -473,9 +473,9 @@ class KasManager:
         return all_files
 
     @staticmethod
-    def _extract_patch_paths(yaml_content: Dict[str, Any]) -> List[str]:
+    def _extract_patch_entries(yaml_content: Dict[str, Any]) -> List[Tuple[str, str]]:
         """
-        Extract patch file paths from a parsed KAS configuration.
+        Extract patch declarations from a parsed KAS configuration.
 
         Patches are declared per repository as ``repos.<repo>.patches`` and may
         be given either as a mapping of patch names or as a plain list.
@@ -484,63 +484,130 @@ class KasManager:
             yaml_content: Parsed KAS YAML content
 
         Returns:
-            List of patch paths as written in the configuration
+            List of ``(repo name, patch path)`` pairs as written in the
+            configuration.  The repo name is the repository the patch is
+            applied to.
         """
         repos = yaml_content.get('repos')
         if not isinstance(repos, dict):
             return []
 
-        paths: List[str] = []
-        for repo_cfg in repos.values():
+        entries: List[Tuple[str, str]] = []
+        for repo_name, repo_cfg in repos.items():
             if not isinstance(repo_cfg, dict):
                 continue
             patches = repo_cfg.get('patches')
             if isinstance(patches, dict):
-                entries = patches.values()
+                declarations = patches.values()
             elif isinstance(patches, list):
-                entries = patches
+                declarations = patches
             else:
                 continue
 
-            for entry in entries:
+            for entry in declarations:
                 if not isinstance(entry, dict):
                     continue
                 path = entry.get('path')
                 if isinstance(path, str) and path:
-                    paths.append(path)
+                    entries.append((str(repo_name), path))
 
+        return entries
+
+    @staticmethod
+    def _extract_repo_paths(yaml_content: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Extract the checkout path of every repository of a KAS configuration.
+
+        Args:
+            yaml_content: Parsed KAS YAML content
+
+        Returns:
+            Mapping of repository name to its checkout path.  Repositories
+            without an explicit ``path`` are checked out under their name.
+        """
+        repos = yaml_content.get('repos')
+        if not isinstance(repos, dict):
+            return {}
+
+        paths: Dict[str, str] = {}
+        for repo_name, repo_cfg in repos.items():
+            if not isinstance(repo_cfg, dict):
+                continue
+            path = repo_cfg.get('path')
+            if isinstance(path, str) and path:
+                paths[str(repo_name)] = path
         return paths
 
-    def collect_patch_files(self) -> List[str]:
+    @classmethod
+    def _extract_patch_paths(cls, yaml_content: Dict[str, Any]) -> List[str]:
         """
-        Collect all patch files referenced by the KAS configuration.
+        Extract patch file paths from a parsed KAS configuration.
+
+        Args:
+            yaml_content: Parsed KAS YAML content
+
+        Returns:
+            List of patch paths as written in the configuration
+        """
+        return [path for _, path in cls._extract_patch_entries(yaml_content)]
+
+    def collect_patch_entries(self) -> List[Dict[str, str]]:
+        """
+        Collect all patches referenced by the KAS configuration.
 
         Every configuration file and its includes are inspected for
         ``repos.<repo>.patches`` entries.  Patch paths are resolved relative to
         the file that declares them and to the configured search paths.
 
         Returns:
-            Sorted list of absolute paths of the patch files that were found
+            List of dictionaries with the keys ``repo`` (name of the repository
+            the patch belongs to), ``repo_path`` (checkout path of that
+            repository) and ``path`` (absolute path of the patch file), sorted
+            by patch path
         """
-        patch_files: List[str] = []
+        entries: List[Dict[str, str]] = []
         seen = set()
+        repo_paths: Dict[str, str] = {}
 
-        for kas_file in self._get_all_included_files(self.kas_files):
-            resolved_file = self._resolve_kas_file(kas_file)
-            yaml_content = self._parse_yaml_file(resolved_file)
+        included_files = [
+            self._resolve_kas_file(kas_file)
+            for kas_file in self._get_all_included_files(self.kas_files)
+        ]
+        parsed = {
+            resolved_file: self._parse_yaml_file(resolved_file)
+            for resolved_file in included_files
+        }
 
-            for patch_path in self._extract_patch_paths(yaml_content):
+        for resolved_file in included_files:
+            repo_paths.update(self._extract_repo_paths(parsed[resolved_file]))
+
+        for resolved_file in included_files:
+            for repo_name, patch_path in self._extract_patch_entries(parsed[resolved_file]):
                 resolved = self._resolve_patch_path(patch_path, resolved_file)
                 if resolved is None:
                     logging.warning(
                         f"Patch file not found: {patch_path} (referenced from {resolved_file})"
                     )
                     continue
-                if resolved not in seen:
-                    seen.add(resolved)
-                    patch_files.append(resolved)
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                entries.append({
+                    "repo": repo_name,
+                    "repo_path": repo_paths.get(repo_name, repo_name),
+                    "path": resolved,
+                })
 
-        return sorted(patch_files)
+        return sorted(entries, key=lambda entry: entry["path"])
+
+    def collect_patch_files(self) -> List[str]:
+        """
+        Collect all patch files referenced by the KAS configuration.
+
+        Returns:
+            Sorted list of absolute paths of the patch files that were found
+        """
+        return [entry["path"] for entry in self.collect_patch_entries()]
 
     def _resolve_patch_path(self, patch_path: str, parent_file: str) -> Optional[str]:
         """

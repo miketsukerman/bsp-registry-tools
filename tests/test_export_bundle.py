@@ -16,7 +16,9 @@ from bsp.export_bundle import (
     README_FILE_NAME,
     SETUP_SCRIPT_NAME,
     ExportedContainer,
+    ExportedPatch,
     copy_container,
+    copy_patch_entries,
     copy_patches,
     generate_setup_script,
     write_environment_file,
@@ -161,6 +163,52 @@ class TestCopyPatches:
         assert len(copied) == 1
 
 
+class TestCollectPatchEntries:
+    def test_entries_carry_repo_and_checkout_path(self, tmp_dir, kas_config_with_patches):
+        manager = KasManager(
+            kas_files=[str(kas_config_with_patches)],
+            build_dir=str(tmp_dir / "build"),
+            search_paths=[str(tmp_dir)],
+        )
+        entries = manager.collect_patch_entries()
+
+        assert [entry["repo"] for entry in entries] == ["meta-foo", "meta-foo"]
+        assert [entry["repo_path"] for entry in entries] == ["meta-foo", "meta-foo"]
+        assert [os.path.basename(entry["path"]) for entry in entries] == [
+            "0001-fix.patch",
+            "0002-fix.patch",
+        ]
+
+    def test_explicit_repo_path_is_used(self, tmp_dir):
+        patch_file = tmp_dir / "0001-fix.patch"
+        patch_file.write_text("--- a\n+++ b\n")
+        kas_path = tmp_dir / "with-path.yaml"
+        kas_path.write_text(
+            """
+header:
+  version: 14
+
+repos:
+  bsp-registry:
+  meta-foo:
+    url: https://example.com/meta-foo.git
+    refspec: main
+    path: layers/meta-foo
+    patches:
+      fix-one:
+        repo: bsp-registry
+        path: 0001-fix.patch
+"""
+        )
+        manager = KasManager(
+            kas_files=[str(kas_path)],
+            build_dir=str(tmp_dir / "build"),
+            search_paths=[str(tmp_dir)],
+        )
+        entries = manager.collect_patch_entries()
+        assert entries[0]["repo_path"] == "layers/meta-foo"
+
+
 class TestGenerateSetupScript:
     def test_kas_script_is_executable_and_references_config(self, tmp_dir):
         export_dir = tmp_dir / "export"
@@ -181,6 +229,35 @@ class TestGenerateSetupScript:
         assert "repo init" in content
         assert "manifest.xml" in content
         assert "my-bsp" in content
+
+
+class TestCopyPatchEntries:
+    def test_repository_information_is_kept(self, tmp_dir):
+        source = tmp_dir / "patches" / "meta-foo" / "0001-fix.patch"
+        source.parent.mkdir(parents=True)
+        source.write_text("--- a\n+++ b\n")
+
+        copied = copy_patch_entries(
+            [{"repo": "meta-foo", "repo_path": "layers/meta-foo", "path": str(source)}],
+            str(tmp_dir / "export"),
+            base_dir=str(tmp_dir),
+        )
+
+        assert len(copied) == 1
+        assert copied[0].path.as_posix() == "patches/meta-foo/0001-fix.patch"
+        assert copied[0].repo == "meta-foo"
+        assert copied[0].repo_path == "layers/meta-foo"
+
+    def test_repo_path_defaults_to_repo_name(self, tmp_dir):
+        source = tmp_dir / "0001-fix.patch"
+        source.write_text("--- a\n+++ b\n")
+
+        copied = copy_patch_entries(
+            [{"repo": "meta-foo", "path": str(source)}],
+            str(tmp_dir / "export"),
+            base_dir=str(tmp_dir),
+        )
+        assert copied[0].repo_path == "meta-foo"
 
 
 class TestCopyContainer:
@@ -335,6 +412,57 @@ class TestSetupScriptContainerAndEnvironment:
             assert subprocess.run(["sh", "-n", str(path)]).returncode == 0
 
 
+class TestRepoManifestPatches:
+    def test_patches_are_applied_after_repo_sync(self, tmp_dir):
+        script = generate_setup_script(
+            str(tmp_dir / "export"),
+            "manifest.xml",
+            repo_manifest=True,
+            patches=[
+                ExportedPatch(
+                    path=Path("patches/meta-foo/0001-fix.patch"),
+                    repo="meta-foo",
+                    repo_path="layers/meta-foo",
+                )
+            ],
+        )
+        content = script.read_text()
+
+        assert "apply_patch()" in content
+        assert 'apply_patch "layers/meta-foo" "patches/meta-foo/0001-fix.patch"' in content
+        assert content.index("repo sync") < content.index("apply_patch()")
+        assert "apply --reverse --check" in content
+
+    def test_no_patch_block_without_patches(self, tmp_dir):
+        script = generate_setup_script(
+            str(tmp_dir / "export"), "manifest.xml", repo_manifest=True
+        )
+        assert "apply_patch" not in script.read_text()
+
+    def test_kas_script_does_not_apply_patches(self, tmp_dir):
+        script = generate_setup_script(
+            str(tmp_dir / "export"),
+            DEFAULT_KAS_CONFIG_NAME,
+            patches=[ExportedPatch(path=Path("patches/0001-fix.patch"), repo="meta-foo")],
+        )
+        assert "apply_patch" not in script.read_text()
+
+    def test_repo_script_with_patches_is_valid_posix_shell(self, tmp_dir):
+        script = generate_setup_script(
+            str(tmp_dir / "export"),
+            "manifest.xml",
+            repo_manifest=True,
+            patches=[
+                ExportedPatch(
+                    path=Path('patches/quo"ted.patch'),
+                    repo="meta-foo",
+                    repo_path="layers/meta-foo",
+                )
+            ],
+        )
+        assert subprocess.run(["sh", "-n", str(script)]).returncode == 0
+
+
 class TestWriteReadme:
     def test_readme_documents_bundle_contents(self, tmp_dir):
         export_dir = tmp_dir / "export"
@@ -383,6 +511,23 @@ class TestWriteReadme:
         content = readme.read_text()
         assert SETUP_SCRIPT_NAME not in content
         assert f"kas checkout {DEFAULT_KAS_CONFIG_NAME}" in content
+
+    def test_repo_manifest_readme_documents_patch_application(self, tmp_dir):
+        readme = write_readme(
+            str(tmp_dir / "export"),
+            "manifest.xml",
+            repo_manifest=True,
+            patches=[
+                ExportedPatch(
+                    path=Path("patches/0001-fix.patch"),
+                    repo="meta-foo",
+                    repo_path="layers/meta-foo",
+                )
+            ],
+        )
+        content = readme.read_text()
+        assert "patches/" in content
+        assert "git apply" in content
 
     def test_repo_manifest_readme_mentions_repo_tool(self, tmp_dir):
         readme = write_readme(

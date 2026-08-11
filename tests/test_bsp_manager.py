@@ -5096,7 +5096,7 @@ class TestExportBundle:
             return "header:\n  version: 14\n"
 
         with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[str(patch_file)]):
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=[{"repo": "meta-foo", "repo_path": "meta-foo", "path": str(patch_file)}]):
             manager.export_bsp_config("test-bsp", output_dir=str(export_dir))
 
         assert (export_dir / "kas.yml").is_file()
@@ -5113,7 +5113,7 @@ class TestExportBundle:
             return "header:\n  version: 14\n"
 
         with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files") as mock_collect:
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries") as mock_collect:
             manager.export_bsp_config(
                 "test-bsp",
                 output_dir=str(export_dir),
@@ -5136,7 +5136,7 @@ class TestExportBundle:
             return "header:\n  version: 14\n"
 
         with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=[]):
             manager.export_bsp_config("qemu-arm64", output_dir=str(export_dir))
 
         assert (export_dir / "container" / "Dockerfile.ubuntu").is_file()
@@ -5166,7 +5166,7 @@ class TestExportBundle:
             return "header:\n  version: 14\n"
 
         with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=[]):
             manager.export_bsp_config(
                 "qemu-arm64",
                 output_dir=str(export_dir),
@@ -5186,7 +5186,7 @@ class TestExportBundle:
             return "header:\n  version: 14\n"
 
         with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=[]):
             manager.export_bsp_config(
                 "qemu-arm64",
                 output_dir=str(export_dir),
@@ -5208,11 +5208,34 @@ class TestExportBundle:
             return "<manifest/>"
 
         with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", side_effect=_fake_export), \
-             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=[]):
             manager.export_bsp_config("test-bsp", repo_manifest=True, output_dir=str(export_dir))
 
         assert (export_dir / "manifest.xml").is_file()
         assert "repo init" in (export_dir / "setup.sh").read_text()
+
+    def test_export_bundle_repo_manifest_applies_patches_after_sync(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        patch_file = tmp_dir / "patches" / "0001-fix.patch"
+        patch_file.parent.mkdir(parents=True, exist_ok=True)
+        patch_file.write_text("patch")
+
+        def _fake_export(output_file):
+            Path(output_file).write_text("<manifest/>")
+            return "<manifest/>"
+
+        entries = [{"repo": "meta-foo", "repo_path": "layers/meta-foo", "path": str(patch_file)}]
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_entries", return_value=entries):
+            manager.export_bsp_config("test-bsp", repo_manifest=True, output_dir=str(export_dir))
+
+        setup = (export_dir / "setup.sh").read_text()
+        assert (export_dir / "patches" / "0001-fix.patch").is_file()
+        assert 'apply_patch "layers/meta-foo" "patches/0001-fix.patch"' in setup
+        assert setup.index("repo sync") < setup.index('apply_patch "layers/meta-foo"')
 
 
 # =============================================================================

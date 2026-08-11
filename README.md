@@ -909,6 +909,12 @@ copied while preserving their path relative to the registry root, so the paths
 recorded in the exported configuration stay valid. Patches located outside the
 registry root are copied into the bundle's `patches/` directory.
 
+For KAS exports the patches are applied by KAS itself during `checkout`. For
+`--repo-manifest` exports the generated `setup.sh` applies them with
+`git apply` after `repo sync`, in the checkout directory of the repository
+that declares them. Patches that are already applied are skipped, so the
+script can be re-run safely.
+
 The container used for the build is taken from the BSP registry model (the
 device/preset override or the named environment). Its Dockerfile is copied into
 `container/` so the image can be rebuilt on the target machine; containers that
@@ -927,7 +933,8 @@ it is not present yet, verifies that `kas` (or `kas-container` when a container
 is bundled) is available, runs `checkout` for the exported configuration and
 can continue with a build when invoked as `./setup.sh --build`. For
 `--repo-manifest` exports the script wraps the manifest in a local git
-repository and runs `repo init` / `repo sync` instead.
+repository, runs `repo init` / `repo sync` and then applies the bundled
+patches to the synced repositories.
 
 The generated `README.md` documents the bundle: it lists the exported files
 (configuration, patches, Dockerfile, environment file and setup script),

@@ -19,7 +19,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from .models import Docker, EnvironmentVariable
 
@@ -62,6 +62,21 @@ class ExportedContainer:
     runtime_args: Optional[str] = None
 
 
+@dataclass
+class ExportedPatch:
+    """
+    A patch file copied into an export bundle.
+
+    Attributes:
+        path: Bundle-relative path of the copied patch file
+        repo: Name of the repository the patch is applied to
+        repo_path: Checkout path of that repository, relative to the workspace
+    """
+    path: Path
+    repo: str = ""
+    repo_path: str = ""
+
+
 def _safe_relative_path(source: Path, base_dir: Optional[Path]) -> Path:
     """
     Return the bundle-relative destination path for *source*.
@@ -80,30 +95,32 @@ def _safe_relative_path(source: Path, base_dir: Optional[Path]) -> Path:
     return Path(EXTERNAL_PATCH_DIR) / source.name
 
 
-def copy_patches(
-    patch_files: List[str],
+def copy_patch_entries(
+    patch_entries: Sequence[Dict[str, str]],
     export_dir: str,
     base_dir: Optional[str] = None,
-) -> List[Path]:
+) -> List[ExportedPatch]:
     """
-    Copy patch files into the export bundle.
+    Copy patch files into the export bundle, keeping their repository.
 
     Args:
-        patch_files: Absolute paths of the patch files to copy
+        patch_entries: Patch declarations as returned by
+                       :meth:`KasManager.collect_patch_entries`, each with a
+                       ``path`` and optionally ``repo``/``repo_path`` keys
         export_dir: Bundle directory the patches are copied into
         base_dir: Registry root used to preserve the relative patch layout
 
     Returns:
-        List of bundle-relative paths of the copied patches
+        List of the copied patches with their bundle-relative path
     """
     export_path = Path(export_dir).resolve()
     base_path = Path(base_dir).resolve() if base_dir else None
 
-    copied: List[Path] = []
+    copied: List[ExportedPatch] = []
     seen = set()
 
-    for patch_file in patch_files:
-        source = Path(patch_file)
+    for entry in patch_entries:
+        source = Path(entry["path"])
         if not source.is_absolute():
             source = (base_path or export_path) / source
         source = source.resolve()
@@ -120,7 +137,14 @@ def copy_patches(
         destination = export_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-        copied.append(relative)
+        repo = entry.get("repo") or ""
+        copied.append(
+            ExportedPatch(
+                path=relative,
+                repo=repo,
+                repo_path=entry.get("repo_path") or repo,
+            )
+        )
 
     if copied:
         logging.info(f"Copied {len(copied)} patch file(s) to {export_path}")
@@ -128,6 +152,30 @@ def copy_patches(
         logging.debug("No patch files to copy")
 
     return copied
+
+
+def copy_patches(
+    patch_files: List[str],
+    export_dir: str,
+    base_dir: Optional[str] = None,
+) -> List[Path]:
+    """
+    Copy patch files into the export bundle.
+
+    Args:
+        patch_files: Absolute paths of the patch files to copy
+        export_dir: Bundle directory the patches are copied into
+        base_dir: Registry root used to preserve the relative patch layout
+
+    Returns:
+        List of bundle-relative paths of the copied patches
+    """
+    copied = copy_patch_entries(
+        [{"path": patch_file} for patch_file in patch_files],
+        export_dir,
+        base_dir=base_dir,
+    )
+    return [patch.path for patch in copied]
 
 
 def copy_container(
@@ -385,13 +433,51 @@ fi
 """
 
 
+def _patch_snippet(patches: Sequence[ExportedPatch]) -> str:
+    """
+    Return the shell snippet applying the bundled patches.
+
+    The patches are applied to the checkouts created by ``repo sync``; KAS
+    applies them itself for KAS exports.  Patches that are already applied are
+    skipped so that the script stays re-runnable.
+    """
+    lines = [
+        "",
+        "apply_patch() {",
+        '    patch_repo_path="$1"',
+        '    patch_file="$2"',
+        '    patch_target="$SCRIPT_DIR/$patch_repo_path"',
+        '    if [ ! -d "$patch_target" ]; then',
+        '        echo "Skipping $patch_file: $patch_repo_path is not checked out" >&2',
+        "        return 0",
+        "    fi",
+        '    if git -C "$patch_target" apply --reverse --check "$SCRIPT_DIR/$patch_file" '
+        ">/dev/null 2>&1; then",
+        '        echo "Already applied, skipping: $patch_file"',
+        "        return 0",
+        "    fi",
+        '    echo "Applying $patch_file to $patch_repo_path ..."',
+        '    git -C "$patch_target" apply "$SCRIPT_DIR/$patch_file"',
+        "}",
+        "",
+        'echo "Applying patches ..."',
+    ]
+    for patch in patches:
+        repo_path = _escape_double_quoted(str(patch.repo_path or patch.repo or "."))
+        patch_path = _escape_double_quoted(patch.path.as_posix())
+        lines.append(f'apply_patch "{repo_path}" "{patch_path}"')
+    return "\n".join(lines) + "\n"
+
+
 def _repo_setup_script(
     config_name: str,
     label: str,
     environment_file: Optional[str] = None,
+    patches: Optional[Sequence[ExportedPatch]] = None,
 ) -> str:
     """Return the contents of the Android ``repo`` flavour of the setup script."""
     env_block = _environment_snippet(environment_file) if environment_file else ""
+    patch_block = _patch_snippet(patches) if patches else ""
     return f"""#!/bin/sh
 # Initial build setup for: {label}
 # Generated by bsp-registry-tools -- edit freely.
@@ -424,7 +510,7 @@ git -C "$MANIFEST_REPO" -c user.email=bsp@example.com -c user.name=bsp \\
 echo "Initializing repo workspace ..."
 repo init -u "$MANIFEST_REPO" -m default.xml
 repo sync "$@"
-
+{patch_block}
 echo "Sources are ready in $SCRIPT_DIR"
 """
 
@@ -436,6 +522,7 @@ def generate_setup_script(
     label: str = "",
     container: Optional[ExportedContainer] = None,
     environment_file: Optional[str] = None,
+    patches: Optional[Sequence[ExportedPatch]] = None,
 ) -> Path:
     """
     Write the initial build setup shell script into the bundle.
@@ -450,6 +537,9 @@ def generate_setup_script(
                    and drives the build through ``kas-container``.
         environment_file: Bundle-relative name of the exported environment
                           file sourced by the script
+        patches: Patches bundled with the export.  Only used for
+                 ``repo_manifest`` exports, where the script applies them to
+                 the checkouts created by ``repo sync``.
 
     Returns:
         Path to the generated script
@@ -464,7 +554,12 @@ def generate_setup_script(
         _escape_double_quoted(environment_file) if environment_file else None
     )
     content = (
-        _repo_setup_script(safe_config_name, label, environment_file=safe_env_name)
+        _repo_setup_script(
+            safe_config_name,
+            label,
+            environment_file=safe_env_name,
+            patches=patches,
+        )
         if repo_manifest
         else _kas_setup_script(
             safe_config_name,
@@ -484,7 +579,7 @@ def generate_setup_script(
 def _readme_contents_section(
     config_name: str,
     repo_manifest: bool,
-    patches: Optional[List[Path]],
+    patches: Optional[Sequence[Path]],
     container: Optional[ExportedContainer],
     environment_file: Optional[str],
     setup_script: bool,
@@ -551,6 +646,7 @@ def _readme_usage_section(
     repo_manifest: bool,
     container: Optional[ExportedContainer],
     setup_script: bool,
+    has_patches: bool = False,
 ) -> List[str]:
     """Return the markdown lines describing how to use the bundle."""
     lines = ["## Usage", ""]
@@ -571,12 +667,25 @@ def _readme_usage_section(
                 "arguments are forwarded to `repo sync`.",
                 "",
             ])
+            if has_patches:
+                lines.extend([
+                    "After the sync the bundled patches are applied to the checked out "
+                    "repositories with `git apply`.  Patches that are already applied "
+                    "are skipped, so the script can be re-run safely.",
+                    "",
+                ])
         else:
             lines.extend([
                 "Initialize a workspace from the exported manifest with `repo init` "
                 f"pointing at `{config_name}`, then run `repo sync`.",
                 "",
             ])
+            if has_patches:
+                lines.extend([
+                    "Afterwards apply the bundled patches to the checked out "
+                    "repositories with `git apply`.",
+                    "",
+                ])
         return lines
 
     kas_default, kas_hint, kas_flags = _kas_command(container)
@@ -613,7 +722,7 @@ def write_readme(
     config_name: str,
     repo_manifest: bool = False,
     label: str = "",
-    patches: Optional[List[Path]] = None,
+    patches: Optional[Sequence[Union[Path, ExportedPatch]]] = None,
     container: Optional[ExportedContainer] = None,
     environment_file: Optional[str] = None,
     setup_script: bool = True,
@@ -641,6 +750,11 @@ def write_readme(
     export_path.mkdir(parents=True, exist_ok=True)
     readme_path = export_path / README_FILE_NAME
 
+    patch_paths = [
+        patch.path if isinstance(patch, ExportedPatch) else patch
+        for patch in (patches or [])
+    ]
+
     title = _sanitize_comment(label) or "BSP export"
     lines = [
         f"# {title}",
@@ -655,14 +769,16 @@ def write_readme(
         _readme_contents_section(
             config_name,
             repo_manifest,
-            patches,
+            patch_paths,
             container,
             environment_file,
             setup_script,
         )
     )
     lines.extend(
-        _readme_usage_section(config_name, repo_manifest, container, setup_script)
+        _readme_usage_section(
+            config_name, repo_manifest, container, setup_script, bool(patch_paths)
+        )
     )
     if container is not None and not repo_manifest:
         lines.extend(_readme_container_section(container))

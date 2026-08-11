@@ -188,6 +188,7 @@ bsp export <bsp_name> --output-dir ./export --no-setup-script
 bsp export <bsp_name> --output-dir ./export --no-container
 bsp export <bsp_name> --output-dir ./export --no-environment
 bsp export <bsp_name> --output-dir ./export --no-readme
+bsp export <bsp_name> --repo-manifest --output-dir ./export  # setup.sh applies patches after `repo sync`
 ```
 
 ---

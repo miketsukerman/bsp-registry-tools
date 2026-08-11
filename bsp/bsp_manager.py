@@ -25,8 +25,9 @@ from .export_bundle import (
     DEFAULT_KAS_CONFIG_NAME,
     DEFAULT_REPO_MANIFEST_NAME,
     ENVIRONMENT_FILE_NAME,
+    ExportedPatch,
     copy_container,
-    copy_patches,
+    copy_patch_entries,
     generate_setup_script,
     write_environment_file,
     write_readme,
@@ -2676,7 +2677,7 @@ class BspManager:
 
         export_dir: Optional[Path] = None
         config_name: Optional[str] = None
-        copied_patches: List[Path] = []
+        copied_patches: List[ExportedPatch] = []
         if output_dir:
             export_dir = Path(output_dir)
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -2734,8 +2735,8 @@ class BspManager:
                     exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
 
                 if export_dir is not None and include_patches:
-                    copied_patches = copy_patches(
-                        kas_mgr.collect_patch_files(),
+                    copied_patches = copy_patch_entries(
+                        kas_mgr.collect_patch_entries(),
                         str(export_dir),
                         base_dir=str(self.config_path.parent),
                     )
@@ -2769,6 +2770,7 @@ class BspManager:
                 label=label or resolved.device.slug,
                 container=exported_container,
                 environment_file=environment_file,
+                patches=copied_patches,
             )
 
         if export_dir is not None and include_readme:
