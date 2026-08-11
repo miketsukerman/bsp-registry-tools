@@ -21,6 +21,12 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from .deployer import ArtifactDeployer, DeployResult
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
+from .export_bundle import (
+    DEFAULT_KAS_CONFIG_NAME,
+    DEFAULT_REPO_MANIFEST_NAME,
+    copy_patches,
+    generate_setup_script,
+)
 from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
@@ -2613,6 +2619,9 @@ class BspManager:
         label: str = "",
         repo_manifest: bool = False,
         lock: bool = False,
+        output_dir: Optional[str] = None,
+        include_patches: bool = True,
+        setup_script: bool = True,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -2621,9 +2630,28 @@ class BspManager:
             resolved: Resolved build configuration
             output_file: Optional file path to save the configuration
             label: Descriptive label for log messages
+            repo_manifest: Export an Android repo manifest instead of KAS YAML
+            lock: Use ``kas dump --lock`` when exporting KAS configuration
+            output_dir: Optional bundle directory receiving the configuration,
+                the referenced patches and the initial setup script
+            include_patches: Copy referenced patch files into the bundle
+            setup_script: Generate the initial build setup script in the bundle
         """
         export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
         logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
+
+        export_dir: Optional[Path] = None
+        config_name: Optional[str] = None
+        if output_dir:
+            export_dir = Path(output_dir)
+            export_dir.mkdir(parents=True, exist_ok=True)
+            if output_file:
+                config_name = Path(output_file).name
+            else:
+                config_name = (
+                    DEFAULT_REPO_MANIFEST_NAME if repo_manifest else DEFAULT_KAS_CONFIG_NAME
+                )
+            output_file = str(export_dir / config_name)
 
         downloads = None
         sstate = None
@@ -2670,9 +2698,24 @@ class BspManager:
                     exported_content = kas_mgr.export_repo_manifest_xml(output_file)
                 else:
                     exported_content = kas_mgr.export_kas_config(output_file, lock=lock)
+
+                if export_dir is not None and include_patches:
+                    copy_patches(
+                        kas_mgr.collect_patch_files(),
+                        str(export_dir),
+                        base_dir=str(self.config_path.parent),
+                    )
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
+
+        if export_dir is not None and setup_script:
+            generate_setup_script(
+                str(export_dir),
+                config_name,
+                repo_manifest=repo_manifest,
+                label=label or resolved.device.slug,
+            )
 
         if not output_file:
             target_label = label or resolved.device.slug
@@ -2695,6 +2738,9 @@ class BspManager:
         output_file: Optional[str] = None,
         repo_manifest: bool = False,
         lock: bool = False,
+        output_dir: Optional[str] = None,
+        include_patches: bool = True,
+        setup_script: bool = True,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2702,6 +2748,12 @@ class BspManager:
         Args:
             bsp_name: Name of the BSP preset to export
             output_file: Optional file path to save the configuration
+            repo_manifest: Export an Android repo manifest instead of KAS YAML
+            lock: Use ``kas dump --lock`` when exporting KAS configuration
+            output_dir: Optional bundle directory receiving the configuration,
+                the referenced patches and the initial setup script
+            include_patches: Copy referenced patch files into the bundle
+            setup_script: Generate the initial build setup script in the bundle
 
         Raises:
             SystemExit: If preset not found or export fails
@@ -2715,6 +2767,9 @@ class BspManager:
                 label=f"{preset.name} - {preset.description}",
                 repo_manifest=repo_manifest,
                 lock=lock,
+                output_dir=output_dir,
+                include_patches=include_patches,
+                setup_script=setup_script,
             )
 
     def export_by_components(
@@ -2725,6 +2780,9 @@ class BspManager:
         output_file: Optional[str] = None,
         repo_manifest: bool = False,
         lock: bool = False,
+        output_dir: Optional[str] = None,
+        include_patches: bool = True,
+        setup_script: bool = True,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2734,6 +2792,12 @@ class BspManager:
             release_slug: Release slug
             feature_slugs: Optional list of feature slugs
             output_file: Optional file path to save the configuration
+            repo_manifest: Export an Android repo manifest instead of KAS YAML
+            lock: Use ``kas dump --lock`` when exporting KAS configuration
+            output_dir: Optional bundle directory receiving the configuration,
+                the referenced patches and the initial setup script
+            include_patches: Copy referenced patch files into the bundle
+            setup_script: Generate the initial build setup script in the bundle
 
         Raises:
             SystemExit: If any component is not found or export fails
@@ -2749,6 +2813,9 @@ class BspManager:
             label=f"{device_slug}/{release_slug}",
             repo_manifest=repo_manifest,
             lock=lock,
+            output_dir=output_dir,
+            include_patches=include_patches,
+            setup_script=setup_script,
         )
 
     # ------------------------------------------------------------------

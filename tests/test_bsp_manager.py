@@ -8,6 +8,7 @@ import json
 import shlex
 import subprocess
 import yaml
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
@@ -5078,6 +5079,67 @@ class TestExportRepoManifest:
                 repo_manifest=True,
             )
         mock_export.assert_called_once_with(out)
+
+
+class TestExportBundle:
+    def test_export_bundle_creates_config_patches_and_setup_script(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        patch_file = tmp_dir / "patches" / "0001-fix.patch"
+        patch_file.parent.mkdir(parents=True, exist_ok=True)
+        patch_file.write_text("patch")
+
+        def _fake_export(output_file, lock=False):
+            Path(output_file).write_text("header:\n  version: 14\n")
+            return "header:\n  version: 14\n"
+
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[str(patch_file)]):
+            manager.export_bsp_config("test-bsp", output_dir=str(export_dir))
+
+        assert (export_dir / "kas.yml").is_file()
+        assert (export_dir / "patches" / "0001-fix.patch").is_file()
+        assert (export_dir / "setup.sh").is_file()
+
+    def test_export_bundle_can_skip_patches_and_script(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        def _fake_export(output_file, lock=False):
+            Path(output_file).write_text("header:\n  version: 14\n")
+            return "header:\n  version: 14\n"
+
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files") as mock_collect:
+            manager.export_bsp_config(
+                "test-bsp",
+                output_dir=str(export_dir),
+                include_patches=False,
+                setup_script=False,
+            )
+
+        mock_collect.assert_not_called()
+        assert (export_dir / "kas.yml").is_file()
+        assert not (export_dir / "setup.sh").exists()
+
+    def test_export_bundle_repo_manifest_uses_manifest_defaults(self, registry_file, tmp_dir):
+        manager = BspManager(config_path=str(registry_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        def _fake_export(output_file):
+            Path(output_file).write_text("<manifest/>")
+            return "<manifest/>"
+
+        with patch("bsp.bsp_manager.KasManager.export_repo_manifest_xml", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+            manager.export_bsp_config("test-bsp", repo_manifest=True, output_dir=str(export_dir))
+
+        assert (export_dir / "manifest.xml").is_file()
+        assert "repo init" in (export_dir / "setup.sh").read_text()
 
 
 # =============================================================================

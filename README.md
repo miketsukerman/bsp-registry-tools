@@ -856,12 +856,16 @@ bsp export <bsp_name> [--output OUTPUT]
 bsp export --device <device> --release <release> [--feature FEATURE...] [--output OUTPUT]
 bsp export <bsp_name> --repo-manifest [--output OUTPUT]
 bsp export --device <device> --release <release> [--feature FEATURE...] --repo-manifest [--output OUTPUT]
+bsp export <bsp_name> --output-dir DIR
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--output OUTPUT`, `-o OUTPUT` | Output file path (default: stdout) |
 | `--repo-manifest` | Export Android repo manifest XML from KAS lock/unlocked dumps (CLI only) |
+| `--output-dir DIR`, `-O DIR` | Export a self-contained bundle into `DIR` |
+| `--no-patches` | Do not copy referenced patch files into the bundle |
+| `--no-setup-script` | Do not generate `setup.sh` in the bundle |
 
 **Examples:**
 
@@ -877,7 +881,33 @@ bsp export poky-qemuarm64-scarthgap --repo-manifest --output repo-manifest.xml
 
 # Export Android repo manifest XML using component mode
 bsp export --device qemuarm64 --release scarthgap --repo-manifest --output qemuarm64-scarthgap.xml
+
+# Export a self-contained bundle (config + patches + setup.sh)
+bsp export poky-qemuarm64-scarthgap --output-dir ./export
 ```
+
+**Bundle export (`--output-dir`)**
+
+`--output-dir` writes a directory that can be handed to another machine or
+archived alongside a release:
+
+```
+export/
+├── kas.yml                          # exported configuration (manifest.xml with --repo-manifest)
+├── patches/...                      # patch files referenced by the KAS configuration
+└── setup.sh                         # initial build setup script
+```
+
+Patch files declared as `repos.<repo>.patches` in the registry KAS files are
+copied while preserving their path relative to the registry root, so the paths
+recorded in the exported configuration stay valid. Patches located outside the
+registry root are copied into the bundle's `patches/` directory.
+
+The generated `setup.sh` performs the initial build setup: it verifies that
+`kas` is available, runs `kas checkout` for the exported configuration and can
+continue with a build when invoked as `./setup.sh --build`. For
+`--repo-manifest` exports the script wraps the manifest in a local git
+repository and runs `repo init` / `repo sync` instead.
 
 When `--repo-manifest` is used, `bsp export` writes an Android `repo` XML
 manifest generated from `kas dump --lock --sort` plus an unlocked

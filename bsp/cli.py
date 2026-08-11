@@ -982,6 +982,25 @@ def main() -> int:
             dest="lock",
             help="Use `kas dump --lock` when exporting KAS configuration"
         )
+        export_parser.add_argument(
+            "--output-dir", "-O",
+            type=str,
+            dest="output_dir",
+            metavar="DIR",
+            help="Export a self-contained bundle (configuration, patches and setup script) into DIR"
+        )
+        export_parser.add_argument(
+            "--no-patches",
+            action="store_true",
+            dest="no_patches",
+            help="Do not copy referenced patch files into the export bundle"
+        )
+        export_parser.add_argument(
+            "--no-setup-script",
+            action="store_true",
+            dest="no_setup_script",
+            help="Do not generate the initial build setup script in the export bundle"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -2261,6 +2280,9 @@ def main() -> int:
             output = getattr(args, "output", None)
             repo_manifest = getattr(args, "repo_manifest", False)
             lock = getattr(args, "lock", False)
+            output_dir = getattr(args, "output_dir", None)
+            include_patches = not getattr(args, "no_patches", False)
+            setup_script = not getattr(args, "no_setup_script", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
@@ -2270,6 +2292,9 @@ def main() -> int:
                     output_file=output,
                     repo_manifest=repo_manifest,
                     lock=lock,
+                    output_dir=output_dir,
+                    include_patches=include_patches,
+                    setup_script=setup_script,
                 )
             elif device and release:
                 bsp_mgr.export_by_components(
@@ -2279,6 +2304,9 @@ def main() -> int:
                     output_file=output,
                     repo_manifest=repo_manifest,
                     lock=lock,
+                    output_dir=output_dir,
+                    include_patches=include_patches,
+                    setup_script=setup_script,
                 )
             else:
                 logging.error(

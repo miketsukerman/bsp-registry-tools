@@ -472,6 +472,101 @@ class KasManager:
 
         return all_files
 
+    @staticmethod
+    def _extract_patch_paths(yaml_content: Dict[str, Any]) -> List[str]:
+        """
+        Extract patch file paths from a parsed KAS configuration.
+
+        Patches are declared per repository as ``repos.<repo>.patches`` and may
+        be given either as a mapping of patch names or as a plain list.
+
+        Args:
+            yaml_content: Parsed KAS YAML content
+
+        Returns:
+            List of patch paths as written in the configuration
+        """
+        repos = yaml_content.get('repos')
+        if not isinstance(repos, dict):
+            return []
+
+        paths: List[str] = []
+        for repo_cfg in repos.values():
+            if not isinstance(repo_cfg, dict):
+                continue
+            patches = repo_cfg.get('patches')
+            if isinstance(patches, dict):
+                entries = patches.values()
+            elif isinstance(patches, list):
+                entries = patches
+            else:
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                path = entry.get('path')
+                if isinstance(path, str) and path:
+                    paths.append(path)
+
+        return paths
+
+    def collect_patch_files(self) -> List[str]:
+        """
+        Collect all patch files referenced by the KAS configuration.
+
+        Every configuration file and its includes are inspected for
+        ``repos.<repo>.patches`` entries.  Patch paths are resolved relative to
+        the file that declares them and to the configured search paths.
+
+        Returns:
+            Sorted list of absolute paths of the patch files that were found
+        """
+        patch_files: List[str] = []
+        seen = set()
+
+        for kas_file in self._get_all_included_files(self.kas_files):
+            resolved_file = self._resolve_kas_file(kas_file)
+            yaml_content = self._parse_yaml_file(resolved_file)
+
+            for patch_path in self._extract_patch_paths(yaml_content):
+                resolved = self._resolve_patch_path(patch_path, resolved_file)
+                if resolved is None:
+                    logging.warning(
+                        f"Patch file not found: {patch_path} (referenced from {resolved_file})"
+                    )
+                    continue
+                if resolved not in seen:
+                    seen.add(resolved)
+                    patch_files.append(resolved)
+
+        return sorted(patch_files)
+
+    def _resolve_patch_path(self, patch_path: str, parent_file: str) -> Optional[str]:
+        """
+        Resolve a patch path to an absolute path.
+
+        Args:
+            patch_path: Patch path as written in the KAS configuration
+            parent_file: KAS file declaring the patch
+
+        Returns:
+            Absolute path to the patch file, or ``None`` if it cannot be found
+        """
+        path = Path(patch_path)
+
+        if path.is_absolute():
+            return str(path.resolve()) if path.exists() else None
+
+        candidates = [Path(parent_file).parent / path]
+        candidates.extend(Path(search_path) / path for search_path in self.search_paths)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate.resolve())
+
+        return None
+
     def validate_kas_files(self, check_includes: bool = True) -> bool:
         """
         Validate that all KAS configuration files exist and are accessible.
