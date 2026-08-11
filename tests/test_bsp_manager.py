@@ -5125,6 +5125,53 @@ class TestExportBundle:
         assert (export_dir / "kas.yml").is_file()
         assert not (export_dir / "setup.sh").exists()
 
+    def test_export_bundle_copies_container_and_environment(self, registry_with_env_file, tmp_dir):
+        (tmp_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu\n")
+        manager = BspManager(config_path=str(registry_with_env_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        def _fake_export(output_file, lock=False):
+            Path(output_file).write_text("header:\n  version: 14\n")
+            return "header:\n  version: 14\n"
+
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+            manager.export_bsp_config("qemu-arm64", output_dir=str(export_dir))
+
+        assert (export_dir / "container" / "Dockerfile.ubuntu").is_file()
+        env_content = (export_dir / "environment.sh").read_text()
+        assert "DL_DIR" in env_content
+        assert '${HOME}/.gitconfig' in env_content
+
+        setup = (export_dir / "setup.sh").read_text()
+        assert "kas-container" in setup
+        assert "test/ubuntu-22.04:latest" in setup
+        assert "environment.sh" in setup
+
+    def test_export_bundle_can_skip_container_and_environment(self, registry_with_env_file, tmp_dir):
+        (tmp_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu\n")
+        manager = BspManager(config_path=str(registry_with_env_file))
+        manager.initialize()
+        export_dir = tmp_dir / "bundle"
+
+        def _fake_export(output_file, lock=False):
+            Path(output_file).write_text("header:\n  version: 14\n")
+            return "header:\n  version: 14\n"
+
+        with patch("bsp.bsp_manager.KasManager.export_kas_config", side_effect=_fake_export), \
+             patch("bsp.bsp_manager.KasManager.collect_patch_files", return_value=[]):
+            manager.export_bsp_config(
+                "qemu-arm64",
+                output_dir=str(export_dir),
+                include_container=False,
+                include_environment=False,
+            )
+
+        assert not (export_dir / "container").exists()
+        assert not (export_dir / "environment.sh").exists()
+        assert "kas-container" not in (export_dir / "setup.sh").read_text()
+
     def test_export_bundle_repo_manifest_uses_manifest_defaults(self, registry_file, tmp_dir):
         manager = BspManager(config_path=str(registry_file))
         manager.initialize()

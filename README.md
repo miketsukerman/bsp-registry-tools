@@ -866,6 +866,8 @@ bsp export <bsp_name> --output-dir DIR
 | `--output-dir DIR`, `-O DIR` | Export a self-contained bundle into `DIR` |
 | `--no-patches` | Do not copy referenced patch files into the bundle |
 | `--no-setup-script` | Do not generate `setup.sh` in the bundle |
+| `--no-container` | Do not copy the build container definition into the bundle |
+| `--no-environment` | Do not write the build environment variables into the bundle |
 
 **Examples:**
 
@@ -895,6 +897,8 @@ archived alongside a release:
 export/
 ├── kas.yml                          # exported configuration (manifest.xml with --repo-manifest)
 ├── patches/...                      # patch files referenced by the KAS configuration
+├── container/Dockerfile...          # Dockerfile of the container used for the build
+├── environment.sh                   # build environment variables from the registry
 └── setup.sh                         # initial build setup script
 ```
 
@@ -903,9 +907,23 @@ copied while preserving their path relative to the registry root, so the paths
 recorded in the exported configuration stay valid. Patches located outside the
 registry root are copied into the bundle's `patches/` directory.
 
-The generated `setup.sh` performs the initial build setup: it verifies that
-`kas` is available, runs `kas checkout` for the exported configuration and can
-continue with a build when invoked as `./setup.sh --build`. For
+The container used for the build is taken from the BSP registry model (the
+device/preset override or the named environment). Its Dockerfile is copied into
+`container/` so the image can be rebuilt on the target machine; containers that
+only reference a pre-built image are recorded without copying anything.
+
+`environment.sh` contains the environment variables resolved for the build
+(global `environment.variables`, named-environment variables and feature
+variables, in that order of precedence). `$ENV{VAR}` placeholders are
+translated into `${VAR}` shell references and every variable is only assigned
+when it is not already set, so the values resolve on the target machine and can
+be overridden.
+
+The generated `setup.sh` performs the initial build setup: it sources
+`environment.sh`, builds the container image from the bundled Dockerfile when
+it is not present yet, verifies that `kas` (or `kas-container` when a container
+is bundled) is available, runs `checkout` for the exported configuration and
+can continue with a build when invoked as `./setup.sh --build`. For
 `--repo-manifest` exports the script wraps the manifest in a local git
 repository and runs `repo init` / `repo sync` instead.
 

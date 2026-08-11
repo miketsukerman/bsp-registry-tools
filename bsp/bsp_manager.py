@@ -24,8 +24,11 @@ from .exceptions import COLORAMA_AVAILABLE
 from .export_bundle import (
     DEFAULT_KAS_CONFIG_NAME,
     DEFAULT_REPO_MANIFEST_NAME,
+    ENVIRONMENT_FILE_NAME,
+    copy_container,
     copy_patches,
     generate_setup_script,
+    write_environment_file,
 )
 from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
@@ -1365,6 +1368,34 @@ class BspManager:
                 self.logger.info(f"Copied {src_path} -> {dst_path}")
 
     # ------------------------------------------------------------------
+    # Internal: environment helpers
+    # ------------------------------------------------------------------
+
+    def _merged_environment_variables(
+        self, resolved: ResolvedConfig
+    ) -> List[EnvironmentVariable]:
+        """
+        Return the environment variables that apply to a resolved build.
+
+        Variables are merged in increasing order of precedence:
+        1. Root-level ``environment.variables`` (global defaults)
+        2. Named-environment and feature variables from ``resolved.env``
+
+        Args:
+            resolved: Resolved device+release+features build config
+
+        Returns:
+            Ordered list of environment variables; later entries win
+        """
+        root_vars: List[EnvironmentVariable] = (
+            list(self.model.environment.variables)
+            if self.model and self.model.environment and self.model.environment.variables
+            else []
+        )
+        # resolved.env contains named-env vars first, then feature vars.
+        return root_vars + list(resolved.env)
+
+    # ------------------------------------------------------------------
     # Internal: KasManager factory for a resolved config
     # ------------------------------------------------------------------
 
@@ -1396,14 +1427,7 @@ class BspManager:
         """
         # Build per-build EnvironmentManager: root vars merged with
         # named-env / feature vars from the resolved config.
-        root_vars: List[EnvironmentVariable] = (
-            list(self.model.environment.variables)
-            if self.model.environment and self.model.environment.variables
-            else []
-        )
-        # resolved.env contains named-env vars first, then feature vars.
-        # Merge by appending; later keys win in EnvironmentManager.
-        merged_vars = root_vars + list(resolved.env)
+        merged_vars = self._merged_environment_variables(resolved)
         # Always create a fresh EnvironmentManager from merged vars so that
         # named-env and feature variables are applied for this specific build.
         # Fall back to the global env_manager only when no vars exist at all.
@@ -2622,6 +2646,8 @@ class BspManager:
         output_dir: Optional[str] = None,
         include_patches: bool = True,
         setup_script: bool = True,
+        include_container: bool = True,
+        include_environment: bool = True,
     ) -> None:
         """
         Export KAS configuration for the given ResolvedConfig.
@@ -2633,9 +2659,14 @@ class BspManager:
             repo_manifest: Export an Android repo manifest instead of KAS YAML
             lock: Use ``kas dump --lock`` when exporting KAS configuration
             output_dir: Optional bundle directory receiving the configuration,
-                the referenced patches and the initial setup script
+                the referenced patches, the container definition, the build
+                environment and the initial setup script
             include_patches: Copy referenced patch files into the bundle
             setup_script: Generate the initial build setup script in the bundle
+            include_container: Copy the container definition of the build into
+                the bundle
+            include_environment: Write the build environment variables into
+                the bundle
         """
         export_kind = "Android repo manifest" if repo_manifest else "KAS configuration"
         logging.info(f"Exporting {export_kind} for {label or resolved.device.slug}")
@@ -2708,12 +2739,32 @@ class BspManager:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
+        exported_container = None
+        environment_file = None
+        if export_dir is not None:
+            if include_container:
+                exported_container = copy_container(
+                    resolved.container,
+                    str(export_dir),
+                    base_dir=str(self.config_path.parent),
+                )
+            if include_environment:
+                env_path = write_environment_file(
+                    self._merged_environment_variables(resolved),
+                    str(export_dir),
+                    label=label or resolved.device.slug,
+                )
+                if env_path is not None:
+                    environment_file = ENVIRONMENT_FILE_NAME
+
         if export_dir is not None and setup_script:
             generate_setup_script(
                 str(export_dir),
                 config_name,
                 repo_manifest=repo_manifest,
                 label=label or resolved.device.slug,
+                container=exported_container,
+                environment_file=environment_file,
             )
 
         if not output_file:
@@ -2740,6 +2791,8 @@ class BspManager:
         output_dir: Optional[str] = None,
         include_patches: bool = True,
         setup_script: bool = True,
+        include_container: bool = True,
+        include_environment: bool = True,
     ) -> None:
         """
         Export KAS configuration for a BSP preset.
@@ -2750,9 +2803,14 @@ class BspManager:
             repo_manifest: Export an Android repo manifest instead of KAS YAML
             lock: Use ``kas dump --lock`` when exporting KAS configuration
             output_dir: Optional bundle directory receiving the configuration,
-                the referenced patches and the initial setup script
+                the referenced patches, the container definition, the build
+                environment and the initial setup script
             include_patches: Copy referenced patch files into the bundle
             setup_script: Generate the initial build setup script in the bundle
+            include_container: Copy the container definition of the build into
+                the bundle
+            include_environment: Write the build environment variables into
+                the bundle
 
         Raises:
             SystemExit: If preset not found or export fails
@@ -2769,6 +2827,8 @@ class BspManager:
                 output_dir=output_dir,
                 include_patches=include_patches,
                 setup_script=setup_script,
+                include_container=include_container,
+                include_environment=include_environment,
             )
 
     def export_by_components(
@@ -2782,6 +2842,8 @@ class BspManager:
         output_dir: Optional[str] = None,
         include_patches: bool = True,
         setup_script: bool = True,
+        include_container: bool = True,
+        include_environment: bool = True,
     ) -> None:
         """
         Export KAS configuration by specifying device, release, and features directly.
@@ -2794,9 +2856,14 @@ class BspManager:
             repo_manifest: Export an Android repo manifest instead of KAS YAML
             lock: Use ``kas dump --lock`` when exporting KAS configuration
             output_dir: Optional bundle directory receiving the configuration,
-                the referenced patches and the initial setup script
+                the referenced patches, the container definition, the build
+                environment and the initial setup script
             include_patches: Copy referenced patch files into the bundle
             setup_script: Generate the initial build setup script in the bundle
+            include_container: Copy the container definition of the build into
+                the bundle
+            include_environment: Write the build environment variables into
+                the bundle
 
         Raises:
             SystemExit: If any component is not found or export fails
@@ -2815,6 +2882,8 @@ class BspManager:
             output_dir=output_dir,
             include_patches=include_patches,
             setup_script=setup_script,
+            include_container=include_container,
+            include_environment=include_environment,
         )
 
     # ------------------------------------------------------------------

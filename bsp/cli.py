@@ -1001,6 +1001,18 @@ def main() -> int:
             dest="no_setup_script",
             help="Do not generate the initial build setup script in the export bundle"
         )
+        export_parser.add_argument(
+            "--no-container",
+            action="store_true",
+            dest="no_container",
+            help="Do not copy the build container definition into the export bundle"
+        )
+        export_parser.add_argument(
+            "--no-environment",
+            action="store_true",
+            dest="no_environment",
+            help="Do not write the build environment variables into the export bundle"
+        )
 
         # ----------------------------------------------------------------
         # Server command
@@ -2283,6 +2295,8 @@ def main() -> int:
             output_dir = getattr(args, "output_dir", None)
             include_patches = not getattr(args, "no_patches", False)
             setup_script = not getattr(args, "no_setup_script", False)
+            include_container = not getattr(args, "no_container", False)
+            include_environment = not getattr(args, "no_environment", False)
 
             if _check_exclusive(bsp_name, device, release, export_parser):
                 return 1
@@ -2295,6 +2309,8 @@ def main() -> int:
                     output_dir=output_dir,
                     include_patches=include_patches,
                     setup_script=setup_script,
+                    include_container=include_container,
+                    include_environment=include_environment,
                 )
             elif device and release:
                 bsp_mgr.export_by_components(
@@ -2307,6 +2323,8 @@ def main() -> int:
                     output_dir=output_dir,
                     include_patches=include_patches,
                     setup_script=setup_script,
+                    include_container=include_container,
+                    include_environment=include_environment,
                 )
             else:
                 logging.error(

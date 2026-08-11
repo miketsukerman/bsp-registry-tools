@@ -4,16 +4,23 @@ Tests for export bundle helpers (patch copying and setup script generation).
 
 import os
 import stat
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from bsp import KasManager
 from bsp.export_bundle import (
     DEFAULT_KAS_CONFIG_NAME,
+    ENVIRONMENT_FILE_NAME,
     SETUP_SCRIPT_NAME,
+    ExportedContainer,
+    copy_container,
     copy_patches,
     generate_setup_script,
+    write_environment_file,
 )
+from bsp.models import Docker, DockerArg, EnvironmentVariable
 
 
 @pytest.fixture
@@ -172,3 +179,155 @@ class TestGenerateSetupScript:
         assert "repo init" in content
         assert "manifest.xml" in content
         assert "my-bsp" in content
+
+
+class TestCopyContainer:
+    def test_dockerfile_is_copied_into_container_dir(self, tmp_dir):
+        (tmp_dir / "Dockerfile.ubuntu").write_text("FROM ubuntu\n")
+        export_dir = tmp_dir / "export"
+
+        exported = copy_container(
+            Docker(
+                image="test/ubuntu:latest",
+                file="Dockerfile.ubuntu",
+                args=[DockerArg("DISTRO", "ubuntu:22.04")],
+                privileged=True,
+                runtime_args="--net=host",
+            ),
+            str(export_dir),
+            base_dir=str(tmp_dir),
+        )
+
+        assert exported is not None
+        assert exported.image == "test/ubuntu:latest"
+        assert exported.dockerfile.as_posix() == "container/Dockerfile.ubuntu"
+        assert exported.args == [("DISTRO", "ubuntu:22.04")]
+        assert exported.privileged is True
+        assert exported.runtime_args == "--net=host"
+        assert (export_dir / "container" / "Dockerfile.ubuntu").read_text() == "FROM ubuntu\n"
+
+    def test_prebuilt_image_without_dockerfile(self, tmp_dir):
+        exported = copy_container(
+            Docker(image="test/ubuntu:latest", file=None),
+            str(tmp_dir / "export"),
+        )
+        assert exported is not None
+        assert exported.image == "test/ubuntu:latest"
+        assert exported.dockerfile is None
+
+    def test_missing_dockerfile_is_skipped(self, tmp_dir):
+        exported = copy_container(
+            Docker(image="test/ubuntu:latest", file="nope.Dockerfile"),
+            str(tmp_dir / "export"),
+            base_dir=str(tmp_dir),
+        )
+        assert exported is not None
+        assert exported.dockerfile is None
+
+    def test_no_container(self, tmp_dir):
+        assert copy_container(None, str(tmp_dir / "export")) is None
+
+    def test_container_without_image_and_file(self, tmp_dir):
+        assert copy_container(Docker(image=None, file=None), str(tmp_dir / "export")) is None
+
+
+class TestWriteEnvironmentFile:
+    def test_variables_are_written_with_defaults(self, tmp_dir):
+        export_dir = tmp_dir / "export"
+        path = write_environment_file(
+            [
+                EnvironmentVariable("DL_DIR", "/tmp/downloads"),
+                EnvironmentVariable("SSTATE_DIR", "/tmp/sstate"),
+            ],
+            str(export_dir),
+            label="my-bsp",
+        )
+
+        assert path.name == ENVIRONMENT_FILE_NAME
+        content = path.read_text()
+        assert ': ${DL_DIR:="/tmp/downloads"}' in content
+        assert "export SSTATE_DIR" in content
+
+    def test_env_placeholders_become_shell_references(self, tmp_dir):
+        path = write_environment_file(
+            [EnvironmentVariable("GITCONFIG_FILE", "$ENV{HOME}/.gitconfig")],
+            str(tmp_dir / "export"),
+        )
+        assert ': ${GITCONFIG_FILE:="${HOME}/.gitconfig"}' in path.read_text()
+
+    def test_later_variables_win(self, tmp_dir):
+        path = write_environment_file(
+            [
+                EnvironmentVariable("DL_DIR", "/global"),
+                EnvironmentVariable("DL_DIR", "/named"),
+            ],
+            str(tmp_dir / "export"),
+        )
+        content = path.read_text()
+        assert "/named" in content
+        assert "/global" not in content
+
+    def test_no_variables_writes_nothing(self, tmp_dir):
+        export_dir = tmp_dir / "export"
+        assert write_environment_file([], str(export_dir)) is None
+        assert not (export_dir / ENVIRONMENT_FILE_NAME).exists()
+
+
+class TestSetupScriptContainerAndEnvironment:
+    def test_container_image_is_built_and_used(self, tmp_dir):
+        export_dir = tmp_dir / "export"
+        container = ExportedContainer(
+            image="test/ubuntu:latest",
+            dockerfile=Path("container") / "Dockerfile.ubuntu",
+            args=[("DISTRO", "ubuntu:22.04")],
+            privileged=True,
+        )
+        script = generate_setup_script(
+            str(export_dir),
+            DEFAULT_KAS_CONFIG_NAME,
+            container=container,
+            environment_file=ENVIRONMENT_FILE_NAME,
+        )
+
+        content = script.read_text()
+        assert "kas-container" in content
+        assert 'KAS_CONTAINER_IMAGE:-test/ubuntu:latest' in content
+        assert "container/Dockerfile.ubuntu" in content
+        assert '--build-arg "DISTRO=ubuntu:22.04"' in content
+        assert "--isar" in content
+        assert ENVIRONMENT_FILE_NAME in content
+
+    def test_script_without_container_uses_native_kas(self, tmp_dir):
+        script = generate_setup_script(str(tmp_dir / "export"), DEFAULT_KAS_CONFIG_NAME)
+        content = script.read_text()
+        assert "kas-container" not in content
+        assert "KAS_CONTAINER_IMAGE" not in content
+        assert ENVIRONMENT_FILE_NAME not in content
+
+    def test_repo_script_sources_environment(self, tmp_dir):
+        script = generate_setup_script(
+            str(tmp_dir / "export"),
+            "manifest.xml",
+            repo_manifest=True,
+            environment_file=ENVIRONMENT_FILE_NAME,
+        )
+        assert f'. "$SCRIPT_DIR/{ENVIRONMENT_FILE_NAME}"' in script.read_text()
+
+    def test_generated_scripts_are_valid_posix_shell(self, tmp_dir):
+        export_dir = tmp_dir / "export"
+        write_environment_file(
+            [EnvironmentVariable("DL_DIR", '$ENV{HOME}/dl "quoted"')],
+            str(export_dir),
+        )
+        script = generate_setup_script(
+            str(export_dir),
+            DEFAULT_KAS_CONFIG_NAME,
+            container=ExportedContainer(
+                image="test/ubuntu:latest",
+                dockerfile=Path("container") / "Dockerfile.ubuntu",
+                runtime_args='--net=host -e X="y"',
+            ),
+            environment_file=ENVIRONMENT_FILE_NAME,
+        )
+        for path in (script, export_dir / ENVIRONMENT_FILE_NAME):
+            assert subprocess.run(["sh", "-n", str(path)]).returncode == 0
