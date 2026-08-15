@@ -4,6 +4,7 @@ FROM ${DISTRO}
 
 USER root
 
+ARG DISTRO
 ARG DEBIAN_FRONTEND=noninteractive
 
 ENV LANG=en_US.utf8
@@ -14,13 +15,22 @@ RUN apt-get update -o Acquire::Retries=3 && \
 
 RUN apt-get update -o Acquire::Retries=3 && \
     apt-get install -y -o Acquire::Retries=3 \
-    python3 python3-pip python3-venv python3-pexpect \
+    python3 python3-pip python3-venv python3-virtualenv python3-pexpect \
     xz-utils debianutils iputils-ping python3-git python3-jinja2 libegl1 libsdl1.2-dev libgnutls28-dev \
     pylint python3-setuptools python3-wheel python3-yaml python3-distro python3-jsonschema python3-newt \
     chrpath cpio diffstat gawk lz4 wget zstd git-lfs \
     zip \
     file \
     bash-completion 
+
+# kas 5.4 requires Python 3.9 or newer; Ubuntu 20.04 ships Python 3.8.
+RUN if [ "${DISTRO}" = "ubuntu:20.04" ]; then \
+        apt-get update -o Acquire::Retries=3 && \
+    apt-get install -y -o Acquire::Retries=3 python3.9 && \
+    test -x /usr/bin/python3.9; \
+    else \
+        KAS_PYTHON=/usr/bin/python3; \
+    fi
 
 # add iproute2 for qemu network support
 RUN apt-get update -o Acquire::Retries=3 && \
@@ -62,7 +72,13 @@ RUN apt-get clean && \
 
 ARG KAS_VERSION=4.7
 
-RUN python3 -m venv /opt/kas-venv && \
+RUN if [ "${DISTRO}" = "ubuntu:20.04" ]; then \
+    KAS_PYTHON=/usr/bin/python3.9; \
+    else \
+        KAS_PYTHON=/usr/bin/python3; \
+    fi && \
+    test -x "${KAS_PYTHON}" && \
+    virtualenv --python="${KAS_PYTHON}" /opt/kas-venv && \
     /opt/kas-venv/bin/pip install --upgrade pip && \
     /opt/kas-venv/bin/pip install "kas==${KAS_VERSION:?}" awscli
 

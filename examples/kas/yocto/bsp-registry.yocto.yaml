@@ -12,13 +12,13 @@ containers:
         - name: "KAS_VERSION"
           value: "5.4"
   - ubuntu-focal:
-      image: "bsp/registry/ubuntu-focal/kas:4.7"
+      image: "bsp/registry/ubuntu-focal/kas:5.4"
       file: kas/yocto/Dockerfile.poky.ubuntu
       args:
         - name: "DISTRO"
           value: "ubuntu:20.04"
         - name: "KAS_VERSION"
-          value: "4.7"
+          value: "5.4"
   - ubuntu-jammy:
       image: "bsp/registry/ubuntu-jammy/kas:5.4"
       file: kas/yocto/Dockerfile.poky.ubuntu
