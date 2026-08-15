@@ -4,13 +4,42 @@ specification:
 # Container definitions for build environments
 containers:
   - debian-bookworm:
-      image: "bsp/registry/debian/kas:5.2"
+      image: "bsp/registry/debian/kas:5.4"
       file: kas/yocto/Dockerfile.poky.debian
       args:
         - name: "DISTRO"
           value: "debian-bookworm"
         - name: "KAS_VERSION"
-          value: "5.2"
+          value: "5.4"
+  - ubuntu-focal:
+      image: "bsp/registry/ubuntu-focal/kas:4.7"
+      file: kas/yocto/Dockerfile.poky.ubuntu
+      args:
+        - name: "DISTRO"
+          value: "ubuntu:20.04"
+        - name: "KAS_VERSION"
+          value: "4.7"
+  - ubuntu-jammy:
+      image: "bsp/registry/ubuntu-jammy/kas:5.4"
+      file: kas/yocto/Dockerfile.poky.ubuntu
+      args:
+        - name: "DISTRO"
+          value: "ubuntu:22.04"
+        - name: "KAS_VERSION"
+          value: "5.4"
+        # Pre-openat2 tar; newer jammy-security builds break pseudo (see Dockerfile)
+        - name: "TAR_VERSION"
+          value: "1.34+dfsg-1build3"
+  - ubuntu-noble:
+      image: "bsp/registry/ubuntu-noble/kas:5.4"
+      file: kas/yocto/Dockerfile.poky.ubuntu
+      args:
+        - name: "DISTRO"
+          value: "ubuntu:24.04"
+        - name: "KAS_VERSION"
+          value: "5.4"
+        - name: "TAR_VERSION"
+          value: "1.35+dfsg-3build1"
 
 registry:
 
@@ -54,6 +83,7 @@ registry:
 
     - slug: scarthgap
       distro: poky
+      environment: ubuntu-focal
       description: "Yocto 5.0 LTS (Scarthgap)"
       yocto_version: "5.0"
       includes:
@@ -61,6 +91,7 @@ registry:
 
     - slug: scarthgap-harden
       distro: poky-harden
+      environment: ubuntu-focal
       description: "Yocto 5.0 LTS (Scarthgap Hardened)"
       yocto_version: "5.0"
       includes:
@@ -68,6 +99,7 @@ registry:
 
     - slug: styhead
       distro: poky
+      environment: ubuntu-focal
       description: "Yocto 5.1 (Styhead)"
       yocto_version: "5.1"
       includes:
@@ -75,6 +107,7 @@ registry:
 
     - slug: walnascar
       distro: poky
+      environment: ubuntu-jammy
       description: "Yocto 5.2 (Walnascar)"
       yocto_version: "5.2"
       includes:
@@ -82,6 +115,7 @@ registry:
 
     - slug: whinlatter
       distro: poky
+      environment: ubuntu-jammy
       description: "Yocto 5.3 (Whinlatter)"
       yocto_version: "5.3"
       includes:
@@ -90,6 +124,7 @@ registry:
 
     - slug: wrynose
       distro: poky
+      environment: ubuntu-jammy
       description: "Yocto 6.0 (Wrynose)"
       yocto_version: "6.0"
       includes:
@@ -98,6 +133,7 @@ registry:
 
     - slug: master
       distro: poky
+      environment: ubuntu-master
       description: "Yocto Master (Bleeding Edge)"
       yocto_version: "master"
       includes:

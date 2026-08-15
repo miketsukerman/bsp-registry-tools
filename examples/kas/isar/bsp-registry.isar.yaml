@@ -4,7 +4,7 @@ specification:
 # Container definitions for build environments
 containers:
   - isar-debian-trixie:
-      image: "bsp/registry/debian/isar/kas:5.2"
+      image: "bsp/registry/debian/isar/kas:5.4"
       file: kas/isar/Dockerfile.isar.debian
       runtime_args: "-p 2222:2222 --device=/dev/net/tun --cap-add=NET_ADMIN"
       privileged: true    # Run container in privileged mode (required for ISAR builds)
@@ -12,7 +12,7 @@ containers:
         - name: "DISTRO"
           value: "debian-trixie"
         - name: "KAS_VERSION"
-          value: "5.2"
+          value: "5.4"
 
 environments:
   # Isar uses its own Debian-based build system – point to a dedicated container

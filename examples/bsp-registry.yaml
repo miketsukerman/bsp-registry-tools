@@ -24,6 +24,34 @@ environments:
         value: "$ENV{HOME}/data/cache/downloads"
       - name: "SSTATE_DIR"
         value: "$ENV{HOME}/data/cache/sstate"
+  debian-bookworm:
+    container: debian-bookworm
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
+  ubuntu-focal:
+    container: ubuntu-focal
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
+  ubuntu-jammy:
+    container: ubuntu-jammy
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
+  ubuntu-noble:
+    container: ubuntu-noble
+    variables:
+      - name: "DL_DIR"
+        value: "$ENV{HOME}/data/cache/downloads"
+      - name: "SSTATE_DIR"
+        value: "$ENV{HOME}/data/cache/sstate"
 
 # -------------------------------------------------------------------
 # Global scan defaults (applied to every preset unless overridden)
