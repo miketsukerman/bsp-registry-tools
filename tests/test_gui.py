@@ -9,7 +9,9 @@ These tests cover:
 """
 
 from unittest.mock import MagicMock, patch
+import builtins
 import sys
+import types
 import shlex
 import subprocess
 import textwrap
@@ -1205,14 +1207,30 @@ class TestBspLauncherMain:
 
 
 class TestBspLauncherMainWeb:
+    @staticmethod
+    def _patch_server(captured):
+        """Install a fake 'textual_serve.server' module capturing Server args."""
+        class _FakeServer:
+            def __init__(self, command, **kwargs):
+                captured["command"] = command
+                captured["kwargs"] = kwargs
+
+            def serve(self, debug=False):
+                captured["served"] = True
+
+        module = types.ModuleType("textual_serve.server")
+        module.Server = _FakeServer
+        package = types.ModuleType("textual_serve")
+        package.server = module
+        return patch.dict(
+            sys.modules,
+            {"textual_serve": package, "textual_serve.server": module},
+        )
+
     def test_main_web_forwards_repeated_remotes(self):
         from bsp.gui import main_web
 
         captured = {}
-
-        def _fake_execvp(_prog, argv):
-            captured["argv"] = argv
-            raise SystemExit(0)
 
         with patch(
             "sys.argv",
@@ -1223,14 +1241,75 @@ class TestBspLauncherMainWeb:
                 "--no-update",
             ],
         ):
-            with patch("os.execvp", side_effect=_fake_execvp):
-                with pytest.raises(SystemExit):
-                    main_web()
+            with self._patch_server(captured):
+                assert main_web() == 0
 
-        bsp_cmd = shlex.split(captured["argv"][2])
+        assert captured["served"] is True
+        bsp_cmd = shlex.split(captured["command"])
         assert bsp_cmd.count("--remote") == 2
         assert "https://example.com/reg-a.git@main@name=reg-a" in bsp_cmd
         assert "https://example.com/reg-b.git@dev@name=reg-b" in bsp_cmd
+        assert "--no-update" in bsp_cmd
+
+    def test_main_web_passes_host_and_port(self):
+        from bsp.gui import main_web
+
+        captured = {}
+
+        with patch(
+            "sys.argv",
+            ["bsp-explorer-web", "--host", "localhost", "--port", "8080"],
+        ):
+            with self._patch_server(captured):
+                assert main_web() == 0
+
+        assert captured["kwargs"]["host"] == "localhost"
+        assert captured["kwargs"]["port"] == 8080
+        # Loopback hosts do not get an auto-detected public URL.
+        assert captured["kwargs"]["public_url"] is None
+
+    def test_main_web_infers_public_url_for_non_loopback_host(self):
+        from bsp.gui import main_web
+
+        captured = {}
+
+        with patch(
+            "sys.argv",
+            ["bsp-explorer-web", "--host", "0.0.0.0", "--port", "8000"],
+        ):
+            with patch("socket.getfqdn", return_value="example.local"):
+                with self._patch_server(captured):
+                    assert main_web() == 0
+
+        assert captured["kwargs"]["public_url"] == "http://example.local:8000"
+
+    def test_main_web_reports_missing_textual_serve(self, capsys):
+        from bsp.gui import main_web
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *a, **kw):
+            if name == "textual_serve.server" or name == "textual_serve":
+                raise ImportError("No module named 'textual_serve'")
+            return real_import(name, *a, **kw)
+
+        with patch("sys.argv", ["bsp-explorer-web"]):
+            with patch.dict(sys.modules):
+                sys.modules.pop("textual_serve", None)
+                sys.modules.pop("textual_serve.server", None)
+                with patch("builtins.__import__", side_effect=_fake_import):
+                    assert main_web() == 1
+
+        assert "textual-serve" in capsys.readouterr().err
+
+    def test_bsp_explorer_command_falls_back_to_module(self):
+        from bsp.gui import _bsp_explorer_command
+
+        with patch("shutil.which", return_value="/usr/bin/bsp-explorer"):
+            assert _bsp_explorer_command() == ["/usr/bin/bsp-explorer"]
+
+        with patch("shutil.which", return_value=None):
+            assert _bsp_explorer_command() == [sys.executable, "-m", "bsp.gui"]
 
 
 # =============================================================================
