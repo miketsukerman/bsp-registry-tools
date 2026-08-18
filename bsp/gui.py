@@ -282,18 +282,37 @@ def main() -> int:
     )
 
 
+def _bsp_explorer_command() -> List[str]:
+    """
+    Return the command used to spawn the ``bsp-explorer`` TUI as a subprocess.
+
+    Prefers the installed ``bsp-explorer`` console script.  When it is not on
+    ``PATH`` (for example when the package is used directly from a source
+    checkout), fall back to running this module with the current interpreter,
+    which works in any environment where ``bsp`` is importable.
+    """
+    import shutil
+
+    executable = shutil.which("bsp-explorer")
+    if executable:
+        return [executable]
+    return [sys.executable, "-m", "bsp.gui"]
+
+
 def main_web() -> int:
     """
     Entry point for the ``bsp-explorer-web`` console script.
 
-    Delegates to ``textual serve bsp-explorer [args]`` so the BSP Explorer
-    TUI can be accessed from a browser via Textual's built-in web server.
+    Serves ``bsp-explorer`` through the ``textual-serve`` web server so the
+    BSP Explorer TUI can be accessed from a browser.  The server runs
+    in-process, so the external ``textual`` command-line tool (which ships
+    with the separate ``textual-dev`` package) is not required.
 
     Accepts the same registry flags as ``bsp-explorer`` plus optional
     ``--host`` / ``--port`` / ``--public-url`` to control where the HTTP
     server listens and what URL the browser uses for WebSocket connections.
 
-    When ``--host`` is ``0.0.0.0`` (the default), ``textual serve`` would
+    When ``--host`` is ``0.0.0.0`` (the default), the server would
     embed ``ws://0.0.0.0:<port>/ws`` in the served page, which browsers
     cannot connect to from a remote machine.  To prevent this, the public
     URL is automatically derived from the system hostname when binding to
@@ -301,8 +320,8 @@ def main_web() -> int:
     (e.g. when running behind a reverse proxy).
 
     Returns:
-        Exit code (0 for success, non-zero for errors).  The function normally
-        replaces the current process via :func:`os.execvp` and never returns.
+        Exit code (0 for success, non-zero for errors).  The function blocks
+        until the web server is stopped.
     """
     import shlex
     import socket
@@ -311,8 +330,8 @@ def main_web() -> int:
     parser = argparse.ArgumentParser(
         prog="bsp-explorer-web",
         description=(
-            "BSP Registry Explorer — serve in the browser via 'textual serve'.\n"
-            "Requires the 'textual-serve' extra: pip install 'textual[serve]'"
+            "BSP Registry Explorer — serve the TUI in a browser.\n"
+            "Requires the 'gui' extra: pip install 'bsp-registry-tools[gui]'"
         ),
     )
     parser.add_argument(
@@ -375,8 +394,18 @@ def main_web() -> int:
 
     args = parser.parse_args()
 
-    # Build the bsp-explorer command that textual serve will run.
-    bsp_cmd: list[str] = ["bsp-explorer"]
+    try:
+        from textual_serve.server import Server
+    except ImportError:
+        print(
+            "The 'textual-serve' package is required for the web GUI.\n"
+            "Install it with:  pip install 'bsp-registry-tools[gui]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Build the bsp-explorer command that the web server will run.
+    bsp_cmd: list[str] = _bsp_explorer_command()
     if args.registry:
         bsp_cmd += ["--registry", args.registry]
     if args.remote:
@@ -387,11 +416,11 @@ def main_web() -> int:
     if args.no_update:
         bsp_cmd.append("--no-update")
 
-    # textual serve embeds --public-url as the WebSocket target in the served
-    # HTML page.  When the server binds to 0.0.0.0 (all interfaces), textual
-    # would otherwise generate ws://0.0.0.0:<port>/ws, which browsers cannot
-    # reach from a remote machine.  Detect the real hostname automatically in
-    # that case so remote browsers can connect.
+    # The served page embeds the public URL as the WebSocket target.  When the
+    # server binds to 0.0.0.0 (all interfaces), it would otherwise generate
+    # ws://0.0.0.0:<port>/ws, which browsers cannot reach from a remote
+    # machine.  Detect the real hostname automatically in that case so remote
+    # browsers can connect.
     _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
     public_url = args.public_url
     if public_url is None and args.host not in _LOOPBACK_HOSTS:
@@ -402,17 +431,18 @@ def main_web() -> int:
             else f"http://{hostname}:{args.port}"
         )
 
-    textual_argv = [
-        "textual", "serve",
+    server = Server(
         shlex.join(bsp_cmd),
-        "--host", args.host,
-        "--port", str(args.port),
-    ]
-    if public_url is not None:
-        textual_argv += ["--url", public_url]
-
-    os.execvp("textual", textual_argv)
-    return 0  # unreachable
+        host=args.host,
+        port=args.port,
+        title="BSP Registry Explorer",
+        public_url=public_url,
+    )
+    try:
+        server.serve()
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 # =============================================================================
@@ -2598,3 +2628,7 @@ else:
             raise NotImplementedError(
                 "Cannot execute streamed GUI command output without textual installed"
             )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

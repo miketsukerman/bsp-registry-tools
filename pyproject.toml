@@ -55,7 +55,11 @@ deploy = [
     "azure-identity>=1.0",
     "boto3>=1.20",
 ]
-gui = ["textual>=8.0.0"]
+gui = [
+    "textual>=8.0.0",
+    # Provides the in-process web server used by 'bsp-explorer-web'.
+    "textual-serve>=1.1.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",

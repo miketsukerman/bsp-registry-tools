@@ -66,6 +66,7 @@ pip install ".[server]"
 - [kas](https://kas.readthedocs.io/) >= 4.7
 - [colorama](https://github.com/tartley/colorama) >= 0.4.6
 - *(optional)* [textual](https://textual.textualize.io/) >= 8.0.0 — required for `bsp-explorer` GUI
+- *(optional)* [textual-serve](https://pypi.org/project/textual-serve/) >= 1.1.0 — required for `bsp-explorer-web` (installed by the `gui` extra)
 - [requests](https://requests.readthedocs.io/) >= 2.28.0 *(for LAVA HIL test integration)*
 - [Jinja2](https://jinja.palletsprojects.com/) >= 3.1.0 *(for LAVA job template rendering)*
 
@@ -430,7 +431,7 @@ bsp-explorer \
 # Skip the remote update (faster, offline)
 bsp-explorer --no-update
 
-# Serve the TUI in a web browser (requires Textual's web extra)
+# Serve the TUI in a web browser (included in the 'gui' extra)
 bsp-explorer-web
 
 # Web mode supports multiple remotes too
