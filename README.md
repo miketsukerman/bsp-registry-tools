@@ -11,6 +11,7 @@ Python tools to build, fetch, and work with Yocto-based BSPs using the [KAS](htt
 - 📋 **BSP registry management** via YAML configuration files
 - 🌐 **Automatic remote registry fetching** — clone/update a remote registry with no manual setup
 - 🔗 **Named remote management** — `bsp remotes add/remove/rename/set-url/show` for persistent, git-style remote configuration
+- 🧩 **Named repository overlays** — `bsp overlay add/set-repo/set-path/show` + `bsp --overlay NAME build` to override repo URLs, branches, tags, commits, or use local checkouts without editing the registry
 - 🐳 **Docker container support** for reproducible build environments
 - 🔧 **KAS integration** for Yocto-based builds (`kas`, `kas-container`)
 - 🖥️ **Interactive shell** access to build environments
@@ -228,6 +229,85 @@ entries from all of them, each annotated with `[remote-name]`.  Registries are
 kept strictly separate — definitions from different remotes are never merged.
 Use `--remote NAME` with `list` or `tree` to restrict output to a single named
 remote.
+
+### Persistent Named Repository Overlays
+
+Overlays let you override the repository URL, branch, tag, commit, or local
+checkout path of individual KAS repos for your builds — without editing the
+shared `bsp-registry` YAML files.  Define an overlay once, then apply it to
+any build with the global `--overlay` flag:
+
+```bash
+# Create an overlay that switches a layer to a feature branch
+bsp overlay add modular-bsp-dev \
+  --description "Local work on modular BSP" \
+  --repo meta-modular-bsp-nxp@feature/ota-rework
+
+# Point a repo at a fork (URL + branch)
+bsp overlay set-repo modular-bsp-dev \
+  meta-imx=https://github.com/example/meta-imx.git@fix/display
+
+# Bare URLs work too — the repo name is derived from the URL's last path
+# segment (credentials like https://user@host/... are handled correctly)
+bsp overlay set-repo modular-bsp-dev \
+  https://github.com/example/meta-imx.git@fix/display
+
+# Pin to a tag or commit
+bsp overlay set-repo modular-bsp-dev meta-imx@tag:v1.2
+bsp overlay set-repo modular-bsp-dev meta-imx@commit:<sha>
+
+# Use a local checkout in-place (mounted into the build container)
+bsp overlay set-path modular-bsp-dev \
+  meta-modular-bsp-nxp=~/src/meta-modular-bsp-nxp
+
+# Inspect and manage overlays
+bsp overlay list
+bsp overlay show modular-bsp-dev
+bsp overlay unset-repo modular-bsp-dev meta-imx
+bsp overlay remove modular-bsp-dev
+
+# Apply the overlay to a build
+bsp --overlay modular-bsp-dev build my-preset
+```
+
+Overlays are stored in `~/.config/bsp/overlays.yaml` (override with
+`BSP_OVERLAYS_CONFIG=…`).  At build time the active overlay is rendered as a
+KAS YAML fragment appended after the registry files, so KAS's standard
+configuration merging applies the overrides on top of the registry defaults.
+The shared registry itself is never modified.
+
+For traceability, the generated fragment is kept under
+`<build_path>/overlays/` after the build, and the build manifest
+(`build-manifest.json`) records the overlay name, description, fragment path,
+and repository overrides in its `overlay` section (plus a
+`build.overlay_used` flag).
+
+#### Registry overlays
+
+Beyond per-repo overrides, an overlay can carry a full **registry overlay
+YAML** that is merged on top of the shared registry at build time — letting
+you override devices, releases, features, containers, presets, environment
+variables, etc. without touching the shared `bsp-registry`:
+
+```bash
+# Generate the overlay directory structure (idempotent)
+bsp overlay scaffold modular-bsp-dev --description "Local work"
+#   ~/.config/bsp/overlays/modular-bsp-dev/registry.yaml  ← edit this
+#   ~/.config/bsp/overlays/modular-bsp-dev/kas/           ← extra KAS fragments
+#   ~/.config/bsp/overlays/modular-bsp-dev/README.md
+
+bsp --overlay modular-bsp-dev build my-preset
+```
+
+The overlay directory location can be overridden with `BSP_OVERLAYS_DIR=…`.
+In the registry overlay, entries in the slug/name-keyed lists (`devices`,
+`releases`, `features`, `distro`, `frameworks`, `vendors`, `bsp`) merge **by
+slug**: an entry with an existing slug deep-merges into (and overrides) the
+shared definition; new slugs are appended.  Relative KAS include paths from
+the overlay resolve against the overlay directory first, then the registry
+directory.  The manifest records the registry overlay path and a
+`registry_overlay_used` flag; `bsp overlay show` displays the registered
+registry file.
 
 ### Manual Registry Usage
 

@@ -25,7 +25,8 @@ from .flasher import FlashResult, ImageFlasher
 from .gatherer import ArtifactGatherer, GatherResult
 from .kas_manager import KasManager
 from .manifest_paths import ManifestPathSanitizer
-from .models import BspPreset, DeployConfig, Docker, EnvironmentVariable, YoctoCacheConfig, FlashConfig, ScanConfig
+from .models import BspPreset, DeployConfig, Docker, DockerVolume, EnvironmentVariable, YoctoCacheConfig, FlashConfig, ScanConfig
+from .overlay_manager import OverlayEntry, OverlayManager
 from .path_resolver import resolver
 from .resolver import ResolvedConfig, V2Resolver
 from .scanner import ImageScanner, ScanResult
@@ -84,6 +85,7 @@ class BspManager:
         config_path: str = "bsp-registry.yaml",
         verbose: bool = False,
         config_paths: Optional[List[Tuple[str, str]]] = None,
+        overlay: Optional[OverlayEntry] = None,
     ):
         """
         Initialize BSP manager.
@@ -95,6 +97,9 @@ class BspManager:
             config_paths: Ordered list of ``(name, path)`` pairs for
                           multi-registry mode.  When provided *config_path* is
                           ignored.
+            overlay: Optional named repository overlay whose repo overrides
+                     are applied on top of the registry KAS files at build
+                     time.
         """
         if config_paths:
             self._config_pairs: List[Tuple[str, Path]] = [
@@ -104,6 +109,7 @@ class BspManager:
             self._config_pairs = [("default", Path(config_path))]
 
         self.verbose = verbose
+        self.overlay = overlay
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Multi-registry state — populated by load_configuration / initialize
@@ -116,6 +122,12 @@ class BspManager:
         self.env_manager = None    # EnvironmentManager | None
         self.containers = {}       # Dict[str, Docker]
         self.resolver = None       # V2Resolver | None
+
+    def _overlay_registry_path(self) -> Optional[Path]:
+        """Return the active overlay's registry overlay file, if any."""
+        if self.overlay and self.overlay.registry:
+            return Path(self.overlay.registry).expanduser()
+        return None
 
     def load_configuration(self) -> None:
         """
@@ -134,7 +146,11 @@ class BspManager:
                 if not reg_path.exists():
                     logging.error(f"Config file not found: {reg_path}")
                     sys.exit(1)
-                model = get_registry_from_yaml_file(reg_path)
+                model = get_registry_from_yaml_file(
+                    reg_path,
+                    overlay_registry=self._overlay_registry_path(),
+                    overlay_name=self.overlay.name if self.overlay else None,
+                )
                 self.registries.append((reg_name, model))
                 logging.info(
                     f"Registry '{reg_name}' loaded successfully from {reg_path}"
@@ -1428,16 +1444,56 @@ class BspManager:
             kas_files = [temp_path]
             self._temp_kas_file = temp_path
         else:
-            # Resolve relative paths against the registry directory
+            # Resolve relative paths against the registry directory; when a
+            # registry overlay is active, its directory takes precedence so
+            # overlay-provided KAS fragments resolve relative to the overlay.
             base = self.config_path.parent
+            overlay_registry = self._overlay_registry_path()
+            overlay_base = overlay_registry.parent if overlay_registry else None
             kas_files = []
             for f in resolved.kas_files:
                 p = Path(f)
                 if p.is_absolute():
                     kas_files.append(str(p))
+                elif overlay_base and (overlay_base / p).exists():
+                    kas_files.append(str((overlay_base / p).resolve()))
                 else:
                     kas_files.append(str((base / p).resolve()))
             self._temp_kas_file = None
+
+        # Apply a named repository overlay (if any) by appending a generated
+        # KAS fragment after the registry files so KAS config merging applies
+        # the overrides on top of the registry defaults.
+        effective_build_path = (
+            build_path_override if build_path_override is not None else resolved.build_path
+        )
+        overlay_volumes: List[DockerVolume] = []
+        if self.overlay and self.overlay.repos:
+            overlays_dir = Path(effective_build_path) / "overlays"
+            resolver.ensure_directory(str(overlays_dir))
+            # Use a stable, per-overlay filename (overwritten on each run) so
+            # repeated builds with --overlay do not accumulate fragment files.
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", self.overlay.name)
+            overlay_path = str(overlays_dir / f"bsp_overlay_{safe_name}.yml")
+            OverlayManager().generate_overlay_kas_yaml(self.overlay, overlay_path)
+            kas_files.append(overlay_path)
+            # Kept after the build (not cleaned up) for traceability; the
+            # build manifest references this fragment.
+            self._overlay_kas_file = overlay_path
+            self.logger.info(
+                "Applying overlay '%s' (%d repo override(s)); fragment kept at %s",
+                self.overlay.name, len(self.overlay.repos), overlay_path,
+            )
+            # Mount local checkout paths into the build container so KAS can
+            # use them in-place.
+            if use_container:
+                for ov in self.overlay.repos.values():
+                    if ov.path:
+                        overlay_volumes.append(
+                            DockerVolume(host=ov.path, container=ov.path)
+                        )
+        else:
+            self._overlay_kas_file = None
 
         container_image = (
             resolved.container.image
@@ -1454,9 +1510,12 @@ class BspManager:
             if resolved.container and use_container
             else []
         )
-        effective_build_path = (
-            build_path_override if build_path_override is not None else resolved.build_path
-        )
+        container_volumes = list(container_volumes) + overlay_volumes
+
+        search_paths = [str(self.config_path.parent)]
+        overlay_registry = self._overlay_registry_path()
+        if overlay_registry:
+            search_paths.insert(0, str(overlay_registry.parent))
 
         kas_mgr = KasManager(
             kas_files,
@@ -1470,14 +1529,19 @@ class BspManager:
             container_privileged=(
                 resolved.container.privileged if resolved.container and use_container else False
             ),
-            search_paths=[str(self.config_path.parent)],
+            search_paths=search_paths,
             env_manager=env_mgr,
             verbose=self.verbose,
         )
         return kas_mgr
 
     def _cleanup_temp_kas_file(self) -> None:
-        """Remove the temporary KAS YAML file if one was created."""
+        """Remove the temporary KAS YAML file if one was created.
+
+        The generated overlay fragment (``_overlay_kas_file``) is deliberately
+        kept under ``<build_path>/overlays/`` for traceability; it is
+        referenced from the build manifest.
+        """
         temp_file = getattr(self, "_temp_kas_file", None)
         if temp_file and os.path.exists(temp_file):
             try:
@@ -1777,6 +1841,32 @@ class BspManager:
 
         scrubbed_argv = paths.scrub_argv(list(sys.argv))
 
+        overlay_kas_file = getattr(self, "_overlay_kas_file", None)
+        overlay_registry = self._overlay_registry_path()
+        registry_overlay_used = overlay_registry is not None
+        overlay_manifest = None
+        overlay_used = bool(self.overlay and (self.overlay.repos or registry_overlay_used))
+        if overlay_used:
+            overlay_manifest = {
+                "name": self.overlay.name,
+                "description": self.overlay.description,
+                "fragment": paths.relativize(overlay_kas_file) if overlay_kas_file else None,
+                "registry": (
+                    paths.scrub_text(str(overlay_registry)) if overlay_registry else None
+                ),
+                "registry_overlay_used": registry_overlay_used,
+                "repos": {
+                    repo_name: {
+                        "url": ov.url,
+                        "branch": ov.branch,
+                        "tag": ov.tag,
+                        "commit": ov.commit,
+                        "path": paths.scrub_text(ov.path),
+                    }
+                    for repo_name, ov in self.overlay.repos.items()
+                },
+            }
+
         return {
             "schema_version": "2",
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1827,7 +1917,9 @@ class BspManager:
                 "task": task,
                 "docker_build_options": paths.scrub_text(docker_build_options),
                 "resolved_targets": selected_targets,
+                "overlay_used": overlay_used,
             },
+            "overlay": overlay_manifest,
             "components": {
                 "device": {
                     "slug": resolved.device.slug,
