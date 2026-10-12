@@ -1,0 +1,100 @@
+specification:
+  version: "2.2"
+
+registry:
+  devices:
+    - slug: rsb3720
+      description: Advantech RSB-3720
+      vendor: nxp
+      soc_vendor: nxp
+      soc_family: imx8mp
+      supported_features:
+        - rauc
+        - secure-boot
+        - systemd
+    - slug: rom5720
+      description: Advantech ROM-5720
+      vendor: nxp
+      soc_vendor: nxp
+      soc_family: imx8m
+      supported_features:
+        - swupdate
+        - systemd
+    - slug: qemuarm64
+      description: QEMU ARM64
+      vendor: qemu
+      soc_vendor: qemu
+      soc_family: arm64
+      supported_features:
+        - systemd
+        - debug
+
+  features:
+    - slug: rauc
+      description: Robust Auto-Update Controller
+      compatibility:
+        vendor:
+          - nxp
+    - slug: secure-boot
+      description: Cryptographic boot verification
+      compatibility:
+        vendor:
+          - nxp
+    - slug: swupdate
+      description: Software update tool
+      compatibility:
+        vendor:
+          - nxp
+    - slug: systemd
+      description: Systemd init system
+      compatibility:
+        vendor:
+          - nxp
+          - qemu
+    - slug: debug
+      description: Debug tools and symbols
+      compatibility:
+        vendor:
+          - qemu
+
+  releases:
+    - slug: scarthgap
+      description: Scarthgap (LTS)
+    - slug: wrynose
+      description: Wrynose (Latest)
+    - slug: kirkstone
+      description: Kirkstone (EOL)
+    - slug: master
+      description: Master (Dev)
+
+  bsp:
+    - name: modular-bsp-rauc-rsb3720
+      description: RSB-3720 with RAUC OTA and Secure Boot
+      device: rsb3720
+      releases:
+        - scarthgap
+        - wrynose
+      features:
+        - rauc
+        - secure-boot
+        - systemd
+    - name: modular-bsp-rsb3720-kirkstone
+      description: EOL Kirkstone preset for RSB-3720
+      device: rsb3720
+      release: kirkstone
+      features:
+        - systemd
+    - name: bsp-rom5720-scarthgap
+      description: ROM-5720 with SWUpdate
+      device: rom5720
+      release: scarthgap
+      features:
+        - swupdate
+        - systemd
+    - name: poky-qemuarm64-master
+      description: QEMU ARM64 bleeding edge
+      device: qemuarm64
+      release: master
+      features:
+        - systemd
+        - debug

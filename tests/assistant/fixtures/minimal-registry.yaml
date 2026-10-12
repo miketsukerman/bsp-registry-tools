@@ -1,0 +1,37 @@
+specification:
+  version: "2.2"
+
+registry:
+  devices:
+    - slug: test-board
+      description: Test Board
+      vendor: testvendor
+      soc_vendor: testvendor
+      soc_family: testsoc
+      supported_features:
+        - feature-a
+        - feature-b
+
+  features:
+    - slug: feature-a
+      description: First test feature
+      compatibility:
+        vendor:
+          - testvendor
+    - slug: feature-b
+      description: Second test feature
+      compatibility:
+        vendor:
+          - testvendor
+
+  releases:
+    - slug: scarthgap
+      description: Scarthgap
+
+  bsp:
+    - name: test-preset-a
+      description: Test preset with feature-a
+      device: test-board
+      release: scarthgap
+      features:
+        - feature-a
