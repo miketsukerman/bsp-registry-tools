@@ -1954,6 +1954,126 @@ def main() -> int:
             ),
         )
 
+        # ----------------------------------------------------------------
+        # Assistant command (AI-guided discovery and recommendation engine)
+        # ----------------------------------------------------------------
+        assistant_parser = subparsers.add_parser(
+            "assistant",
+            help="AI-guided interactive discovery and recommendation system",
+        )
+        assistant_subparsers = assistant_parser.add_subparsers(
+            dest="assistant_command",
+            help="Assistant command to execute (default: discover)",
+        )
+
+        # bsp assistant discover
+        discover_parser = assistant_subparsers.add_parser(
+            "discover",
+            help="Interactive multi-step discovery and preset recommendation",
+        )
+        discover_parser.add_argument(
+            "--board", "-b",
+            type=str,
+            help="Target hardware board name or slug",
+        ).completer = DevicesCompleter()
+        discover_parser.add_argument(
+            "--features", "-f",
+            type=str,
+            action="append",
+            help="Required feature slug or comma-separated list of features",
+        ).completer = FeaturesCompleter()
+        discover_parser.add_argument(
+            "--release-pref",
+            choices=["latest", "lts", "specific"],
+            default=None,
+            help="Release preference (latest, lts, specific)",
+        )
+        discover_parser.add_argument(
+            "--release", "-r",
+            type=str,
+            help="Target release slug",
+        ).completer = ReleasesCompleter()
+        discover_parser.add_argument(
+            "--non-interactive",
+            action="store_true",
+            help="Run non-interactively without interactive prompts",
+        )
+
+        # bsp assistant explain <preset>
+        explain_parser = assistant_subparsers.add_parser(
+            "explain",
+            help="Explain a preset configuration, features, and risk assessment",
+        )
+        explain_parser.add_argument(
+            "preset",
+            type=str,
+            help="Preset name to explain",
+        ).completer = PresetsCompleter()
+
+        # bsp assistant check --board=<device> --features=<f1,f2> [--release=<r>]
+        check_parser = assistant_subparsers.add_parser(
+            "check",
+            help="Check compatibility of a board and feature combination",
+        )
+        check_parser.add_argument(
+            "--board", "-b",
+            type=str,
+            required=True,
+            help="Target board or preset name",
+        ).completer = DevicesCompleter()
+        check_parser.add_argument(
+            "--features", "-f",
+            type=str,
+            action="append",
+            help="Feature slug or comma-separated list of features to check",
+        ).completer = FeaturesCompleter()
+        check_parser.add_argument(
+            "--release", "-r",
+            type=str,
+            help="Target release slug",
+        ).completer = ReleasesCompleter()
+
+        # bsp assistant find --feature=<feature> [--release=<r>]
+        find_parser = assistant_subparsers.add_parser(
+            "find",
+            help="Find presets and devices supporting a specific feature",
+        )
+        find_parser.add_argument(
+            "--feature", "-f",
+            type=str,
+            required=True,
+            help="Feature slug to find",
+        ).completer = FeaturesCompleter()
+        find_parser.add_argument(
+            "--release", "-r",
+            type=str,
+            help="Target release slug",
+        ).completer = ReleasesCompleter()
+
+        # bsp assistant list-devices
+        assistant_subparsers.add_parser(
+            "list-devices",
+            help="List all hardware devices with vendor, SoC, and features",
+        )
+
+        # bsp assistant list-features
+        assistant_subparsers.add_parser(
+            "list-features",
+            help="List all available features and descriptions",
+        )
+
+        # bsp assistant suggest --board=<device>
+        suggest_parser = assistant_subparsers.add_parser(
+            "suggest",
+            help="Suggest recommended presets for a given board",
+        )
+        suggest_parser.add_argument(
+            "--board", "-b",
+            type=str,
+            required=True,
+            help="Hardware board name or slug",
+        ).completer = DevicesCompleter()
+
         # Activate argcomplete (exits immediately when shell is completing;
         # no-ops when argcomplete is not installed).
         try:
@@ -2598,6 +2718,10 @@ def main() -> int:
                 return 1
             if not passed:
                 return 1
+
+        elif args.command == "assistant":
+            from .assistant.cli import dispatch_assistant
+            return dispatch_assistant(args, bsp_mgr)
 
         else:
             logging.error(f"Unknown command: {args.command}")
