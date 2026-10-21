@@ -351,6 +351,59 @@ bsp remotes show <name>                          # show details
 
 ---
 
+## `bsp overlay` — Named KAS repository overlays
+
+Stored in `~/.config/bsp/overlays.yaml` (override with `BSP_OVERLAYS_CONFIG=…`).
+Override repo URLs, branches, tags, commits, or use local checkouts without
+editing the shared registry.  Repos cloned due to an overlay override land in
+`<build_path>/overlays/layers/<repo>` (local `set-path` checkouts are used
+in-place).
+
+```bash
+bsp overlay                                      # list overlay names
+bsp overlay list                                 # same as above
+bsp overlay -v                                   # list with override counts
+
+bsp overlay add <name>                           # create an empty overlay
+bsp overlay add <name> -d "Description" \
+  --repo meta-x@feature/foo                      # create with an override
+
+bsp overlay set-repo <name> meta-x@feature/foo   # branch override (keep URL)
+bsp overlay set-repo <name> meta-x=<url>@<ref>   # URL + refspec override
+bsp overlay set-repo <name> <url>@<ref>          # bare URL (name derived from URL)
+bsp overlay set-repo <name> meta-x@tag:v1.2      # pin to a tag
+bsp overlay set-repo <name> meta-x@commit:<sha>  # pin to a commit
+bsp overlay set-path <name> meta-x=~/src/meta-x  # use local checkout in-place
+
+# Yocto layer selection (KAS 'layers' mapping; '.' = repo root):
+#   entries are <layer>[:disabled|<prio>] — 'disabled' excludes the layer,
+#   an integer sets the include priority (-99..99).  KAS merges layer keys,
+#   so registry-defined layers stay active unless listed with ':disabled'.
+bsp overlay add <name> --repo meta-x@feature/foo \
+  --layers meta-core,meta-extras:disabled,.      # layers with the initial repo
+bsp overlay set-repo <name> meta-x@ref --layers meta-a,meta-b
+bsp overlay set-path <name> meta-x=~/src/meta-x --layers meta-a:7
+bsp overlay set-layers <name> meta-x=meta-a,meta-b:disabled  # layers only
+bsp overlay unset-layers <name> meta-x           # drop the layers mapping
+
+bsp overlay show <name>                          # show details
+bsp overlay unset-repo <name> meta-x             # drop one repo override
+bsp overlay remove <name>                        # remove an overlay
+bsp overlay rm <name>                            # alias for remove
+
+bsp overlay scaffold <name>                      # generate overlay dir structure:
+                                                 #   ~/.config/bsp/overlays/<name>/
+                                                 #     registry.yaml  (registry overrides)
+                                                 #     kas/           (extra KAS fragments)
+                                                 #     README.md
+                                                 # (BSP_OVERLAYS_DIR=… to relocate)
+
+bsp --overlay <name> build <preset>              # apply overlay to a build
+bsp --overlay <name> fetch <preset>              # apply overlay to a fetch
+```
+
+---
+
 ## `bsp server` — HTTP server (REST + GraphQL)
 
 Requires: `pip install "bsp-registry-tools[server]"`
