@@ -207,3 +207,11 @@ marimo/_lsp/
 __marimo__/
 
 .vscode*
+# Debian packaging build artifacts
+debian/.debhelper/
+debian/bsp-registry-tools/
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/*.debhelper
+debian/debhelper-build-stamp

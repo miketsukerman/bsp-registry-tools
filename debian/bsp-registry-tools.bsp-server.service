@@ -1,0 +1,17 @@
+[Unit]
+Description=BSP Registry Tools REST + GraphQL server
+Documentation=https://github.com/Advantech-EECC/bsp-registry-tools
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Override host/port/registry flags in /etc/default/bsp-server, e.g.:
+#   BSP_SERVER_OPTS=--host 0.0.0.0 --port 8080 --registry /etc/bsp/bsp-registry.yaml
+EnvironmentFile=-/etc/default/bsp-server
+ExecStart=/usr/bin/bsp server $BSP_SERVER_OPTS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

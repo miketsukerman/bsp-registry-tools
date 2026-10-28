@@ -1,0 +1,6 @@
+opt/venvs/bsp-registry-tools/bin/bsp usr/bin/bsp
+opt/venvs/bsp-registry-tools/bin/bsp-explorer usr/bin/bsp-explorer
+opt/venvs/bsp-registry-tools/bin/bsp-explorer-web usr/bin/bsp-explorer-web
+opt/venvs/bsp-registry-tools/bin/bsp-mcp usr/bin/bsp-mcp
+opt/venvs/bsp-registry-tools/bin/kas usr/bin/bsp-kas
+opt/venvs/bsp-registry-tools/bin/kas-container usr/bin/bsp-kas-container
