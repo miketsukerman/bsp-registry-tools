@@ -1,0 +1,17 @@
+[Unit]
+Description=BSP Registry Explorer web UI (TUI served in a browser)
+Documentation=https://github.com/Advantech-EECC/bsp-registry-tools
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Override host/port/registry flags in /etc/default/bsp-explorer-web, e.g.:
+#   BSP_EXPLORER_WEB_OPTS=--host 0.0.0.0 --port 8000
+EnvironmentFile=-/etc/default/bsp-explorer-web
+ExecStart=/usr/bin/bsp-explorer-web $BSP_EXPLORER_WEB_OPTS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+bsp-registry-tools (2.2.2-1) unstable; urgency=medium
+
+  * Initial Debian package built with dh-virtualenv: all Python
+    dependencies (server, gui, mcp, completions and deploy extras,
+    including kas) are bundled in /opt/venvs/bsp-registry-tools.
+  * Expose bsp, bsp-explorer, bsp-explorer-web and bsp-mcp via
+    /usr/bin symlinks; the bundled kas is exposed as /usr/bin/bsp-kas.
+  * Ship systemd units for the REST/GraphQL server, the MCP server and
+    the web explorer (disabled by default).
+  * Install a static bash completion script for bsp and the registry
+    examples under /usr/share/bsp-registry-tools/examples.
+
+ -- Mikhail Tsukerman <mikhail.tsukerman@advantech.com>  Fri, 23 Oct 2026 20:00:00 +0000
