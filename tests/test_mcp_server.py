@@ -341,6 +341,55 @@ class TestFreeValue:
             validate_free_value("a\nb", "prefix")
 
 
+class TestStartBuildTool:
+    """Command construction for the start_build tool (no subprocess run)."""
+
+    @pytest.fixture
+    def server_and_calls(self, tmp_path):
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        calls = []
+
+        class FakeJob:
+            def summary(self):
+                return {"id": "job-1", "state": "running"}
+
+        def fake_start(kind, name, cmd, extra=None):
+            calls.append((kind, name, cmd))
+            return FakeJob()
+
+        ctx.jobs.start = fake_start
+        return build_server(ctx), calls
+
+    async def test_target_is_forwarded(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_build", {
+            "bsp_name": "demo-bsp", "target": "core-image-minimal",
+        })
+        kind, name, cmd = calls[0]
+        assert kind == "build" and name == "demo-bsp"
+        idx = cmd.index("--target")
+        assert cmd[idx + 1] == "core-image-minimal"
+
+    async def test_no_target_by_default(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_build", {"bsp_name": "demo-bsp"})
+        assert "--target" not in calls[0][2]
+
+    async def test_target_injection_rejected(self, server_and_calls):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="Invalid target"):
+            await server.call_tool("start_build", {
+                "bsp_name": "demo-bsp", "target": "--clean",
+            })
+        assert not calls
+
+
 class TestNewJobKinds:
     @pytest.mark.parametrize(
         "kind", ["fetch", "deploy", "flash", "gather", "container_build"]
