@@ -1,0 +1,15 @@
+# The package bundles its complete Python dependency closure (including
+# prebuilt manylinux wheels such as pydantic-core, uvloop, orjson) in a
+# dh-virtualenv virtualenv under /opt/venvs/bsp-registry-tools. These
+# wheels are built on manylinux, are already stripped-for-distribution
+# upstream and are not linked against Debian-packaged libraries, so the
+# usual shared-library and stripping checks do not apply.
+bsp-registry-tools: unstripped-binary-or-object
+bsp-registry-tools: library-not-linked-against-libc
+bsp-registry-tools: shared-library-lacks-prerequisites
+# pip, setuptools and bundled wheels ship their own license texts and
+# zipped eggs/wheels inside the venv; they are part of the bundled
+# dependency closure, not Debian-managed files.
+bsp-registry-tools: extra-license-file
+bsp-registry-tools: package-installs-python-egg
+bsp-registry-tools: package-contains-python-dot-directory

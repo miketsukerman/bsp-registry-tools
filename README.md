@@ -62,6 +62,41 @@ pip install "bsp-registry-tools[server]"
 pip install 'bsp-registry-tools[gui]
 ```
 
+### Debian package
+
+Release builds publish `.deb` packages (amd64 and arm64) built with
+[dh-virtualenv](https://dh-virtualenv.readthedocs.io/): all Python
+dependencies (`server`, `gui`, `mcp`, `completions` and `deploy` extras,
+including `kas`) are bundled in a self-contained virtualenv under
+`/opt/venvs/bsp-registry-tools`, and the CLIs are exposed as
+`/usr/bin/bsp`, `bsp-explorer`, `bsp-explorer-web`, `bsp-mcp` and
+`bsp-kas` (the bundled kas, named to avoid clashing with a distro `kas`).
+systemd units for `bsp-server`, `bsp-mcp` and `bsp-explorer-web` are
+shipped disabled by default.
+
+```bash
+sudo apt install ./bsp-registry-tools_<version>_<arch>.deb
+```
+
+To build the package locally:
+
+```bash
+sudo apt-get install -y build-essential debhelper dh-virtualenv python3-dev python3-venv
+dpkg-buildpackage -us -uc -b
+```
+
+Notes:
+
+- The build and target machines must run the **same distribution release**:
+  the bundled virtualenv is tied to the system `python3` ABI.
+- The build needs **internet access** (pip downloads the dependency closure).
+- The `report` extra (WeasyPrint) is **not bundled** because it needs system
+  Pango/cairo libraries. To enable it on the target:
+  `sudo apt install libpango-1.0-0 libpangoft2-1.0-0 &&
+  sudo /opt/venvs/bsp-registry-tools/bin/pip install 'bsp-registry-tools[report]'`.
+- `bsp flash` uses `bmaptool` from the apt `bmap-tools` package
+  (installed via Recommends), not from the virtualenv.
+
 ### From Source
 
 ```bash
@@ -1138,7 +1173,7 @@ bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--provider PROVIDER` | Storage provider: `azure` (default) or `aws` |
 | `--container CONTAINER`, `--bucket CONTAINER` | Azure container or AWS S3 bucket name |
 | `--prefix PREFIX` | Remote path prefix template (supports `{device}`, `{release}`, `{distro}`, `{vendor}`, `{date}`) |
-| `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: registry build path) |
+| `--dest-dir PATH` | Local directory to write downloaded artifacts into (default: `<build_path>/build/tmp/deploy/images` under the registry build path) |
 | `--date DATE` | Override the `{date}` placeholder in the prefix template (`YYYY-MM-DD`); defaults to today |
 | `--gather-cache` | Also download and restore Yocto cache archives (DL_DIR / SSTATE_DIR) if available |
 | `--cache-downloads-dir PATH` | Local path to restore the DL_DIR cache into (default: `DL_DIR` env var or `<topdir>/downloads`, where TOPDIR is inferred from `artifact_dirs`) |
@@ -1262,8 +1297,9 @@ bsp flash imx8mp-adv-scarthgap \
 # Use dd instead of bmaptool
 bsp flash imx8mp-adv-scarthgap --target /dev/sdb --tool dd
 
-# Use uuu (mfgtools) for NXP USB flashing (no --target required)
-bsp flash imx8mp-adv-scarthgap --tool uuu --extra-args "-b emmc_all"
+# Use uuu (mfgtools) for NXP USB flashing (no --target required;
+# "-b emmc_all" is used by default unless --extra-args supplies a burn script)
+bsp flash imx8mp-adv-scarthgap --tool uuu
 
 # Flash immediately after a build
 bsp build imx8mp-adv-scarthgap --flash /dev/sdb

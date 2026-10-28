@@ -1,0 +1,48 @@
+#!/usr/bin/make -f
+export DH_VIRTUALENV_INSTALL_ROOT = /opt/venvs
+
+VENV_DIR = debian/bsp-registry-tools/opt/venvs/bsp-registry-tools
+
+%:
+	dh $@ --with python-virtualenv
+
+override_dh_virtualenv:
+	# Bundle the full dependency closure (server, gui, mcp, completions
+	# and deploy extras) in a self-contained virtualenv. The "report"
+	# extra (weasyprint) is intentionally NOT bundled: it needs system
+	# pango/cairo libraries; see README for how to enable it.
+	# --ignore-installed stops pip from treating packages already present
+	# in the *build host's* system site-packages as satisfied; otherwise
+	# they are silently left out of the venv and imports fail on targets
+	# that lack the same distro packages.
+	dh_virtualenv \
+		--python /usr/bin/python3 \
+		--builtin-venv \
+		--upgrade-pip \
+		--preinstall "setuptools>=45" \
+		--preinstall "wheel" \
+		--extra-pip-arg=--ignore-installed \
+		--extras server,gui,mcp,completions,deploy
+
+execute_after_dh_virtualenv:
+	# Generate a static bash completion script for "bsp" from the venv's
+	# bundled argcomplete, so no runtime registration is needed.
+	# register-python-argcomplete only renders a shell template; it does
+	# not import the application, so running it from the staged venv is
+	# safe during the build.
+	mkdir -p debian/bsp-registry-tools/usr/share/bash-completion/completions
+	$(VENV_DIR)/bin/python $(VENV_DIR)/bin/register-python-argcomplete bsp \
+		> debian/bsp-registry-tools/usr/share/bash-completion/completions/bsp
+
+override_dh_installsystemd:
+	# Ship the server units but leave them disabled and stopped; the
+	# admin reviews /etc/default/<unit> and enables what is needed.
+	dh_installsystemd --name=bsp-server --no-enable --no-start
+	dh_installsystemd --name=bsp-mcp --no-enable --no-start
+	dh_installsystemd --name=bsp-explorer-web --no-enable --no-start
+
+# The virtualenv ships prebuilt manylinux wheels (e.g. pydantic-core,
+# uvloop); skip Debian stripping and shared-library dependency scanning.
+override_dh_strip:
+
+override_dh_shlibdeps:

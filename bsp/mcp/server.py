@@ -491,18 +491,23 @@ def build_server(ctx: ServerContext):
     @tool(job_ann,
           "Start a BSP build as a background job and return its job id "
           "immediately (poll job_status). checkout_only validates the "
-          "configuration without building; clean forces a clean build.")
+          "configuration without building; clean forces a clean build. "
+          "target overrides the registry build targets with a specific "
+          "bitbake image or recipe (e.g. 'core-image-minimal').")
     def start_build(
         bsp_name: Optional[str] = None,
         device: Optional[str] = None,
         release: Optional[str] = None,
         features: Optional[List[str]] = None,
+        target: Optional[str] = None,
         checkout_only: bool = False,
         clean: bool = False,
     ) -> Dict:
         ctx.require_writable("start_build")
         sel = selection_args(bsp_name, device, release, features)
         cmd = ctx.cli_command() + ["build"] + sel
+        if target:
+            cmd += ["--target", validate_free_value(target, "target")]
         if checkout_only:
             cmd.append("--checkout")
         if clean:
@@ -613,7 +618,8 @@ def build_server(ctx: ServerContext):
 
     @tool(job_ann,
           "Download (gather) previously deployed artifacts from cloud "
-          "storage as a background job. dest_dir defaults to the registry's "
+          "storage as a background job. dest_dir defaults to "
+          "<build_path>/build/tmp/deploy/images under the registry's "
           "build path; use dry_run=true first to list what would be "
           "downloaded.")
     def start_gather(

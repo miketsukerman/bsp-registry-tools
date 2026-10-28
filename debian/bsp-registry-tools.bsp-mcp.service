@@ -1,0 +1,20 @@
+[Unit]
+Description=BSP Registry Tools MCP server (HTTP transport)
+Documentation=https://github.com/Advantech-EECC/bsp-registry-tools
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Configure via BSP_MCP_* environment variables (see bsp-mcp --help) in
+# /etc/default/bsp-mcp, e.g.:
+#   BSP_MCP_HOST=0.0.0.0
+#   BSP_MCP_PORT=8765
+#   BSP_MCP_REGISTRY=/etc/bsp/bsp-registry.yaml
+EnvironmentFile=-/etc/default/bsp-mcp
+ExecStart=/usr/bin/bsp-mcp --transport http $BSP_MCP_OPTS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
