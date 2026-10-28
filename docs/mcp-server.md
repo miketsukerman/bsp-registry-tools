@@ -61,7 +61,7 @@ Without `--registry` the remote registry is fetched and cached automatically
 | `start_build` | job | Start a build (or `checkout_only` validation) and return a job id; `target` overrides the registry bitbake targets |
 | `start_fetch` | job | Fetch all sources without building (cache pre-warm / validation) |
 | `start_scan` | job | Start a CVE scan / SBOM generation (`trivy` or `syft+grype`) |
-| `start_hil_test` | job | Start a HIL test run (`lava`, `direct-local`, `direct-ssh`, `direct-serial`) |
+| `start_hil_test` | job | Start a HIL test run (`lava`, `direct-local`, `direct-ssh`, `direct-serial`); `ssh_host`/`ssh_port` override the registry's `testing.direct.transport` for this run (e.g. the DUT's current DHCP address; `direct-ssh`/`direct-serial` only) |
 | `start_deploy` | job | Upload built artifacts to Azure Blob / AWS S3 (`dry_run` supported) |
 | `start_gather` | job | Download deployed artifacts from cloud storage (`dry_run` supported) |
 | `start_flash` | destructive | Flash a built image to a block device (`dry_run` defaults to **true**) |

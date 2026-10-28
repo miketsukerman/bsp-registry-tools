@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import functools
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -54,6 +55,7 @@ from bsp.mcp.jobs import JobError, JobManager
 logger = logging.getLogger("bsp.mcp")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+:-]{0,127}$")
+HOSTNAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 
 
 def _server_types():
@@ -179,6 +181,36 @@ def validate_free_value(value: str, what: str) -> str:
             f"Invalid {what} '{value}': must be non-empty, must not start "
             "with '-' and must not contain control characters"
         )
+    return value
+
+
+def validate_ssh_host(value: str) -> str:
+    """
+    Validate an agent-supplied SSH host (IP address or hostname).
+
+    The value may originate from a device's serial console, so it is treated
+    as hostile: only literal IPv4/IPv6 addresses or plain hostnames pass.
+    This rules out option injection ('-oProxyCommand=...'), 'user@host'
+    forms, spaces and embedded ports.
+    """
+    if isinstance(value, str) and value:
+        try:
+            ipaddress.ip_address(value)
+            return value
+        except ValueError:
+            pass
+        if HOSTNAME_RE.match(value):
+            return value
+    raise ValueError(
+        f"Invalid ssh_host '{value}': must be an IPv4/IPv6 address or a "
+        f"hostname matching {HOSTNAME_RE.pattern}"
+    )
+
+
+def validate_ssh_port(value: int) -> int:
+    """Validate an agent-supplied SSH port (1..65535)."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+        raise ValueError(f"Invalid ssh_port '{value}': must be an integer in 1..65535")
     return value
 
 
@@ -550,23 +582,38 @@ def build_server(ctx: ServerContext):
     @tool(job_ann,
           "Start a hardware-in-the-loop test run as a background job "
           "(always waits for the result inside the job). Tokens are never "
-          "passed as arguments; they stay in the registry as $ENV{...}.")
+          "passed as arguments; they stay in the registry as $ENV{...}. "
+          "ssh_host/ssh_port override the registry's testing.direct.transport "
+          "for this run (e.g. the DUT's current DHCP address).")
     def start_hil_test(
         bsp_name: Optional[str] = None,
         device: Optional[str] = None,
         release: Optional[str] = None,
         features: Optional[List[str]] = None,
         backend: str = "lava",
+        ssh_host: Optional[str] = None,
+        ssh_port: Optional[int] = None,
     ) -> Dict:
         ctx.require_writable("start_hil_test")
         if backend not in TEST_BACKENDS:
             raise ValueError(f"backend must be one of {TEST_BACKENDS}")
+        if (ssh_host is not None or ssh_port is not None) and \
+                backend not in ("direct-ssh", "direct-serial"):
+            raise ValueError("ssh_host/ssh_port only apply to direct-ssh and direct-serial")
         sel = selection_args(bsp_name, device, release, features)
         cmd = ctx.cli_command() + ["test"] + sel + ["--backend", backend, "--wait"]
         lava_server = os.environ.get("BSP_MCP_LAVA_SERVER")
         if backend == "lava" and lava_server:
             cmd += ["--lava-server", lava_server]
-        job = ctx.jobs.start("test", bsp_name or f"{device}/{release}", cmd)
+        extra = {}
+        if ssh_host is not None:
+            cmd += ["--ssh-host", validate_ssh_host(ssh_host)]
+            extra["ssh_host"] = ssh_host
+        if ssh_port is not None:
+            cmd += ["--ssh-port", str(validate_ssh_port(ssh_port))]
+            extra["ssh_port"] = str(ssh_port)
+        job = ctx.jobs.start("test", bsp_name or f"{device}/{release}", cmd,
+                             extra=extra or None)
         return job.summary()
 
     @tool(job_ann,

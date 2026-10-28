@@ -390,6 +390,115 @@ class TestStartBuildTool:
         assert not calls
 
 
+class TestStartHilTestSshOverrides:
+    """ssh_host/ssh_port forwarding and validation in start_hil_test."""
+
+    @pytest.fixture
+    def server_and_calls(self, tmp_path):
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        calls = []
+
+        class FakeJob:
+            def summary(self):
+                return {"id": "job-1", "state": "running"}
+
+        def fake_start(kind, name, cmd, extra=None):
+            calls.append((kind, name, cmd, extra))
+            return FakeJob()
+
+        ctx.jobs.start = fake_start
+        return build_server(ctx), calls
+
+    async def test_host_and_port_forwarded(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-ssh",
+            "ssh_host": "192.168.3.42", "ssh_port": 2222,
+        })
+        _, _, cmd, extra = calls[0]
+        joined = " ".join(cmd)
+        assert "--ssh-host 192.168.3.42 --ssh-port 2222" in joined
+        assert extra == {"ssh_host": "192.168.3.42", "ssh_port": "2222"}
+
+    async def test_command_unchanged_without_overrides(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-ssh",
+        })
+        _, _, cmd, extra = calls[0]
+        assert "--ssh-host" not in cmd and "--ssh-port" not in cmd
+        assert extra is None
+        assert cmd[-3:] == ["--backend", "direct-ssh", "--wait"]
+
+    @pytest.mark.parametrize("host", ["-oProxyCommand=x", "a b", "root@h", ""])
+    async def test_rejected_hosts(self, server_and_calls, host):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="ssh_host"):
+            await server.call_tool("start_hil_test", {
+                "bsp_name": "demo-bsp", "backend": "direct-ssh",
+                "ssh_host": host,
+            })
+        assert not calls
+
+    @pytest.mark.parametrize("port", [0, 70000])
+    async def test_rejected_ports(self, server_and_calls, port):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="ssh_port"):
+            await server.call_tool("start_hil_test", {
+                "bsp_name": "demo-bsp", "backend": "direct-ssh",
+                "ssh_port": port,
+            })
+        assert not calls
+
+    async def test_rejected_for_lava_backend(self, server_and_calls):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError,
+                           match="only apply to direct-ssh and direct-serial"):
+            await server.call_tool("start_hil_test", {
+                "bsp_name": "demo-bsp", "backend": "lava",
+                "ssh_host": "192.168.3.42",
+            })
+        assert not calls
+
+    @pytest.mark.parametrize("host", ["fd00::2820:ed93", "rom2820-ed93.local"])
+    async def test_accepted_hosts(self, server_and_calls, host):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-serial",
+            "ssh_host": host,
+        })
+        _, _, cmd, extra = calls[0]
+        assert cmd[cmd.index("--ssh-host") + 1] == host
+        assert extra["ssh_host"] == host
+
+    async def test_job_status_reports_ssh_host(self, tmp_path, fake_bsp):
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        ctx.cli_command = lambda: [fake_bsp, "ok"]
+        server = build_server(ctx)
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-ssh",
+            "ssh_host": "192.168.3.42", "ssh_port": 2222,
+        })
+        job = ctx.jobs.list()[0]
+        _wait_terminal(ctx.jobs, job.id)
+        status = ctx.jobs.get(job.id).summary()
+        assert status["extra"]["ssh_host"] == "192.168.3.42"
+        assert status["extra"]["ssh_port"] == "2222"
+
+
 class TestNewJobKinds:
     @pytest.mark.parametrize(
         "kind", ["fetch", "deploy", "flash", "gather", "container_build"]
