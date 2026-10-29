@@ -503,6 +503,35 @@ class TestStartHilTestSshOverrides:
         assert cmd[cmd.index("--ssh-host") + 1] == host
         assert extra["ssh_host"] == host
 
+    async def test_test_suites_forwarded(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-ssh",
+            "test_suites": ["adv-context", "adv-cpu"],
+        })
+        _, _, cmd, _extra = calls[0]
+        joined = " ".join(cmd)
+        assert "--test-suite adv-context" in joined
+        assert "--test-suite adv-cpu" in joined
+
+    async def test_no_test_suite_flag_by_default(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "direct-ssh",
+        })
+        assert "--test-suite" not in calls[0][2]
+
+    @pytest.mark.parametrize("suite", ["--flag", "a b", "", "x" * 65, "a/b"])
+    async def test_invalid_test_suite_rejected(self, server_and_calls, suite):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="test suite"):
+            await server.call_tool("start_hil_test", {
+                "bsp_name": "demo-bsp", "backend": "direct-ssh",
+                "test_suites": [suite],
+            })
+        assert not calls
+
     async def test_job_status_reports_ssh_host(self, tmp_path, fake_bsp):
         from bsp.mcp.server import ServerContext, build_server
 

@@ -1270,10 +1270,30 @@ bsp test poky-qemux86-64-walnascar --backend lava --wait
 | Field         | Type            | Description |
 |---------------|-----------------|-------------|
 | `definitions` | list[object]    | One or more test-definition sources to execute (full test sets supported). |
+| `lava_job`    | string (opt.)   | Path to a LAVA job YAML (or `.j2`/`.jinja2` template). Every `actions[].test.definitions[]` entry becomes one test-definition source, exactly like `--test-job-path` on the CLI: entries with a `repository` are cloned from git, entries without one are resolved relative to the job file. Relative paths resolve against the registry root. Job sources are appended after `definitions`; the job's `timeout.minutes` applies when neither `timeout` here nor `--direct-timeout` is set. A `--test-job-path` on the command line replaces `lava_job` for that run. |
+| `suites`      | list[str] (opt.)| Subset of entry names to run (matched against `actions[].test.definitions[].name` / source `name`). Empty means all; `--test-suite` replaces this list. |
 | `transport`   | object (opt.)   | Transport config for direct runs (`local` or `ssh`). |
 | `timeout`     | int (opt.)      | Per-step timeout in seconds (default: `1800`). |
 | `output_dir`  | string (opt.)   | Output directory for direct-run logs and summary JSON. |
 | `continue_on_failure` | bool (opt.) | Continue running remaining steps after failures (default: `false`, fail-fast). |
+
+With `lava_job` the same job file serves both the LAVA backend and the direct
+backends, so the suite list and board-specific parameters live in one place
+instead of being copied into `definitions`:
+
+```yaml
+testing:
+  backend: direct-ssh
+  direct:
+    lava_job: vendors/advantech-europe/nxp/test/jobs/rom2820-ed93-modbsp.yaml
+    suites: [adv-context, adv-cpu, adv-ram, adv-thermal]
+    continue_on_failure: true
+    transport:
+      mode: ssh
+      user: root
+      strict_host_key_checking: false
+      known_hosts_file: /dev/null
+```
 
 ### `bsp[*].testing.direct.definitions[*]` fields
 

@@ -56,6 +56,7 @@ logger = logging.getLogger("bsp.mcp")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+:-]{0,127}$")
 HOSTNAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+TEST_SUITE_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def _server_types():
@@ -219,6 +220,17 @@ def validate_free_value(value: str, what: str) -> str:
         raise ValueError(
             f"Invalid {what} '{value}': must be non-empty, must not start "
             "with '-' and must not contain control characters"
+        )
+    return value
+
+
+def validate_test_suite(value: str) -> str:
+    """Validate an agent-supplied test-suite name (``--test-suite``)."""
+    if (not isinstance(value, str) or value.startswith("-")
+            or not TEST_SUITE_RE.match(value)):
+        raise ValueError(
+            f"Invalid test suite '{value}': must match {TEST_SUITE_RE.pattern} "
+            "and must not start with '-'"
         )
     return value
 
@@ -623,9 +635,13 @@ def build_server(ctx: ServerContext):
           "(always waits for the result inside the job). Tokens are never "
           "passed as arguments; they stay in the registry as $ENV{...}. "
           "ssh_host/ssh_port override the registry's testing.direct.transport "
-          "for this run (e.g. the DUT's current DHCP address). Direct "
-          "backends write their JSON/HTML/PDF reports to a per-job directory; "
-          "call test_report when the job is terminal for the structured result.")
+          "for this run (e.g. the DUT's current DHCP address). For direct "
+          "backends the test suites come from the registry's "
+          "testing.direct.definitions and/or the LAVA job referenced by "
+          "testing.direct.lava_job; test_suites restricts the run to the "
+          "named suites. Direct backends write their JSON/HTML/PDF reports "
+          "to a per-job directory; call test_report when the job is "
+          "terminal for the structured result.")
     def start_hil_test(
         bsp_name: Optional[str] = None,
         device: Optional[str] = None,
@@ -634,6 +650,7 @@ def build_server(ctx: ServerContext):
         backend: str = "lava",
         ssh_host: Optional[str] = None,
         ssh_port: Optional[int] = None,
+        test_suites: Optional[List[str]] = None,
     ) -> Dict:
         ctx.require_writable("start_hil_test")
         if backend not in TEST_BACKENDS:
@@ -650,6 +667,8 @@ def build_server(ctx: ServerContext):
         if backend in ("direct-local", "direct-ssh", "direct-serial"):
             cmd += ["--direct-output-dir", "{job_dir}/test-results"]
             extra["reports_dir"] = "{job_dir}/test-results"
+        for suite in test_suites or []:
+            cmd += ["--test-suite", validate_test_suite(suite)]
         if ssh_host is not None:
             cmd += ["--ssh-host", validate_ssh_host(ssh_host)]
             extra["ssh_host"] = ssh_host

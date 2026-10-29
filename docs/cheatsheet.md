@@ -299,6 +299,11 @@ bsp test <bsp_name> --backend direct-ssh \
     --test-job-path jobs/rsb3720-modbsp.yaml \
     --ssh-host 192.168.3.195 --ssh-user root
 
+# No --test-job-path needed when the preset sets testing.direct.lava_job;
+# the registry's LAVA job (and its suites: filter) is used automatically
+bsp test <bsp_name> --backend direct-ssh \
+    --ssh-host 192.168.3.195 --ssh-user root
+
 # Run only selected suites from the job YAML (actions[].test.definitions[].name)
 bsp test <bsp_name> --backend direct-ssh \
     --test-job-path jobs/rsb3720-modbsp.yaml \

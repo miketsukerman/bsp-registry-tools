@@ -622,6 +622,78 @@ class TestDirectTestingConfig:
         assert cfg.continue_on_failure is False
         assert cfg.definitions == []
         assert cfg.transport is None
+        assert cfg.lava_job == ""
+        assert cfg.suites == []
+
+    def test_registry_with_direct_lava_job_and_suites_parses(self, tmp_path):
+        from bsp.utils import get_registry_from_yaml_file
+
+        yaml_content = """
+specification:
+  version: "2.1"
+registry:
+  devices:
+    - slug: my-device
+      description: "Test Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap"
+  bsp:
+    - name: my-preset
+      description: "Preset"
+      device: my-device
+      release: scarthgap
+      testing:
+        backend: direct-ssh
+        direct:
+          lava_job: vendors/test/jobs/board.yaml
+          suites: [adv-context, adv-cpu]
+          continue_on_failure: true
+"""
+        registry_file = tmp_path / "bsp-registry.yaml"
+        registry_file.write_text(yaml_content)
+        root = get_registry_from_yaml_file(registry_file)
+        direct = root.registry.bsp[0].testing.direct
+        assert direct.lava_job == "vendors/test/jobs/board.yaml"
+        assert direct.suites == ["adv-context", "adv-cpu"]
+        assert direct.continue_on_failure is True
+
+    def test_registry_without_lava_job_fields_unchanged(self, tmp_path):
+        from bsp.utils import get_registry_from_yaml_file
+
+        yaml_content = """
+specification:
+  version: "2.1"
+registry:
+  devices:
+    - slug: my-device
+      description: "Test Device"
+      vendor: test-vendor
+      soc_vendor: test-soc
+  releases:
+    - slug: scarthgap
+      description: "Scarthgap"
+  bsp:
+    - name: my-preset
+      description: "Preset"
+      device: my-device
+      release: scarthgap
+      testing:
+        backend: direct-local
+        direct:
+          definitions:
+            - repo_url: "https://example.com/defs.git"
+              paths: ["auto/"]
+"""
+        registry_file = tmp_path / "bsp-registry.yaml"
+        registry_file.write_text(yaml_content)
+        root = get_registry_from_yaml_file(registry_file)
+        direct = root.registry.bsp[0].testing.direct
+        assert direct.lava_job == ""
+        assert direct.suites == []
+        assert direct.definitions[0].repo_url == "https://example.com/defs.git"
 
     def test_direct_transport_defaults(self):
         transport = DirectTransportConfig()
