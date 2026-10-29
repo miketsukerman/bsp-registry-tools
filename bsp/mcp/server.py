@@ -50,7 +50,7 @@ from mcp.types import ToolAnnotations
 from bsp.mcp import jobs as jobs_mod
 from bsp.mcp import pins as pins_mod
 from bsp.mcp import triage as triage_mod
-from bsp.mcp.jobs import JobError, JobManager
+from bsp.mcp.jobs import TERMINAL_STATES, JobError, JobManager
 
 logger = logging.getLogger("bsp.mcp")
 
@@ -90,6 +90,45 @@ FLASH_TOOLS = ["bmaptool", "dd", "uuu"]
 TREE_MODES = ["default", "full", "compact"]
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3,
                    "NEGLIGIBLE": 4, "UNKNOWN": 5}
+
+TEST_REPORT_FILES = {"html": "direct-test-report.html",
+                     "json": "direct-test-summary.json"}
+TEST_REPORT_MAX_FILE_BYTES = 2 * 1024 * 1024
+TEST_REPORT_EXCERPT_LINES = 20
+TEST_REPORT_EXCERPT_BYTES = 4096
+
+
+def _path_under_roots(path: Path, roots: List[Path]) -> bool:
+    """True when *path* resolves to a location under one of *roots*."""
+    resolved = Path(path).resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(Path(root).resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _case_log_excerpt(log_path: Optional[str], roots: List[Path]) -> Optional[str]:
+    """
+    Last lines of a test case log, or None when the path is missing,
+    unreadable or outside *roots*. The content is untrusted device output
+    and is returned as data only.
+    """
+    if not log_path:
+        return None
+    path = Path(log_path)
+    if not _path_under_roots(path, roots):
+        return None
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    excerpt = "\n".join(lines[-TEST_REPORT_EXCERPT_LINES:])
+    if len(excerpt) > TEST_REPORT_EXCERPT_BYTES:
+        excerpt = excerpt[-TEST_REPORT_EXCERPT_BYTES:]
+    return excerpt
 
 INSTRUCTIONS = """\
 This server drives the BSP (Board Support Package) build workflow.
@@ -584,7 +623,9 @@ def build_server(ctx: ServerContext):
           "(always waits for the result inside the job). Tokens are never "
           "passed as arguments; they stay in the registry as $ENV{...}. "
           "ssh_host/ssh_port override the registry's testing.direct.transport "
-          "for this run (e.g. the DUT's current DHCP address).")
+          "for this run (e.g. the DUT's current DHCP address). Direct "
+          "backends write their JSON/HTML/PDF reports to a per-job directory; "
+          "call test_report when the job is terminal for the structured result.")
     def start_hil_test(
         bsp_name: Optional[str] = None,
         device: Optional[str] = None,
@@ -606,6 +647,9 @@ def build_server(ctx: ServerContext):
         if backend == "lava" and lava_server:
             cmd += ["--lava-server", lava_server]
         extra = {}
+        if backend in ("direct-local", "direct-ssh", "direct-serial"):
+            cmd += ["--direct-output-dir", "{job_dir}/test-results"]
+            extra["reports_dir"] = "{job_dir}/test-results"
         if ssh_host is not None:
             cmd += ["--ssh-host", validate_ssh_host(ssh_host)]
             extra["ssh_host"] = ssh_host
@@ -853,6 +897,146 @@ def build_server(ctx: ServerContext):
             "findings": findings,
             "sbom_files": sorted(sboms),
         }
+
+    def _finished_test_job(job_id: str):
+        """Return (job, reports_dir) for a terminal test job, or raise."""
+        job = ctx.jobs.get(job_id)
+        if job.kind != "test":
+            raise JobError(f"Job {job_id} is a '{job.kind}' job, not a test job")
+        if job.state not in TERMINAL_STATES:
+            raise JobError(
+                f"Job {job_id} is still running; call test_report when "
+                "job_status is terminal"
+            )
+        reports_dir = Path(job.extra.get("reports_dir")
+                           or (Path(job.job_dir) / "test-results"))
+        return job, reports_dir
+
+    @tool(read_only_ann,
+          "Structured result of a finished HIL test job: totals, per-suite "
+          "and per-case results, failures with short log excerpts, and the "
+          "paths of the HTML/PDF report on the bench. Call after job_status "
+          "is terminal.")
+    def test_report(job_id: str, include_cases: bool = True,
+                    max_cases: int = 200) -> Dict:
+        job, reports_dir = _finished_test_job(job_id)
+        summary_path = reports_dir / TEST_REPORT_FILES["json"]
+        if not summary_path.is_file():
+            raise JobError(
+                f"Job {job_id} has no test summary ({summary_path}): "
+                "the run failed before tests started; see job_log"
+            )
+        data = json.loads(summary_path.read_text(errors="replace"))
+        roots = [Path(job.job_dir)] + ctx.allowed_roots
+        totals = {"suites": 0, "cases": 0, "pass": 0, "fail": 0,
+                  "skip": 0, "unknown": 0, "duration_s": 0.0}
+        suites_out: List[Dict] = []
+        failures: List[Dict] = []
+        truncated = False
+        case_budget = max(0, int(max_cases))
+        for suite in data.get("suites") or []:
+            totals["suites"] += 1
+            try:
+                totals["duration_s"] += float(suite.get("duration") or 0)
+            except (TypeError, ValueError):
+                pass
+            suite_out = {
+                "name": suite.get("name"),
+                "status": suite.get("status"),
+                "duration_s": suite.get("duration"),
+                "cases": [],
+            }
+            for case in suite.get("cases") or []:
+                signals = case.get("lava_signals") or []
+                if signals:
+                    entries = [
+                        {
+                            "name": sig.get("test_case_id") or case.get("name"),
+                            "result": (sig.get("result") or "unknown").lower(),
+                            "measurement": sig.get("measurement"),
+                            "units": sig.get("units"),
+                            "requirement_id": sig.get("requirement_id") or None,
+                            "timed_out": bool(case.get("timed_out")),
+                        }
+                        for sig in signals
+                    ]
+                else:
+                    entries = [{
+                        "name": case.get("name"),
+                        "result": (case.get("status") or "unknown").lower(),
+                        "measurement": None,
+                        "units": None,
+                        "requirement_id": None,
+                        "timed_out": bool(case.get("timed_out")),
+                    }]
+                for entry in entries:
+                    totals["cases"] += 1
+                    result = entry["result"]
+                    totals[result if result in ("pass", "fail", "skip")
+                           else "unknown"] += 1
+                    if result == "fail":
+                        failures.append({
+                            "suite": suite.get("name"),
+                            "case": entry["name"],
+                            "result": result,
+                            "log_excerpt": _case_log_excerpt(
+                                case.get("log_path"), roots),
+                        })
+                    if include_cases:
+                        if case_budget > 0:
+                            suite_out["cases"].append(entry)
+                            case_budget -= 1
+                        else:
+                            truncated = True
+            suites_out.append(suite_out)
+        totals["duration_s"] = round(totals["duration_s"], 3)
+        pdf_path = reports_dir / "direct-test-report.pdf"
+        return {
+            "job_id": job_id,
+            "job_state": job.state,
+            "passed": bool(data.get("passed")),
+            "label": data.get("label"),
+            "backend": data.get("backend"),
+            "ssh_host": job.extra.get("ssh_host"),
+            "totals": totals,
+            "suites": suites_out,
+            "failures": failures,
+            "report_files": {
+                "json": str(summary_path),
+                "html": str(reports_dir / TEST_REPORT_FILES["html"]),
+                "pdf": str(pdf_path) if pdf_path.is_file() else None,
+            },
+            "truncated": truncated,
+        }
+
+    @tool(read_only_ann,
+          "Raw content of a finished HIL test job's report file: kind='html' "
+          "for direct-test-report.html, kind='json' for "
+          "direct-test-summary.json. Capped at 2 MB; only paths under the "
+          "allowed roots are readable.")
+    def test_report_file(job_id: str, kind: str = "html") -> str:
+        job, reports_dir = _finished_test_job(job_id)
+        if kind not in TEST_REPORT_FILES:
+            raise ValueError(
+                f"kind must be one of {sorted(TEST_REPORT_FILES)}")
+        path = reports_dir / TEST_REPORT_FILES[kind]
+        roots = [Path(job.job_dir)] + ctx.allowed_roots
+        if not _path_under_roots(path, roots):
+            raise PermissionError(
+                f"Path '{path.resolve()}' is outside the allowed roots: "
+                + ", ".join(str(r) for r in roots)
+            )
+        if not path.is_file():
+            raise JobError(
+                f"Job {job_id} has no {TEST_REPORT_FILES[kind]} ({path}): "
+                "the run failed before tests started; see job_log"
+            )
+        if path.stat().st_size > TEST_REPORT_MAX_FILE_BYTES:
+            raise JobError(
+                f"{path} exceeds the {TEST_REPORT_MAX_FILE_BYTES // (1024 * 1024)} MB "
+                "limit for test_report_file"
+            )
+        return path.read_text(errors="replace")
 
     # -- Maintenance ------------------------------------------------------
 
