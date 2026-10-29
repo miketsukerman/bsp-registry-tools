@@ -423,7 +423,8 @@ class TestStartHilTestSshOverrides:
         _, _, cmd, extra = calls[0]
         joined = " ".join(cmd)
         assert "--ssh-host 192.168.3.42 --ssh-port 2222" in joined
-        assert extra == {"ssh_host": "192.168.3.42", "ssh_port": "2222"}
+        assert extra == {"reports_dir": "{job_dir}/test-results",
+                         "ssh_host": "192.168.3.42", "ssh_port": "2222"}
 
     async def test_command_unchanged_without_overrides(self, server_and_calls):
         server, calls = server_and_calls
@@ -432,8 +433,31 @@ class TestStartHilTestSshOverrides:
         })
         _, _, cmd, extra = calls[0]
         assert "--ssh-host" not in cmd and "--ssh-port" not in cmd
+        assert extra == {"reports_dir": "{job_dir}/test-results"}
+        idx = cmd.index("--direct-output-dir")
+        assert cmd[idx + 1] == "{job_dir}/test-results"
+
+    @pytest.mark.parametrize("backend",
+                             ["direct-local", "direct-ssh", "direct-serial"])
+    async def test_direct_backends_get_per_job_output_dir(
+            self, server_and_calls, backend):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": backend,
+        })
+        _, _, cmd, extra = calls[0]
+        assert cmd[cmd.index("--direct-output-dir") + 1] == "{job_dir}/test-results"
+        assert extra["reports_dir"] == "{job_dir}/test-results"
+
+    async def test_lava_backend_command_unchanged(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_hil_test", {
+            "bsp_name": "demo-bsp", "backend": "lava",
+        })
+        _, _, cmd, extra = calls[0]
+        assert "--direct-output-dir" not in cmd
         assert extra is None
-        assert cmd[-3:] == ["--backend", "direct-ssh", "--wait"]
+        assert cmd[-3:] == ["--backend", "lava", "--wait"]
 
     @pytest.mark.parametrize("host", ["-oProxyCommand=x", "a b", "root@h", ""])
     async def test_rejected_hosts(self, server_and_calls, host):
@@ -499,6 +523,252 @@ class TestStartHilTestSshOverrides:
         assert status["extra"]["ssh_port"] == "2222"
 
 
+class TestTestReport:
+    """test_report / test_report_file on a fixture direct-test-summary.json."""
+
+    SUMMARY = {
+        "label": "demo-bsp",
+        "backend": "direct-ssh",
+        "passed": False,
+        "suite_count": 2,
+        "suites": [
+            {
+                "name": "context",
+                "status": "pass",
+                "duration": 3.1,
+                "cases": [
+                    {
+                        "name": "kernel-version",
+                        "status": "pass",
+                        "duration": 1.0,
+                        "timed_out": False,
+                        "log_path": None,
+                        "lava_signals": [
+                            {"test_case_id": "kernel-version",
+                             "result": "pass",
+                             "requirement_id": "BSP-CTX-002",
+                             "measurement": None, "units": None},
+                        ],
+                    },
+                    {
+                        # No signals: falls back to the case status.
+                        "name": "hostname",
+                        "status": "pass",
+                        "duration": 1.0,
+                        "timed_out": False,
+                        "log_path": None,
+                        "lava_signals": [],
+                    },
+                    {
+                        "name": "optional-feature",
+                        "status": "pass",
+                        "duration": 1.1,
+                        "timed_out": False,
+                        "log_path": None,
+                        "lava_signals": [
+                            {"test_case_id": "optional-feature",
+                             "result": "skip"},
+                        ],
+                    },
+                ],
+            },
+            {
+                "name": "cpu",
+                "status": "fail",
+                "duration": 38.1,
+                "cases": [
+                    {
+                        "name": "cpu-model",
+                        "status": "fail",
+                        "duration": 20.0,
+                        "timed_out": False,
+                        "log_path": "LOG_INSIDE",
+                        "lava_signals": [
+                            {"test_case_id": "cpu-model", "result": "fail"},
+                        ],
+                    },
+                    {
+                        "name": "cpu-outside",
+                        "status": "fail",
+                        "duration": 10.0,
+                        "timed_out": False,
+                        "log_path": "LOG_OUTSIDE",
+                        "lava_signals": [
+                            {"test_case_id": "cpu-outside", "result": "fail"},
+                        ],
+                    },
+                    {
+                        "name": "cpu-freq",
+                        "status": "pass",
+                        "duration": 8.1,
+                        "timed_out": False,
+                        "log_path": None,
+                        "lava_signals": [
+                            {"test_case_id": "cpu-freq",
+                             "result": "inconclusive"},
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+
+    @pytest.fixture
+    def report_env(self, tmp_path):
+        from bsp.mcp.jobs import Job
+        from bsp.mcp.server import ServerContext, build_server
+
+        reg_dir = tmp_path / "reg"
+        reg_dir.mkdir()
+        registry = reg_dir / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        server = build_server(ctx)
+
+        job_dir = ctx.state_dir / "job-test-1"
+        reports = job_dir / "test-results"
+        reports.mkdir(parents=True)
+        inside_log = reports / "cpu-model.log"
+        inside_log.write_text(
+            "\n".join(f"line{i}" for i in range(1, 31)) + "\n")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        outside_log = outside / "cpu-outside.log"
+        outside_log.write_text("device secret\n")
+
+        summary = json.loads(
+            json.dumps(self.SUMMARY)
+            .replace("LOG_INSIDE", str(inside_log))
+            .replace("LOG_OUTSIDE", str(outside_log))
+        )
+        (reports / "direct-test-summary.json").write_text(json.dumps(summary))
+        (reports / "direct-test-report.html").write_text("<html>report</html>")
+
+        job = Job(id="job-test-1", kind="test", target="demo-bsp",
+                  command=["bsp", "test"], state="failed",
+                  job_dir=str(job_dir),
+                  extra={"reports_dir": str(reports),
+                         "ssh_host": "192.168.3.242"})
+        ctx.jobs._jobs[job.id] = job
+        return server, ctx, reports
+
+    @staticmethod
+    async def _call(server, name, args):
+        result = await server.call_tool(name, args)
+        content = getattr(result, "content", result)
+        return json.loads(content[0].text)
+
+    async def test_totals_suites_and_report_files(self, report_env):
+        server, _, reports = report_env
+        result = await self._call(server, "test_report",
+                                  {"job_id": "job-test-1"})
+        assert result["job_id"] == "job-test-1"
+        assert result["job_state"] == "failed"
+        assert result["passed"] is False
+        assert result["label"] == "demo-bsp"
+        assert result["backend"] == "direct-ssh"
+        assert result["ssh_host"] == "192.168.3.242"
+        assert result["totals"] == {
+            "suites": 2, "cases": 6, "pass": 2, "fail": 2,
+            "skip": 1, "unknown": 1, "duration_s": 41.2,
+        }
+        assert result["truncated"] is False
+        assert result["report_files"]["json"] == str(
+            reports / "direct-test-summary.json")
+        assert result["report_files"]["html"] == str(
+            reports / "direct-test-report.html")
+        assert result["report_files"]["pdf"] is None
+
+        context = next(s for s in result["suites"] if s["name"] == "context")
+        by_name = {c["name"]: c for c in context["cases"]}
+        assert by_name["hostname"]["result"] == "pass"  # no signals: status
+        assert by_name["kernel-version"]["requirement_id"] == "BSP-CTX-002"
+        assert by_name["optional-feature"]["result"] == "skip"
+
+    async def test_failures_and_log_excerpts(self, report_env):
+        server, _, _ = report_env
+        result = await self._call(server, "test_report",
+                                  {"job_id": "job-test-1"})
+        failures = {f["case"]: f for f in result["failures"]}
+        assert set(failures) == {"cpu-model", "cpu-outside"}
+        excerpt = failures["cpu-model"]["log_excerpt"]
+        assert excerpt.splitlines() == [f"line{i}" for i in range(11, 31)]
+        # Log outside the allowed roots is never read.
+        assert failures["cpu-outside"]["log_excerpt"] is None
+        assert failures["cpu-model"]["suite"] == "cpu"
+
+    async def test_max_cases_truncates_but_totals_complete(self, report_env):
+        server, _, _ = report_env
+        result = await self._call(server, "test_report", {
+            "job_id": "job-test-1", "max_cases": 2,
+        })
+        assert result["truncated"] is True
+        returned = sum(len(s["cases"]) for s in result["suites"])
+        assert returned == 2
+        assert result["totals"]["cases"] == 6
+
+    async def test_running_job_rejected(self, report_env):
+        from bsp.mcp.jobs import Job
+        from bsp.mcp.server import ToolError
+        server, ctx, _ = report_env
+        ctx.jobs._jobs["job-run"] = Job(
+            id="job-run", kind="test", target="demo", command=[],
+            state="running", job_dir=str(ctx.state_dir / "job-run"))
+        with pytest.raises(ToolError, match="still running"):
+            await server.call_tool("test_report", {"job_id": "job-run"})
+
+    async def test_missing_summary_names_path_and_hint(self, report_env):
+        from bsp.mcp.jobs import Job
+        from bsp.mcp.server import ToolError
+        server, ctx, _ = report_env
+        job_dir = ctx.state_dir / "job-empty"
+        job_dir.mkdir()
+        ctx.jobs._jobs["job-empty"] = Job(
+            id="job-empty", kind="test", target="demo", command=[],
+            state="failed", job_dir=str(job_dir))
+        with pytest.raises(ToolError) as exc:
+            await server.call_tool("test_report", {"job_id": "job-empty"})
+        assert "direct-test-summary.json" in str(exc.value)
+        assert "the run failed before tests started; see job_log" in str(exc.value)
+
+    async def test_non_test_job_rejected(self, report_env):
+        from bsp.mcp.jobs import Job
+        from bsp.mcp.server import ToolError
+        server, ctx, _ = report_env
+        ctx.jobs._jobs["job-build"] = Job(
+            id="job-build", kind="build", target="demo", command=[],
+            state="succeeded", job_dir=str(ctx.state_dir / "job-build"))
+        with pytest.raises(ToolError, match="not a test job"):
+            await server.call_tool("test_report", {"job_id": "job-build"})
+
+    async def test_report_file_returns_html(self, report_env):
+        server, _, _ = report_env
+        result = await server.call_tool("test_report_file", {
+            "job_id": "job-test-1", "kind": "html",
+        })
+        content = getattr(result, "content", result)
+        assert content[0].text == "<html>report</html>"
+
+    async def test_report_file_rejects_unknown_kind(self, report_env):
+        from bsp.mcp.server import ToolError
+        server, _, _ = report_env
+        with pytest.raises(ToolError, match="kind must be one of"):
+            await server.call_tool("test_report_file", {
+                "job_id": "job-test-1", "kind": "pdf",
+            })
+
+    async def test_report_file_rejects_oversized(self, report_env):
+        from bsp.mcp.server import ToolError
+        server, _, reports = report_env
+        (reports / "direct-test-report.html").write_text(
+            "x" * (2 * 1024 * 1024 + 1))
+        with pytest.raises(ToolError, match="2 MB"):
+            await server.call_tool("test_report_file", {
+                "job_id": "job-test-1", "kind": "html",
+            })
+
+
 class TestNewJobKinds:
     @pytest.mark.parametrize(
         "kind", ["fetch", "deploy", "flash", "gather", "container_build"]
@@ -559,7 +829,7 @@ class TestEndToEndStdio:
                         "list_containers", "registry_tree", "list_remotes",
                         "add_remote", "remove_remote", "rename_remote",
                         "set_remote_url"} <= names
-                assert len(names) == 30
+                assert len(names) == 32
 
                 prompts = await session.list_prompts()
                 prompt_names = {p.name for p in prompts.prompts}

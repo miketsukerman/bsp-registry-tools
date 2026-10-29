@@ -61,7 +61,7 @@ Without `--registry` the remote registry is fetched and cached automatically
 | `start_build` | job | Start a build (or `checkout_only` validation) and return a job id; `target` overrides the registry bitbake targets |
 | `start_fetch` | job | Fetch all sources without building (cache pre-warm / validation) |
 | `start_scan` | job | Start a CVE scan / SBOM generation (`trivy` or `syft+grype`) |
-| `start_hil_test` | job | Start a HIL test run (`lava`, `direct-local`, `direct-ssh`, `direct-serial`); `ssh_host`/`ssh_port` override the registry's `testing.direct.transport` for this run (e.g. the DUT's current DHCP address; `direct-ssh`/`direct-serial` only) |
+| `start_hil_test` | job | Start a HIL test run (`lava`, `direct-local`, `direct-ssh`, `direct-serial`); `ssh_host`/`ssh_port` override the registry's `testing.direct.transport` for this run (e.g. the DUT's current DHCP address; `direct-ssh`/`direct-serial` only); direct backends write their reports to a per-job directory |
 | `start_deploy` | job | Upload built artifacts to Azure Blob / AWS S3 (`dry_run` supported) |
 | `start_gather` | job | Download deployed artifacts from cloud storage (`dry_run` supported) |
 | `start_flash` | destructive | Flash a built image to a block device (`dry_run` defaults to **true**) |
@@ -73,6 +73,8 @@ Without `--registry` the remote registry is fetched and cached automatically
 | `analyze_build_failure` | read-only | Classify a failed job's log into actionable categories |
 | `read_task_log` | read-only | Read a bitbake task log (restricted to allowed roots) |
 | `scan_findings` | read-only | Parse Trivy/Grype JSON reports of a finished scan job |
+| `test_report` | read-only | Structured result of a finished HIL test job: totals, per-suite/per-case results, failures with short log excerpts and the report file paths |
+| `test_report_file` | read-only | Raw HTML or JSON report of a finished HIL test job (capped at 2 MB) |
 | `list_layer_pins` | read-only | Every `repos.<name>` commit pin across the registry YAML files |
 | `check_layer_pins` | read-only | Compare pins with remote branch heads via `git ls-remote` |
 | `bump_layer_pin` | destructive | Textually bump a pin in the working tree (comments preserved) |
@@ -85,7 +87,10 @@ Without `--registry` the remote registry is fetched and cached automatically
 Long-running work never blocks a tool call: `start_build`, `start_fetch`,
 `start_scan`, `start_hil_test`, `start_deploy`, `start_gather`, `start_flash`
 and `start_container_build` launch the real `bsp` CLI as a background job and
-return a job id immediately; agents poll `job_status` / `job_log`.
+return a job id immediately; agents poll `job_status` / `job_log`. When a
+direct-backend HIL test job reaches a terminal state, `test_report` returns
+its structured result (totals, per-case results, failures with log excerpts)
+and `test_report_file` the raw HTML/JSON report.
 
 Remote management tools edit the shared remotes configuration used by new
 `bsp` CLI runs; the running MCP server keeps using the registry it resolved
