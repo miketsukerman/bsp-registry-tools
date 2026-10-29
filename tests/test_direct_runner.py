@@ -2651,6 +2651,288 @@ actions:
         assert [s.name for s in result.suites] == ["two-suite"]
 
 
+class TestRegistryLavaJob:
+    """Tests for testing.direct.lava_job and testing.direct.suites."""
+
+    @staticmethod
+    def _write_registry_job(tmp_path, with_git_entries=True, timeout_minutes=None):
+        """Create a registry root with a LAVA job under test/jobs/."""
+        registry_root = tmp_path / "registry"
+        jobs_dir = registry_root / "test" / "jobs"
+        defs_dir = jobs_dir / "defs"
+        defs_dir.mkdir(parents=True)
+        for suite in ("alpha", "beta", "gamma"):
+            (defs_dir / f"{suite}.yaml").write_text(
+                f"""
+metadata:
+  name: {suite}-suite
+run:
+  steps:
+    - "echo {suite}-ok"
+""",
+                encoding="utf-8",
+            )
+        timeout_block = ""
+        if timeout_minutes is not None:
+            timeout_block = f"""
+      timeout:
+        minutes: {timeout_minutes}"""
+        git_entries = ""
+        if with_git_entries:
+            git_entries = """
+        - repository: https://example.com/defs-a.git
+          from: git
+          branch: main
+          path: auto/a.yaml
+          name: adv-git-a
+          parameters:
+            BOARD: dut-1
+        - repository: https://example.com/defs-b.git
+          from: git
+          branch: develop
+          revision: abc1234
+          path: auto/b.yaml
+          name: adv-git-b"""
+        (jobs_dir / "board.yaml").write_text(
+            f"""
+actions:
+  - test:{timeout_block}
+      definitions:{git_entries}
+        - path: defs/alpha.yaml
+          name: adv-alpha
+        - path: defs/beta.yaml
+          name: adv-beta
+        - path: defs/gamma.yaml
+          name: adv-gamma
+""",
+            encoding="utf-8",
+        )
+        return registry_root
+
+    def test_lava_job_sources_match_test_job_path(self, tmp_path):
+        """lava_job yields the same sources as --test-job-path does today."""
+        registry_root = self._write_registry_job(tmp_path)
+        job_file = registry_root / "test" / "jobs" / "board.yaml"
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+
+        cfg_registry = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml"), None, None
+        )
+        cfg_cli = runner._merged_config(
+            None,
+            DirectRunOverrides(local_job_paths=[str(job_file)]),
+            None,
+        )
+
+        assert cfg_registry.definitions == cfg_cli.definitions
+        git_a, git_b, local_a = cfg_registry.definitions[:3]
+        assert git_a.repo_url == "https://example.com/defs-a.git"
+        assert git_a.ref == "main"
+        assert git_a.paths == ["auto/a.yaml"]
+        assert git_a.params == {"BOARD": "dut-1"}
+        assert git_a.name == "adv-git-a"
+        assert git_b.ref == "abc1234"  # revision wins over branch
+        assert local_a.local_dir == str(job_file.parent)
+        assert local_a.paths == ["defs/alpha.yaml"]
+        assert local_a.name == "adv-alpha"
+
+    def test_relative_lava_job_resolves_against_registry_root(self, tmp_path, monkeypatch):
+        """A relative lava_job resolves against the registry root, not the cwd."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        cfg = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml"), None, None
+        )
+        assert [d.name for d in cfg.definitions] == ["adv-alpha", "adv-beta", "adv-gamma"]
+        assert cfg.definitions[0].local_dir == str(registry_root / "test" / "jobs")
+
+    def test_registry_suites_filter_run(self, tmp_path):
+        """testing.direct.suites keeps only the named lava_job entries."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=DirectTestConfig(
+                lava_job="test/jobs/board.yaml",
+                suites=["adv-alpha", "adv-gamma"],
+            ),
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="registry-lava-job",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["alpha-suite", "gamma-suite"]
+
+    def test_cli_test_suite_replaces_registry_suites(self, tmp_path):
+        """--test-suite replaces testing.direct.suites entirely."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        resolved = SimpleNamespace(build_path=str(tmp_path / "build"))
+
+        result = runner.run(
+            resolved=resolved,
+            direct_config=DirectTestConfig(
+                lava_job="test/jobs/board.yaml",
+                suites=["adv-alpha"],
+            ),
+            overrides=DirectRunOverrides(
+                backend="direct-local",
+                suites=["adv-beta"],
+                output_dir=str(tmp_path / "out"),
+            ),
+            label="registry-lava-job",
+        )
+
+        assert result.passed is True
+        assert [s.name for s in result.suites] == ["beta-suite"]
+
+    def test_unknown_registry_suite_lists_available_names(self, tmp_path):
+        """A suites entry matching no job entry raises the existing error."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            runner._merged_config(
+                DirectTestConfig(
+                    lava_job="test/jobs/board.yaml",
+                    suites=["missing"],
+                ),
+                None,
+                None,
+            )
+
+        message = str(exc_info.value)
+        assert "No test suites matched" in message
+        assert "adv-alpha" in message and "adv-beta" in message and "adv-gamma" in message
+
+    def test_cli_job_path_replaces_registry_lava_job(self, tmp_path):
+        """--test-job-path wins over testing.direct.lava_job for that run."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        cli_dir = tmp_path / "cli"
+        cli_dir.mkdir()
+        (cli_dir / "job.yaml").write_text(
+            """
+actions:
+  - test:
+      definitions:
+        - path: defs/other.yaml
+          name: cli-suite
+""",
+            encoding="utf-8",
+        )
+
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        cfg = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml"),
+            DirectRunOverrides(local_job_paths=[str(cli_dir / "job.yaml")]),
+            None,
+        )
+        assert [d.name for d in cfg.definitions] == ["cli-suite"]
+
+    def test_explicit_definitions_and_lava_job_combined_in_order(self, tmp_path):
+        """Registry definitions come first, lava_job sources after."""
+        registry_root = self._write_registry_job(tmp_path, with_git_entries=False)
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+
+        cfg = runner._merged_config(
+            DirectTestConfig(
+                definitions=[
+                    TestDefinitionSource(
+                        repo_url="https://example.com/explicit.git",
+                        paths=["auto/"],
+                        name="explicit-suite",
+                    )
+                ],
+                lava_job="test/jobs/board.yaml",
+            ),
+            None,
+            None,
+        )
+        assert [d.name for d in cfg.definitions] == [
+            "explicit-suite", "adv-alpha", "adv-beta", "adv-gamma",
+        ]
+
+    def test_lava_job_timeout_applies_when_no_explicit_timeout(self, tmp_path):
+        """The job's timeout.minutes is used when no timeout is set elsewhere."""
+        registry_root = self._write_registry_job(
+            tmp_path, with_git_entries=False, timeout_minutes=5
+        )
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        cfg = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml"), None, None
+        )
+        assert cfg.timeout == 300
+
+    def test_registry_timeout_wins_over_lava_job_timeout(self, tmp_path):
+        """An explicit testing.direct.timeout beats the job's timeout.minutes."""
+        registry_root = self._write_registry_job(
+            tmp_path, with_git_entries=False, timeout_minutes=5
+        )
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        cfg = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml", timeout=900),
+            None,
+            None,
+        )
+        assert cfg.timeout == 900
+
+    def test_cli_timeout_wins_over_lava_job_timeout(self, tmp_path):
+        """--direct-timeout beats the job's timeout.minutes."""
+        registry_root = self._write_registry_job(
+            tmp_path, with_git_entries=False, timeout_minutes=5
+        )
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        cfg = runner._merged_config(
+            DirectTestConfig(lava_job="test/jobs/board.yaml"),
+            DirectRunOverrides(timeout=120),
+            None,
+        )
+        assert cfg.timeout == 120
+
+    def test_missing_lava_job_file_names_resolved_path_and_preset(self, tmp_path):
+        """A missing lava_job file raises an error naming the resolved path."""
+        registry_root = tmp_path / "registry"
+        registry_root.mkdir()
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        resolved = SimpleNamespace(
+            build_path=str(tmp_path / "build"),
+            device=SimpleNamespace(slug="my-device", description=""),
+            release=SimpleNamespace(slug="scarthgap", description=""),
+            features=[],
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            runner._merged_config(
+                DirectTestConfig(lava_job="test/jobs/missing.yaml"), None, resolved
+            )
+
+        message = str(exc_info.value)
+        assert str(registry_root / "test" / "jobs" / "missing.yaml") in message
+        assert "my-device/scarthgap" in message
+
+    def test_lava_job_without_definitions_raises(self, tmp_path):
+        """A lava_job without test definitions raises a clear error."""
+        registry_root = tmp_path / "registry"
+        jobs_dir = registry_root / "test" / "jobs"
+        jobs_dir.mkdir(parents=True)
+        (jobs_dir / "empty.yaml").write_text("actions: []\n", encoding="utf-8")
+
+        runner = DirectTestRunner(config_path=registry_root / "bsp-registry.yaml")
+        with pytest.raises(RuntimeError, match="contains no test definitions"):
+            runner._merged_config(
+                DirectTestConfig(lava_job="test/jobs/empty.yaml"), None, None
+            )
+
+
 class TestLavaSignalAttributeParsing:
     """Tests for extended ``<LAVA_SIGNAL_TESTCASE ...>`` attribute parsing."""
 

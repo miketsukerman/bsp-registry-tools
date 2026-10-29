@@ -356,35 +356,75 @@ class TestSuitesCompleter:
     """Complete LAVA job test-suite names for ``--test-suite``.
 
     Suite names are read from ``actions[].test.definitions[].name`` of the
-    ``--test-job-path`` files already present on the command line.
+    ``--test-job-path`` files already present on the command line and of the
+    selected preset's ``testing.direct.lava_job`` file (resolved relative to
+    its registry root).
     """
+
+    @staticmethod
+    def _names_from_job_file(path: Path) -> List[str]:
+        import yaml  # local import keeps completion startup cheap
+
+        if not path.is_file() or path.suffix.lower() in (".jinja2", ".j2"):
+            return []
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            return []
+        names: List[str] = []
+        for action in raw.get("actions", []) or []:
+            if not isinstance(action, dict):
+                continue
+            test_block = action.get("test")
+            if not isinstance(test_block, dict):
+                continue
+            for test_def in test_block.get("definitions", []) or []:
+                if not isinstance(test_def, dict):
+                    continue
+                name = str(test_def.get("name") or "")
+                if name:
+                    names.append(name)
+        return names
+
+    @staticmethod
+    def _registry_lava_job_files(parsed_args) -> List[Path]:
+        """Return the ``testing.direct.lava_job`` files of the selected preset."""
+        bsp_name = getattr(parsed_args, "bsp_name", None)
+        if not bsp_name:
+            return []
+        mgr = _build_manager_for_completion(parsed_args)
+        if mgr is None:
+            return []
+        registry_hint, preset_name = BspManager._parse_qualified_name(bsp_name)
+        files: List[Path] = []
+        for reg_name, _reg_model, reg_resolver, reg_path in mgr._iter_registries():
+            if registry_hint is not None and reg_name != registry_hint:
+                continue
+            for preset in reg_resolver.list_presets():
+                if preset.name != preset_name:
+                    continue
+                direct = preset.testing.direct if (preset.testing and preset.testing.direct) else None
+                if not direct or not direct.lava_job:
+                    continue
+                job = Path(direct.lava_job).expanduser()
+                if not job.is_absolute():
+                    job = Path(reg_path).parent / job
+                files.append(job)
+        return files
 
     def __call__(self, prefix: str, parsed_args, **kwargs) -> List[str]:
         try:
-            import yaml  # local import keeps completion startup cheap
-
             names: List[str] = []
             seen = set()
-            for job_path in getattr(parsed_args, "test_job_paths", None) or []:
-                path = Path(str(job_path)).expanduser()
-                if not path.is_file() or path.suffix.lower() in (".jinja2", ".j2"):
-                    continue
-                raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-                if not isinstance(raw, dict):
-                    continue
-                for action in raw.get("actions", []) or []:
-                    if not isinstance(action, dict):
-                        continue
-                    test_block = action.get("test")
-                    if not isinstance(test_block, dict):
-                        continue
-                    for test_def in test_block.get("definitions", []) or []:
-                        if not isinstance(test_def, dict):
-                            continue
-                        name = str(test_def.get("name") or "")
-                        if name and name not in seen:
-                            seen.add(name)
-                            names.append(name)
+            job_files = [
+                Path(str(job_path)).expanduser()
+                for job_path in getattr(parsed_args, "test_job_paths", None) or []
+            ]
+            job_files += self._registry_lava_job_files(parsed_args)
+            for path in job_files:
+                for name in self._names_from_job_file(path):
+                    if name not in seen:
+                        seen.add(name)
+                        names.append(name)
             return [n for n in names if n.startswith(prefix)]
         except (Exception, SystemExit):  # pylint: disable=broad-except
             return []
