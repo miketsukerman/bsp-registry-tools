@@ -12,6 +12,10 @@ Type=simple
 #   BSP_MCP_PORT=8765
 #   BSP_MCP_REGISTRY=/etc/bsp/bsp-registry.yaml
 EnvironmentFile=-/etc/default/bsp-mcp
+# Builds with a relative build_path land under the working directory;
+# StateDirectory makes systemd create /var/lib/bsp-mcp automatically.
+StateDirectory=bsp-mcp
+WorkingDirectory=/var/lib/bsp-mcp
 ExecStart=/usr/bin/bsp-mcp --transport http $BSP_MCP_OPTS
 Restart=on-failure
 RestartSec=5
