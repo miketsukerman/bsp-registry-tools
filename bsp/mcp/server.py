@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import inspect
 import io
 import ipaddress
 import json
@@ -29,6 +30,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -37,14 +39,17 @@ from typing import Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 try:  # mcp >= 2.0
+    from mcp.server.mcpserver import Context
     from mcp.server.mcpserver import MCPServer as _ServerClass
     from mcp.server.mcpserver.exceptions import ToolError
     _MCP_V2 = True
 except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import Context  # type: ignore
     from mcp.server.fastmcp import FastMCP as _ServerClass  # type: ignore
     from mcp.server.fastmcp.exceptions import ToolError  # type: ignore
     _MCP_V2 = False
 
+import anyio
 from mcp.types import ToolAnnotations
 
 from bsp.mcp import jobs as jobs_mod
@@ -57,6 +62,13 @@ logger = logging.getLogger("bsp.mcp")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+:-]{0,127}$")
 HOSTNAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 TEST_SUITE_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+NOTIFY_ROUTE_RE = re.compile(r"^[A-Za-z0-9._:@/-]{1,128}$")
+
+#: wait_job: default and maximum server-side wait, progress cadence.
+WAIT_DEFAULT_MAX_S = 900
+WAIT_MAX_ENV = "BSP_MCP_WAIT_MAX_S"
+WAIT_PROGRESS_INTERVAL_S = 15
+WAIT_LOG_TAIL_LINES = 15
 
 
 def _server_types():
@@ -135,8 +147,13 @@ INSTRUCTIONS = """\
 This server drives the BSP (Board Support Package) build workflow.
 
 * Builds, scans and HIL tests run as background jobs: start_build/start_scan/
-  start_hil_test return a job id immediately — poll job_status (and job_log)
-  until the job reaches a terminal state. Builds can take hours.
+  start_hil_test return a job id immediately. Builds can take hours — prefer
+  wait_job(job_id) over polling job_status in a loop: it blocks server-side
+  until the job is terminal (or its timeout passes) and returns the summary
+  plus a short log tail. When a completion webhook is configured
+  (BSP_MCP_NOTIFY_URL) you can also just end your turn after starting a job:
+  the server pushes a notification when the job finishes. Every start_* tool
+  accepts optional notify_agent/notify_session to route that notification.
 * When a build job fails, call analyze_build_failure(job_id) FIRST: it
   classifies the failure (network, fetch, compile, ...) and gives a fix hint
   and the bitbake task log path (readable via read_task_log).
@@ -180,6 +197,19 @@ def make_tool_annotations(
 
 def _tool_errors(func):
     """Convert actionable exceptions to ToolError so the model sees them."""
+
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except ToolError:
+                raise
+            except (ValueError, LookupError, PermissionError, FileNotFoundError,
+                    JobError) as exc:
+                raise ToolError(str(exc)) from exc
+
+        return async_wrapper
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -233,6 +263,39 @@ def validate_test_suite(value: str) -> str:
             "and must not start with '-'"
         )
     return value
+
+
+def validate_notify_route(value: str, what: str) -> str:
+    """Validate a notify_agent/notify_session routing id."""
+    if not isinstance(value, str) or not NOTIFY_ROUTE_RE.fullmatch(value):
+        raise ValueError(
+            f"Invalid {what} '{value}': must match {NOTIFY_ROUTE_RE.pattern}"
+        )
+    return value
+
+
+def notify_routing_extra(
+    notify_agent: Optional[str],
+    notify_session: Optional[str],
+    extra: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, str]]:
+    """Merge validated per-job notification routing into a job's extra dict."""
+    merged = dict(extra or {})
+    if notify_agent is not None:
+        merged["notify_agent"] = validate_notify_route(notify_agent, "notify_agent")
+    if notify_session is not None:
+        merged["notify_session"] = validate_notify_route(notify_session,
+                                                         "notify_session")
+    return merged or None
+
+
+def wait_max_s() -> int:
+    """Upper clamp for wait_job's timeout_s (env: BSP_MCP_WAIT_MAX_S)."""
+    try:
+        value = int(os.environ.get(WAIT_MAX_ENV, ""))
+    except ValueError:
+        return WAIT_DEFAULT_MAX_S
+    return max(1, value)
 
 
 def validate_ssh_host(value: str) -> str:
@@ -585,6 +648,8 @@ def build_server(ctx: ServerContext):
         target: Optional[str] = None,
         checkout_only: bool = False,
         clean: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_build")
         sel = selection_args(bsp_name, device, release, features)
@@ -596,7 +661,9 @@ def build_server(ctx: ServerContext):
         if clean:
             cmd.append("--clean")
         kind = "checkout" if checkout_only else "build"
-        job = ctx.jobs.start(kind, bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start(kind, bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -611,6 +678,8 @@ def build_server(ctx: ServerContext):
         severity: str = "HIGH",
         fail_on: str = "CRITICAL",
         tool: str = "trivy",
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_scan")
         if severity not in SCAN_SEVERITIES:
@@ -627,7 +696,9 @@ def build_server(ctx: ServerContext):
             "--output-dir", "{job_dir}/reports",
         ]
         job = ctx.jobs.start("scan", bsp_name or f"{device}/{release}", cmd,
-                             extra={"reports_dir": "{job_dir}/reports"})
+                             extra=notify_routing_extra(
+                                 notify_agent, notify_session,
+                                 {"reports_dir": "{job_dir}/reports"}))
         return job.summary()
 
     @tool(job_ann,
@@ -651,6 +722,8 @@ def build_server(ctx: ServerContext):
         ssh_host: Optional[str] = None,
         ssh_port: Optional[int] = None,
         test_suites: Optional[List[str]] = None,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_hil_test")
         if backend not in TEST_BACKENDS:
@@ -676,7 +749,8 @@ def build_server(ctx: ServerContext):
             cmd += ["--ssh-port", str(validate_ssh_port(ssh_port))]
             extra["ssh_port"] = str(ssh_port)
         job = ctx.jobs.start("test", bsp_name or f"{device}/{release}", cmd,
-                             extra=extra or None)
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session, extra))
         return job.summary()
 
     @tool(job_ann,
@@ -688,11 +762,15 @@ def build_server(ctx: ServerContext):
         device: Optional[str] = None,
         release: Optional[str] = None,
         features: Optional[List[str]] = None,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_fetch")
         sel = selection_args(bsp_name, device, release, features)
         cmd = ctx.cli_command() + ["fetch"] + sel
-        job = ctx.jobs.start("fetch", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("fetch", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -709,6 +787,8 @@ def build_server(ctx: ServerContext):
         container: Optional[str] = None,
         prefix: Optional[str] = None,
         dry_run: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_deploy")
         if provider is not None and provider not in DEPLOY_PROVIDERS:
@@ -723,7 +803,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--prefix", validate_free_value(prefix, "prefix")]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("deploy", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("deploy", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -742,6 +824,8 @@ def build_server(ctx: ServerContext):
         prefix: Optional[str] = None,
         dest_dir: Optional[str] = None,
         dry_run: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_gather")
         if provider is not None and provider not in DEPLOY_PROVIDERS:
@@ -758,7 +842,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--dest-dir", validate_free_value(dest_dir, "dest_dir")]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("gather", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("gather", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(destructive_ann,
@@ -775,6 +861,8 @@ def build_server(ctx: ServerContext):
         image_path: Optional[str] = None,
         flash_tool: Optional[str] = None,
         dry_run: bool = True,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_flash")
         if flash_tool is not None and flash_tool not in FLASH_TOOLS:
@@ -789,7 +877,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--tool", flash_tool]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("flash", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("flash", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -799,6 +889,8 @@ def build_server(ctx: ServerContext):
     def start_container_build(
         container_name: Optional[str] = None,
         no_cache: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_container_build")
         cmd = ctx.cli_command() + ["containers", "build"]
@@ -806,12 +898,59 @@ def build_server(ctx: ServerContext):
             cmd.append(validate_name(container_name, "container_name"))
         if no_cache:
             cmd.append("--docker-no-cache")
-        job = ctx.jobs.start("container_build", container_name or "all", cmd)
+        job = ctx.jobs.start("container_build", container_name or "all", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(read_only_ann, "Get the current status and summary of a job.")
     def job_status(job_id: str) -> Dict:
         return ctx.jobs.get(job_id).summary()
+
+    @tool(read_only_ann,
+          "Wait for a background job to finish (server-side, no polling). "
+          "Returns as soon as the job is terminal or after timeout_s. "
+          "Prefer this over repeated job_status calls.")
+    async def wait_job(job_id: str, timeout_s: int = 300,
+                       mcp_context: Context = None) -> Dict:
+        ctx.jobs.get(job_id)  # validate the id before waiting
+        timeout = max(1, min(int(timeout_s), wait_max_s()))
+        start = time.monotonic()
+        deadline = start + timeout
+        # Wait in short chunks so streamable-HTTP connections stay alive via
+        # progress notifications; the wait itself is condition-based, never a
+        # busy poll. Missing progress support must not break the tool.
+        terminal = ctx.jobs.wait(job_id, timeout=0)
+        while not terminal:
+            chunk = min(WAIT_PROGRESS_INTERVAL_S, deadline - time.monotonic())
+            if chunk <= 0:
+                break
+            terminal = await anyio.to_thread.run_sync(
+                functools.partial(ctx.jobs.wait, job_id, timeout=chunk))
+            if terminal:
+                break
+            if mcp_context is not None:
+                elapsed = time.monotonic() - start
+                with contextlib.suppress(Exception):
+                    await mcp_context.report_progress(
+                        min(elapsed, timeout), timeout,
+                        f"waited {elapsed:.0f}s; job {job_id} is "
+                        f"{ctx.jobs.get(job_id).state}")
+        job = ctx.jobs.get(job_id)
+        result = job.summary()
+        result["waited_s"] = round(time.monotonic() - start, 3)
+        result["terminal"] = job.state in TERMINAL_STATES
+        try:
+            result["log_tail"] = ctx.jobs.read_log(job_id,
+                                                   tail=WAIT_LOG_TAIL_LINES)
+        except JobError:
+            result["log_tail"] = ""
+        result["hint"] = (
+            "job finished" if result["terminal"] else
+            "still running; call wait_job again or end your turn and wait "
+            "for the completion notification"
+        )
+        return result
 
     @tool(read_only_ann, "List all known jobs (including finished and lost ones).")
     def list_jobs() -> List[Dict]:
