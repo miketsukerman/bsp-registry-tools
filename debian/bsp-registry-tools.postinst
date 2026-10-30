@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Dedicated system user for the bsp-server, bsp-mcp and
+        # bsp-explorer-web services. kas-container refuses to run as
+        # root, so the units must not run as root either.
+        if ! getent group bsp >/dev/null; then
+            addgroup --quiet --system bsp
+        fi
+        if ! getent passwd bsp >/dev/null; then
+            adduser --quiet --system --ingroup bsp \
+                --home /var/lib/bsp --shell /usr/sbin/nologin \
+                --gecos "BSP Registry Tools services" bsp
+        fi
+        # Builds drive the container runtime; grant daemon access when
+        # the docker group exists (podman setups have no such group).
+        if getent group docker >/dev/null; then
+            adduser --quiet bsp docker || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

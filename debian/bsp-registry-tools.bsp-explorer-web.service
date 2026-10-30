@@ -9,6 +9,11 @@ Type=simple
 # Override host/port/registry flags in /etc/default/bsp-explorer-web, e.g.:
 #   BSP_EXPLORER_WEB_OPTS=--host 0.0.0.0 --port 8000
 EnvironmentFile=-/etc/default/bsp-explorer-web
+# Run as the dedicated "bsp" system user created by the package postinst;
+# HOME is needed for the registry cache under ~/.cache/bsp.
+User=bsp
+Group=bsp
+Environment=HOME=/var/lib/bsp
 ExecStart=/usr/bin/bsp-explorer-web $BSP_EXPLORER_WEB_OPTS
 Restart=on-failure
 RestartSec=5

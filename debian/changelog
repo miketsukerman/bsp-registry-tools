@@ -1,3 +1,17 @@
+bsp-registry-tools (2.2.2-3) unstable; urgency=medium
+
+  * Run the bsp-server, bsp-mcp and bsp-explorer-web services as a new
+    dedicated "bsp" system user (home /var/lib/bsp) instead of root:
+    kas-container refuses to run as root during builds.
+  * Create the "bsp" user/group in postinst and add it to the "docker"
+    group when present so kas-container can reach the Docker daemon.
+  * Set HOME=/var/lib/bsp in the units (systemd < v252 does not derive
+    it from User=) so the registry cache and MCP job state resolve to
+    ~/.cache/bsp.
+  * Depend on adduser for the postinst user creation.
+
+ -- Mikhail Tsukerman <mikhail.tsukerman@advantech.com>  Thu, 30 Oct 2025 14:52:00 +0000
+
 bsp-registry-tools (2.2.2-2) unstable; urgency=medium
 
   * Provide /usr/bin/kas-container as a symlink to the bundled venv copy

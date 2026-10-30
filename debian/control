@@ -15,6 +15,7 @@ Package: bsp-registry-tools
 Architecture: any
 Depends:
  ${misc:Depends},
+ adduser,
  python3,
  git,
  docker.io | podman,
