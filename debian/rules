@@ -4,7 +4,7 @@ export DH_VIRTUALENV_INSTALL_ROOT = /opt/venvs
 # kas version bundled in the virtualenv. Must match the KAS_VERSION used
 # by the container definitions in the registry. Override at build time
 # with e.g. "KAS_VERSION=5.4 dpkg-buildpackage".
-export KAS_VERSION ?= 5.1
+export KAS_VERSION ?= 5.5
 
 VENV_DIR = debian/bsp-registry-tools/opt/venvs/bsp-registry-tools
 

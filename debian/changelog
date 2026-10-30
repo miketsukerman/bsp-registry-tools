@@ -3,7 +3,7 @@ bsp-registry-tools (2.2.2-2) unstable; urgency=medium
   * Provide /usr/bin/kas-container as a symlink to the bundled venv copy
     so "bsp build" finds it on PATH (previously only bsp-kas-container
     was exposed).
-  * Pin the bundled kas to KAS_VERSION (default 5.1, overridable at
+  * Pin the bundled kas to KAS_VERSION (default 5.5, overridable at
     build time) so kas-container matches the registry container
     definitions.
   * Fail the build (debian/check-kas-container) if the staged package
