@@ -11,15 +11,18 @@ import os
 import stat
 import sys
 import textwrap
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mcp")
 
+from bsp.mcp import notify as notify_mod
 from bsp.mcp import triage
-from bsp.mcp.jobs import JobError, JobManager
+from bsp.mcp.jobs import Job, JobError, JobManager
 from bsp.mcp.pins import bump_pin, list_pins
 from bsp.mcp.server import selection_args, validate_free_value
 
@@ -190,6 +193,7 @@ def fake_bsp(tmp_path):
           ok) echo "build ok"; exit 0 ;;
           fail) echo "build failed" >&2; exit 3 ;;
           sleep) echo "sleeping"; sleep 60 ;;
+          nap) echo "napping"; sleep 1; echo "done"; exit 0 ;;
           echodir) echo "DIR=$2"; exit 0 ;;
         esac
     """))
@@ -811,6 +815,419 @@ class TestNewJobKinds:
 
 
 # ---------------------------------------------------------------------------
+# wait_job (JobManager.wait + the tool)
+# ---------------------------------------------------------------------------
+
+
+def _wait_pid(manager, job_id, timeout=10):
+    deadline = time.time() + timeout
+    while manager.get(job_id).pid is None and time.time() < deadline:
+        time.sleep(0.05)
+
+
+class TestJobManagerWait:
+    def test_returns_immediately_for_finished_job(self, tmp_path, fake_bsp):
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "ok"])
+        _wait_terminal(mgr, job.id)
+        # The job ended before the wait started: no lost wake-up.
+        start = time.monotonic()
+        assert mgr.wait(job.id, timeout=10) is True
+        assert time.monotonic() - start < 1
+
+    def test_wakes_when_job_finishes(self, tmp_path, fake_bsp):
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "nap"])
+        start = time.monotonic()
+        assert mgr.wait(job.id, timeout=30) is True
+        assert time.monotonic() - start < 15  # far less than the timeout
+        assert mgr.get(job.id).state == "succeeded"
+
+    def test_times_out_for_running_job(self, tmp_path, fake_bsp):
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "sleep"])
+        try:
+            assert mgr.wait(job.id, timeout=0.3) is False
+        finally:
+            _wait_pid(mgr, job.id)
+            mgr.cancel(job.id)
+            _wait_terminal(mgr, job.id)
+
+    def test_wakes_on_cancel(self, tmp_path, fake_bsp):
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "sleep"])
+        _wait_pid(mgr, job.id)
+
+        def _cancel():
+            time.sleep(0.2)
+            mgr.cancel(job.id)
+
+        threading.Thread(target=_cancel, daemon=True).start()
+        start = time.monotonic()
+        assert mgr.wait(job.id, timeout=30) is True
+        assert time.monotonic() - start < 15
+        assert mgr.get(job.id).state == "cancelled"
+        _wait_terminal(mgr, job.id)
+
+    def test_unknown_job_rejected(self, tmp_path):
+        mgr = JobManager(state_dir=tmp_path / "state")
+        with pytest.raises(JobError, match="Unknown job id"):
+            mgr.wait("nope", timeout=0.1)
+
+
+class TestWaitJobTool:
+    @pytest.fixture
+    def env(self, tmp_path, fake_bsp):
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        return build_server(ctx), ctx
+
+    @staticmethod
+    async def _call(server, args):
+        result = await server.call_tool("wait_job", args)
+        content = getattr(result, "content", result)
+        return json.loads(content[0].text)
+
+    async def test_finished_job_returns_at_once(self, env, fake_bsp):
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "ok"])
+        _wait_terminal(ctx.jobs, job.id)
+        result = await self._call(server, {"job_id": job.id, "timeout_s": 60})
+        assert result["terminal"] is True
+        assert result["state"] == "succeeded"
+        assert result["waited_s"] < 5
+        assert result["hint"] == "job finished"
+        assert "build ok" in result["log_tail"]
+
+    async def test_returns_when_running_job_finishes(self, env, fake_bsp):
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "nap"])
+        result = await self._call(server, {"job_id": job.id, "timeout_s": 60})
+        assert result["terminal"] is True
+        assert result["state"] == "succeeded"
+        assert result["waited_s"] < 30  # did not wait for the whole timeout
+
+    async def test_timeout_returns_terminal_false(self, env, fake_bsp):
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "sleep"])
+        try:
+            result = await self._call(server, {"job_id": job.id, "timeout_s": 1})
+            assert result["terminal"] is False
+            assert result["state"] == "running"
+            assert result["hint"].startswith("still running")
+            assert result["waited_s"] >= 1
+        finally:
+            _wait_pid(ctx.jobs, job.id)
+            ctx.jobs.cancel(job.id)
+            _wait_terminal(ctx.jobs, job.id)
+
+    async def test_timeout_clamped_to_wait_max(self, env, fake_bsp, monkeypatch):
+        monkeypatch.setenv("BSP_MCP_WAIT_MAX_S", "1")
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "sleep"])
+        try:
+            start = time.monotonic()
+            result = await self._call(server, {"job_id": job.id,
+                                               "timeout_s": 99999})
+            assert result["terminal"] is False
+            assert time.monotonic() - start < 10
+        finally:
+            _wait_pid(ctx.jobs, job.id)
+            ctx.jobs.cancel(job.id)
+            _wait_terminal(ctx.jobs, job.id)
+
+    async def test_timeout_clamped_to_at_least_one_second(self, env, fake_bsp):
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "ok"])
+        result = await self._call(server, {"job_id": job.id, "timeout_s": 0})
+        assert "terminal" in result  # clamped to 1, no crash
+
+    async def test_wakes_on_cancel(self, env, fake_bsp):
+        server, ctx = env
+        job = ctx.jobs.start("build", "demo", [fake_bsp, "sleep"])
+        _wait_pid(ctx.jobs, job.id)
+
+        def _cancel():
+            time.sleep(0.2)
+            ctx.jobs.cancel(job.id)
+
+        threading.Thread(target=_cancel, daemon=True).start()
+        result = await self._call(server, {"job_id": job.id, "timeout_s": 60})
+        assert result["terminal"] is True
+        assert result["state"] == "cancelled"
+        assert result["waited_s"] < 30
+        _wait_terminal(ctx.jobs, job.id)
+
+    async def test_unknown_job_rejected(self, env):
+        from bsp.mcp.server import ToolError
+        server, _ = env
+        with pytest.raises(ToolError, match="Unknown job id"):
+            await server.call_tool("wait_job", {"job_id": "nope"})
+
+
+# ---------------------------------------------------------------------------
+# Completion notifications (webhook)
+# ---------------------------------------------------------------------------
+
+
+class _WebhookHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        self.server.recorded.append(
+            (self.path, dict(self.headers), json.loads(body)))
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def webhook_server():
+    server = HTTPServer(("127.0.0.1", 0), _WebhookHandler)
+    server.recorded = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+
+
+def _wait_notify(manager, job_id, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        outcome = manager.get(job_id).extra.get("notify")
+        if outcome is not None:
+            return outcome
+        time.sleep(0.05)
+    pytest.fail(f"job {job_id} never recorded a notify outcome")
+
+
+def _make_job(tmp_path, **overrides):
+    job_dir = tmp_path / "job-notify"
+    job_dir.mkdir(exist_ok=True)
+    fields = {"id": "20240101-000000-cafecafe", "kind": "build",
+              "target": "demo", "command": ["bsp", "build"],
+              "state": "succeeded", "return_code": 0,
+              "started_at": 1000.0, "finished_at": 1090.0,
+              "job_dir": str(job_dir), "extra": {}}
+    fields.update(overrides)
+    return Job(**fields)
+
+
+class TestNotify:
+    def test_disabled_without_url(self, tmp_path, fake_bsp, monkeypatch,
+                                  webhook_server):
+        monkeypatch.delenv("BSP_MCP_NOTIFY_URL", raising=False)
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "ok"])
+        _wait_terminal(mgr, job.id)
+        assert _wait_notify(mgr, job.id) == "disabled"
+        assert webhook_server.recorded == []
+        # The outcome is persisted.
+        on_disk = json.loads((Path(job.job_dir) / "job.json").read_text())
+        assert on_disk["extra"]["notify"] == "disabled"
+
+    def test_openclaw_format_and_token(self, tmp_path, monkeypatch,
+                                       webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hooks/agent"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        monkeypatch.setenv("BSP_MCP_NOTIFY_TOKEN_ENV", "MY_HOOK_TOKEN")
+        monkeypatch.setenv("MY_HOOK_TOKEN", "sekrit-token")
+        job = _make_job(tmp_path, extra={"notify_agent": "builder",
+                                         "notify_session": "agent:main:s1"})
+        assert notify_mod.notify_job(job) == "sent"
+        path, headers, payload = webhook_server.recorded[0]
+        assert path == "/hooks/agent"
+        assert headers["Authorization"] == "Bearer sekrit-token"
+        assert headers["Idempotency-Key"] == (
+            f"bsp-mcp-{job.id}-succeeded")
+        assert payload["name"] == f"bsp-mcp job {job.id} succeeded"
+        assert payload["agentId"] == "builder"
+        assert payload["sessionKey"] == "agent:main:s1"
+        assert payload["deliver"] is False
+        assert f"({job.kind} {job.target}) finished: succeeded" in payload["message"]
+        assert "Exit code 0" in payload["message"]
+        # The token never leaks into the payload or the job summary.
+        assert "sekrit-token" not in json.dumps(payload)
+        assert "sekrit-token" not in json.dumps(job.summary())
+
+    def test_openclaw_agent_defaults(self, tmp_path, monkeypatch,
+                                     webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hooks/agent"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        monkeypatch.delenv("BSP_MCP_NOTIFY_AGENT", raising=False)
+        assert notify_mod.notify_job(_make_job(tmp_path)) == "sent"
+        payload = webhook_server.recorded[0][2]
+        assert payload["agentId"] == "main"
+        assert "sessionKey" not in payload
+        monkeypatch.setenv("BSP_MCP_NOTIFY_AGENT", "tester")
+        assert notify_mod.notify_job(_make_job(tmp_path)) == "sent"
+        assert webhook_server.recorded[1][2]["agentId"] == "tester"
+
+    def test_generic_format(self, tmp_path, monkeypatch, webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hook"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        monkeypatch.setenv("BSP_MCP_NOTIFY_FORMAT", "generic")
+        job = _make_job(tmp_path)
+        assert notify_mod.notify_job(job) == "sent"
+        payload = webhook_server.recorded[0][2]
+        assert payload["event"] == "job.finished"
+        assert payload["job"]["id"] == job.id
+        assert payload["job"]["state"] == "succeeded"
+        assert payload["server"]
+
+    def test_retries_then_failed_and_state_unchanged(self, tmp_path,
+                                                     monkeypatch):
+        import socket
+
+        # Reserve a port and close it: connections are refused.
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", f"http://127.0.0.1:{port}/x")
+        monkeypatch.setattr(notify_mod, "RETRY_DELAYS_S", (0, 0, 0))
+        attempts = []
+        real_urlopen = notify_mod.urllib.request.urlopen
+
+        def counting_urlopen(*args, **kwargs):
+            attempts.append(1)
+            return real_urlopen(*args, **kwargs)
+
+        monkeypatch.setattr(notify_mod.urllib.request, "urlopen",
+                            counting_urlopen)
+        job = _make_job(tmp_path)
+        outcome = notify_mod.notify_job(job)
+        assert outcome.startswith("failed: ")
+        assert len(attempts) == 4  # first try + 3 retries
+        assert job.state == "succeeded"  # never changed by the notification
+
+    def test_kinds_filter(self, tmp_path, monkeypatch, webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hook"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        monkeypatch.setenv("BSP_MCP_NOTIFY_KINDS", "deploy, test")
+        assert notify_mod.notify_job(_make_job(tmp_path, kind="build")) == "disabled"
+        assert webhook_server.recorded == []
+        assert notify_mod.notify_job(_make_job(tmp_path, kind="deploy")) == "sent"
+        assert len(webhook_server.recorded) == 1
+
+    def test_manager_sends_once_per_job(self, tmp_path, fake_bsp, monkeypatch,
+                                        webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hooks/agent"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        mgr = JobManager(state_dir=tmp_path / "state")
+        job = mgr.start("build", "demo", [fake_bsp, "ok"])
+        _wait_terminal(mgr, job.id)
+        assert _wait_notify(mgr, job.id) == "sent"
+        assert len(webhook_server.recorded) == 1
+
+    def test_lost_jobs_notified_at_startup(self, tmp_path, monkeypatch,
+                                           webhook_server):
+        url = f"http://127.0.0.1:{webhook_server.server_port}/hooks/agent"
+        monkeypatch.setenv("BSP_MCP_NOTIFY_URL", url)
+        state = tmp_path / "state"
+        job_dir = state / "20240101-000000-deadbeef"
+        job_dir.mkdir(parents=True)
+        (job_dir / "job.json").write_text(json.dumps({
+            "id": "20240101-000000-deadbeef",
+            "kind": "build",
+            "target": "demo",
+            "command": ["bsp", "build"],
+            "state": "running",
+            "job_dir": str(job_dir),
+        }))
+        mgr = JobManager(state_dir=state)
+        assert _wait_notify(mgr, "20240101-000000-deadbeef") == "sent"
+        payload = webhook_server.recorded[0][2]
+        assert payload["name"].endswith(" lost")
+
+
+class TestNotifyRouting:
+    """notify_agent/notify_session on the start_* tools."""
+
+    @pytest.fixture
+    def server_and_calls(self, tmp_path):
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        calls = []
+
+        class FakeJob:
+            def summary(self):
+                return {"id": "job-1", "state": "running"}
+
+        def fake_start(kind, name, cmd, extra=None):
+            calls.append((kind, name, cmd, extra))
+            return FakeJob()
+
+        ctx.jobs.start = fake_start
+        return build_server(ctx), calls
+
+    @pytest.mark.parametrize("tool_name,args", [
+        ("start_build", {"bsp_name": "demo-bsp"}),
+        ("start_fetch", {"bsp_name": "demo-bsp"}),
+        ("start_deploy", {"bsp_name": "demo-bsp"}),
+        ("start_gather", {"bsp_name": "demo-bsp"}),
+        ("start_flash", {"bsp_name": "demo-bsp"}),
+        ("start_scan", {"bsp_name": "demo-bsp"}),
+        ("start_hil_test", {"bsp_name": "demo-bsp", "backend": "lava"}),
+        ("start_container_build", {}),
+    ])
+    async def test_routing_stored_in_extra(self, server_and_calls,
+                                           tool_name, args):
+        server, calls = server_and_calls
+        await server.call_tool(tool_name, {
+            **args, "notify_agent": "builder",
+            "notify_session": "agent:main:s-1",
+        })
+        extra = calls[0][3]
+        assert extra["notify_agent"] == "builder"
+        assert extra["notify_session"] == "agent:main:s-1"
+
+    async def test_no_routing_by_default(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_build", {"bsp_name": "demo-bsp"})
+        assert calls[0][3] is None
+
+    @pytest.mark.parametrize("value", ["bad value", "", "x" * 129, "a;b", "é"])
+    async def test_invalid_agent_rejected(self, server_and_calls, value):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="notify_agent"):
+            await server.call_tool("start_build", {
+                "bsp_name": "demo-bsp", "notify_agent": value,
+            })
+        assert not calls
+
+    @pytest.mark.parametrize("value", ["bad value", "a\nb"])
+    async def test_invalid_session_rejected(self, server_and_calls, value):
+        from bsp.mcp.server import ToolError
+        server, calls = server_and_calls
+        with pytest.raises(ToolError, match="notify_session"):
+            await server.call_tool("start_build", {
+                "bsp_name": "demo-bsp", "notify_session": value,
+            })
+        assert not calls
+
+    async def test_existing_extra_preserved(self, server_and_calls):
+        server, calls = server_and_calls
+        await server.call_tool("start_scan", {
+            "bsp_name": "demo-bsp", "notify_agent": "builder",
+        })
+        extra = calls[0][3]
+        assert extra["reports_dir"] == "{job_dir}/reports"
+        assert extra["notify_agent"] == "builder"
+
+
+# ---------------------------------------------------------------------------
 # End-to-end over stdio (needs a real registry)
 # ---------------------------------------------------------------------------
 
@@ -857,8 +1274,8 @@ class TestEndToEndStdio:
                         "start_flash", "start_container_build",
                         "list_containers", "registry_tree", "list_remotes",
                         "add_remote", "remove_remote", "rename_remote",
-                        "set_remote_url"} <= names
-                assert len(names) == 32
+                        "set_remote_url", "wait_job"} <= names
+                assert len(names) == 33
 
                 prompts = await session.list_prompts()
                 prompt_names = {p.name for p in prompts.prompts}

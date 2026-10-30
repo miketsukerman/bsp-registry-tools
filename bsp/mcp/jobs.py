@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from bsp.mcp import notify as notify_mod
+
 __all__ = ["Job", "JobError", "JobManager", "DEFAULT_STATE_DIR"]
 
 DEFAULT_STATE_DIR = Path.home() / ".cache" / "bsp" / "mcp" / "jobs"
@@ -80,7 +82,10 @@ class JobManager:
         self.max_jobs = max(1, int(max_jobs))
         self._jobs: Dict[str, Job] = {}
         self._lock = threading.Lock()
+        # Notified on every job state change so wait() never busy-polls.
+        self._state_changed = threading.Condition(self._lock)
         self._cancelled: set = set()
+        self._notify_started: set = set()
         self._load_existing()
 
     # ------------------------------------------------------------------
@@ -95,11 +100,17 @@ class JobManager:
                 job = Job(**{k: data[k] for k in Job.__dataclass_fields__ if k in data})
             except (OSError, ValueError, TypeError, KeyError):
                 continue
+            became_lost = False
             if job.state not in TERMINAL_STATES:
                 # The process that supervised this job is gone.
                 job.state = "lost"
                 self._persist(job)
+                became_lost = True
             self._jobs[job.id] = job
+            if became_lost:
+                with self._state_changed:
+                    self._state_changed.notify_all()
+                self._notify_terminal(job)
 
     def _persist(self, job: Job) -> None:
         """Atomically write job.json (temp file + rename)."""
@@ -186,17 +197,20 @@ class JobManager:
                     job.state = "running"
                     job.started_at = time.time()
                     self._persist(job)
+                    self._state_changed.notify_all()
                 rc = proc.wait()
         except OSError as exc:
             with self._lock:
                 job.state = "failed"
                 job.finished_at = time.time()
                 self._persist(job)
+                self._state_changed.notify_all()
             try:
                 with open(log_path, "a") as log_fh:
                     log_fh.write(f"Failed to start job: {exc}\n")
             except OSError:
                 pass
+            self._notify_terminal(job)
             return
 
         with self._lock:
@@ -209,6 +223,34 @@ class JobManager:
             else:
                 job.state = "succeeded" if rc == 0 else "failed"
             self._persist(job)
+            self._state_changed.notify_all()
+        self._notify_terminal(job)
+
+    def _notify_terminal(self, job: Job) -> None:
+        """
+        Fire the completion webhook once for a job that became terminal and
+        record the outcome in ``job.extra["notify"]`` (``sent``,
+        ``failed: <reason>`` or ``disabled``).  A failed notification never
+        changes the job state.
+        """
+        with self._lock:
+            if job.id in self._notify_started:
+                return
+            self._notify_started.add(job.id)
+        if not notify_mod.should_notify(job):
+            with self._lock:
+                job.extra["notify"] = "disabled"
+                self._persist(job)
+            return
+
+        def _send() -> None:
+            outcome = notify_mod.notify_job(job)
+            with self._lock:
+                job.extra["notify"] = outcome
+                self._persist(job)
+
+        threading.Thread(target=_send, daemon=True,
+                         name=f"bsp-mcp-notify-{job.id}").start()
 
     def cancel(self, job_id: str) -> Job:
         """SIGTERM the job's whole process group (kas, docker, bitbake...)."""
@@ -221,6 +263,7 @@ class JobManager:
             self._cancelled.add(job_id)
             job.state = "cancelled"
             self._persist(job)
+            self._state_changed.notify_all()
         try:
             os.killpg(job.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -236,6 +279,22 @@ class JobManager:
         if job is None:
             raise JobError(f"Unknown job id '{job_id}'")
         return job
+
+    def wait(self, job_id: str, timeout: Optional[float] = None) -> bool:
+        """
+        Block until the job is in a terminal state or *timeout* passes.
+
+        Returns True when the job is terminal.  Never busy-polls: it waits on
+        the condition that every state change notifies, and the predicate is
+        checked under the lock first, so a job that finished just before the
+        wait started returns immediately (no lost wake-ups).
+        """
+        self.get(job_id)  # validate the id up front
+        with self._state_changed:
+            return self._state_changed.wait_for(
+                lambda: self._jobs[job_id].state in TERMINAL_STATES,
+                timeout=timeout,
+            )
 
     def list(self) -> List[Job]:
         return sorted(self._jobs.values(), key=lambda j: j.created_at or 0)

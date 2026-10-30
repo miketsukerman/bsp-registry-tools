@@ -67,6 +67,7 @@ Without `--registry` the remote registry is fetched and cached automatically
 | `start_flash` | destructive | Flash a built image to a block device (`dry_run` defaults to **true**) |
 | `start_container_build` | job | Build one or all registry-defined container images |
 | `job_status` | read-only | State, return code, duration and log path of a job |
+| `wait_job` | read-only | Block server-side until a job is terminal or `timeout_s` passes (preferred over polling `job_status`) |
 | `list_jobs` | read-only | All known jobs, including finished and lost ones |
 | `job_log` | read-only | Tail of a job's combined output (1..2000 lines, optional regex filter) |
 | `cancel_job` | destructive | SIGTERM the job's whole process group (kills kas/docker/bitbake) |
@@ -87,10 +88,17 @@ Without `--registry` the remote registry is fetched and cached automatically
 Long-running work never blocks a tool call: `start_build`, `start_fetch`,
 `start_scan`, `start_hil_test`, `start_deploy`, `start_gather`, `start_flash`
 and `start_container_build` launch the real `bsp` CLI as a background job and
-return a job id immediately; agents poll `job_status` / `job_log`. When a
-direct-backend HIL test job reaches a terminal state, `test_report` returns
-its structured result (totals, per-case results, failures with log excerpts)
-and `test_report_file` the raw HTML/JSON report.
+return a job id immediately. **Prefer `wait_job` or completion notifications
+over polling**: `wait_job(job_id, timeout_s)` blocks server-side (no
+busy-polling, with MCP progress notifications every 15 s while waiting) and
+returns the job summary plus `waited_s`, `terminal`, a 15-line `log_tail` and
+a `hint` as soon as the job is terminal — `timeout_s` is clamped to
+`1..BSP_MCP_WAIT_MAX_S` (default 900). With the completion webhook configured
+(see below) an agent can start a job, end its turn, and be woken up when the
+job finishes. `job_status` / `job_log` remain available for one-off checks.
+When a direct-backend HIL test job reaches a terminal state, `test_report`
+returns its structured result (totals, per-case results, failures with log
+excerpts) and `test_report_file` the raw HTML/JSON report.
 
 Remote management tools edit the shared remotes configuration used by new
 `bsp` CLI runs; the running MCP server keeps using the registry it resolved
@@ -179,6 +187,73 @@ the failing task name, then content patterns.
 | `--transport` | `BSP_MCP_TRANSPORT` | `stdio` | `stdio` or `http` (streamable-http) |
 | `--host` | `BSP_MCP_HOST` | `127.0.0.1` | HTTP host |
 | `--port` | `BSP_MCP_PORT` | `8765` | HTTP port |
+| — | `BSP_MCP_WAIT_MAX_S` | `900` | Upper clamp for `wait_job`'s `timeout_s` |
+
+## Completion notifications (webhook)
+
+When a job reaches a terminal state (`succeeded`, `failed`, `cancelled`, or
+`lost` at server startup), the server can POST a one-shot webhook from a
+background thread, so an agent can start a job, end its turn, and be woken up
+when the job finishes. The feature is **configured by environment only** and
+is off by default:
+
+| Env var | Default | Description |
+| --- | --- | --- |
+| `BSP_MCP_NOTIFY_URL` | — | Webhook endpoint; unset disables the feature entirely |
+| `BSP_MCP_NOTIFY_TOKEN_ENV` | — | The **name** of the environment variable holding the bearer token |
+| `BSP_MCP_NOTIFY_FORMAT` | `openclaw` | Payload format: `openclaw` or `generic` |
+| `BSP_MCP_NOTIFY_KINDS` | all | Comma list of job kinds to notify, e.g. `build,deploy,test,flash,gather,scan` |
+| `BSP_MCP_NOTIFY_AGENT` | `main` | Default openclaw `agentId` when a job carries no `notify_agent` |
+
+The POST uses a 10 s timeout and retries after 2 s, 10 s and 30 s before
+giving up, sending `Idempotency-Key: bsp-mcp-<job_id>-<state>` so the
+receiver can deduplicate. The outcome is recorded in the job's
+`extra["notify"]` field (`sent`, `failed: <reason>` or `disabled`) and
+persisted; a failed notification never changes the job state.
+
+The `openclaw` format posts to an OpenClaw gateway (`POST <hooks.path>/agent`
+with `Authorization: Bearer <token>`):
+
+```json
+{"name": "bsp-mcp job <id> <state>",
+ "agentId": "<notify_agent or BSP_MCP_NOTIFY_AGENT or 'main'>",
+ "sessionKey": "<notify_session, only if given>",
+ "deliver": false,
+ "message": "bsp-mcp job <id> (<kind> <target>) finished: <state> after <duration>. Exit code <rc>. Next: call job_status/job_log or analyze_build_failure for details, then continue your plan."}
+```
+
+The `generic` format posts
+`{"event": "job.finished", "job": <job summary>, "server": "<hostname>"}`.
+
+Every `start_*` tool accepts optional `notify_agent` and `notify_session`
+arguments (validated against `^[A-Za-z0-9._:@/-]{1,128}$`) to route the
+notification per job; they are stored in the job's `extra` and shown in
+`job_status`. Without them the openclaw payload uses `BSP_MCP_NOTIFY_AGENT`
+and no session key.
+
+Example OpenClaw gateway configuration:
+
+```yaml
+hooks:
+  enabled: true
+  token: "${OPENCLAW_HOOK_TOKEN}"   # a dedicated hooks token
+  allowedAgentIds: ["main", "builder", "tester"]
+  allowRequestSessionKey: true      # only if notify_session is used
+```
+
+and on the bsp-mcp side:
+
+```bash
+export BSP_MCP_NOTIFY_URL="https://openclaw.example/hooks/agent"
+export BSP_MCP_NOTIFY_TOKEN_ENV="OPENCLAW_HOOK_TOKEN"
+export OPENCLAW_HOOK_TOKEN="..."   # the token lives ONLY in the environment
+```
+
+The token is never accepted in a config file, a tool argument or a log, and
+never appears in `job_status` output or the persisted `job.json`. The
+webhook `message` is built only from job summary fields — never from log
+content — so untrusted device output cannot inject instructions into the
+receiving agent's prompt.
 
 ## Safety notes
 
