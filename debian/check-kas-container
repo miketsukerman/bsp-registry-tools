@@ -1,0 +1,41 @@
+#!/bin/sh
+# Build-time sanity check: the staged package must ship a working
+# kas-container whose version matches KAS_VERSION (set in debian/rules).
+# Run from the source root (debian/rules execute_before_dh_builddeb).
+set -eu
+
+PKGDIR=debian/bsp-registry-tools
+VENV_KC="$PKGDIR/opt/venvs/bsp-registry-tools/bin/kas-container"
+LINK="$PKGDIR/usr/bin/kas-container"
+
+fail() {
+	echo "check-kas-container: ERROR: $*" >&2
+	exit 1
+}
+
+[ -n "${KAS_VERSION:-}" ] || fail "KAS_VERSION is not set (see debian/rules)"
+
+[ -f "$VENV_KC" ] || fail "kas-container is missing from the bundled \
+virtualenv ($VENV_KC). The kas wheel ships it as a plain script file; \
+check that pip installed kas==$KAS_VERSION into the venv."
+[ -x "$VENV_KC" ] || fail "$VENV_KC is not executable"
+
+[ -L "$LINK" ] || fail "/usr/bin/kas-container symlink is not staged \
+($LINK); check debian/bsp-registry-tools.links"
+TARGET=$(readlink "$LINK")
+case "$TARGET" in
+	/*) RESOLVED="$PKGDIR$TARGET" ;;
+	*)  RESOLVED="$PKGDIR/usr/bin/$TARGET" ;;
+esac
+[ -e "$RESOLVED" ] || fail "/usr/bin/kas-container symlink is dangling \
+(points to $TARGET)"
+
+# kas-container probes for docker/podman before parsing --version;
+# preset the engine so the check works in a clean build chroot.
+VER_OUT=$(KAS_CONTAINER_ENGINE=podman "$VENV_KC" --version 2>&1) \
+	|| fail "kas-container --version failed: $VER_OUT"
+VER=${VER_OUT#kas-container }
+[ "$VER" = "$KAS_VERSION" ] || fail "kas-container reports version \
+'$VER_OUT' but KAS_VERSION=$KAS_VERSION was expected (see debian/rules)"
+
+echo "check-kas-container: OK ($VER_OUT, /usr/bin/kas-container -> $TARGET)"

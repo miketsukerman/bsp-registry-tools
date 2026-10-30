@@ -17,9 +17,9 @@ Depends:
  ${misc:Depends},
  python3,
  git,
+ docker.io | podman,
 Recommends:
  bmap-tools,
- docker.io | podman,
 Suggests:
  libpango-1.0-0,
  libpangoft2-1.0-0,

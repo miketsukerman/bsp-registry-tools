@@ -1,6 +1,11 @@
 #!/usr/bin/make -f
 export DH_VIRTUALENV_INSTALL_ROOT = /opt/venvs
 
+# kas version bundled in the virtualenv. Must match the KAS_VERSION used
+# by the container definitions in the registry. Override at build time
+# with e.g. "KAS_VERSION=5.4 dpkg-buildpackage".
+export KAS_VERSION ?= 5.1
+
 VENV_DIR = debian/bsp-registry-tools/opt/venvs/bsp-registry-tools
 
 %:
@@ -15,6 +20,12 @@ override_dh_virtualenv:
 	# in the *build host's* system site-packages as satisfied; otherwise
 	# they are silently left out of the venv and imports fail on targets
 	# that lack the same distro packages.
+	# Pin kas to KAS_VERSION via a pip constraint file so the bundled
+	# kas-container script matches the registry container definitions.
+	# A constraint (not --preinstall) is required because
+	# --ignore-installed would otherwise re-resolve kas to the latest
+	# release during the main install.
+	echo "kas==$(KAS_VERSION)" > debian/kas-pin.txt
 	dh_virtualenv \
 		--python /usr/bin/python3 \
 		--builtin-venv \
@@ -22,6 +33,7 @@ override_dh_virtualenv:
 		--preinstall "setuptools>=45" \
 		--preinstall "wheel" \
 		--extra-pip-arg=--ignore-installed \
+		--extra-pip-arg=--constraint=$(CURDIR)/debian/kas-pin.txt \
 		--extras server,gui,mcp,completions,deploy
 
 execute_after_dh_virtualenv:
@@ -33,6 +45,12 @@ execute_after_dh_virtualenv:
 	mkdir -p debian/bsp-registry-tools/usr/share/bash-completion/completions
 	$(VENV_DIR)/bin/python $(VENV_DIR)/bin/register-python-argcomplete bsp \
 		> debian/bsp-registry-tools/usr/share/bash-completion/completions/bsp
+
+execute_before_dh_builddeb:
+	# Fail the build if the staged package does not ship a working
+	# kas-container matching KAS_VERSION (kas-container is a plain
+	# shell script shipped by the kas wheel, easy to lose silently).
+	sh debian/check-kas-container
 
 override_dh_installsystemd:
 	# Ship the server units but leave them disabled and stopped; the
