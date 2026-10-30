@@ -1,3 +1,20 @@
+bsp-registry-tools (2.2.2-2) unstable; urgency=medium
+
+  * Provide /usr/bin/kas-container as a symlink to the bundled venv copy
+    so "bsp build" finds it on PATH (previously only bsp-kas-container
+    was exposed).
+  * Pin the bundled kas to KAS_VERSION (default 5.1, overridable at
+    build time) so kas-container matches the registry container
+    definitions.
+  * Fail the build (debian/check-kas-container) if the staged package
+    lacks an executable kas-container or its --version does not match
+    KAS_VERSION.
+  * Move "docker.io | podman" from Recommends to Depends: kas-container
+    requires a container runtime.
+  * Add an autopkgtest verifying kas-container is on PATH and runs.
+
+ -- Mikhail Tsukerman <mikhail.tsukerman@advantech.com>  Thu, 30 Oct 2025 14:00:00 +0000
+
 bsp-registry-tools (2.2.2-1) unstable; urgency=medium
 
   * Initial Debian package built with dh-virtualenv: all Python
