@@ -632,6 +632,57 @@ def build_server(ctx: ServerContext):
                 ) from exc
         return buf.getvalue()
 
+    @tool(read_only_ann,
+          "List artifacts available on remote cloud storage (Azure Blob or "
+          "AWS S3) for a BSP without downloading them. Supply either "
+          "bsp_name OR both device and release. The remote prefix is "
+          "resolved exactly like start_gather, so this shows what a gather "
+          "would download. date overrides the {date} prefix placeholder "
+          "(YYYY-MM-DD, defaults to today). Credentials come from the "
+          "registry/environment, never from tool arguments.")
+    def list_remote_artifacts(
+        bsp_name: Optional[str] = None,
+        device: Optional[str] = None,
+        release: Optional[str] = None,
+        features: Optional[List[str]] = None,
+        provider: Optional[str] = None,
+        container: Optional[str] = None,
+        prefix: Optional[str] = None,
+        date: Optional[str] = None,
+    ) -> Dict:
+        # Validates names and bsp_name/device exclusivity.
+        selection_args(bsp_name, device, release, features)
+        if provider is not None and provider not in DEPLOY_PROVIDERS:
+            raise ValueError(f"provider must be one of {DEPLOY_PROVIDERS}")
+        overrides: Dict = {}
+        if provider:
+            overrides["provider"] = provider
+        if container:
+            overrides["container"] = validate_name(container, "container")
+        if prefix:
+            overrides["prefix"] = validate_free_value(prefix, "prefix")
+        if date:
+            validate_free_value(date, "date")
+        mgr = ctx.manager
+        with _capture() as buf:
+            try:
+                if bsp_name:
+                    return mgr.list_remote_artifacts_bsp(
+                        bsp_name,
+                        deploy_overrides=overrides or None,
+                        date_override=date,
+                    )
+                return mgr.list_remote_artifacts_by_components(
+                    device, release, features or [],
+                    deploy_overrides=overrides or None,
+                    date_override=date,
+                )
+            except SystemExit as exc:
+                raise ValueError(
+                    "Listing remote artifacts failed: "
+                    + (buf.getvalue().strip() or str(exc))
+                ) from exc
+
     # -- Jobs -----------------------------------------------------------
 
     @tool(job_ann,

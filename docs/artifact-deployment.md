@@ -775,7 +775,8 @@ bsp deploy index bsp-artifacts --flat --no-search
 
 ### `bsp gather`
 
-Download previously deployed artifacts from cloud storage.
+Download previously deployed artifacts from cloud storage, or list what is
+available on the remote storage with `--list`.
 
 ```
 bsp gather <bsp_name> [OPTIONS]
@@ -789,6 +790,7 @@ bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
 | `--prefix PREFIX` | Override remote path prefix template |
 | `--dest-dir PATH` | Local directory to write artifacts into (default: `<build_path>/build/tmp/deploy/images` under the registry build path) |
 | `--date DATE` | Date override for `{date}` placeholder (`YYYY-MM-DD`) |
+| `--list` | List artifacts on the remote storage (name, size, last modified) instead of downloading them |
 | `--gather-cache` | Also restore Yocto caches from cloud storage if available |
 | `--cache-downloads-dir PATH` | Local directory to restore the DL_DIR cache into |
 | `--cache-sstate-dir PATH` | Local directory to restore the SSTATE_DIR cache into |
@@ -799,6 +801,12 @@ bsp gather --device <d> --release <r> [--feature <f>] [OPTIONS]
 ```bash
 # Download latest artifacts for a preset
 bsp gather poky-qemuarm64-scarthgap --dest-dir ./artifacts
+
+# List what is available on the remote storage (no download)
+bsp gather poky-qemuarm64-scarthgap --list
+
+# List artifacts deployed on a specific date
+bsp gather poky-qemuarm64-scarthgap --list --date 2025-01-15
 
 # Download artifacts from a specific date
 bsp gather poky-qemuarm64-scarthgap --dest-dir ./artifacts --date 2025-01-15

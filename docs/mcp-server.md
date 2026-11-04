@@ -58,6 +58,7 @@ Without `--registry` the remote registry is fetched and cached automatically
 | `export_config` | read-only | Resolved KAS YAML for `bsp_name` or `device`+`release` |
 | `list_containers` | read-only | Container image definitions from the registry |
 | `registry_tree` | read-only | ASCII tree view of the registry (`default`, `full` or `compact`) |
+| `list_remote_artifacts` | read-only | List artifacts on remote cloud storage for a BSP (same prefix resolution as `start_gather`) |
 | `start_build` | job | Start a build (or `checkout_only` validation) and return a job id; `target` overrides the registry bitbake targets |
 | `start_fetch` | job | Fetch all sources without building (cache pre-warm / validation) |
 | `start_scan` | job | Start a CVE scan / SBOM generation (`trivy` or `syft+grype`) |
