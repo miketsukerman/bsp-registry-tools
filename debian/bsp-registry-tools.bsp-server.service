@@ -9,6 +9,11 @@ Type=simple
 # Override host/port/registry flags in /etc/default/bsp-server, e.g.:
 #   BSP_SERVER_OPTS=--host 0.0.0.0 --port 8080 --registry /etc/bsp/bsp-registry.yaml
 EnvironmentFile=-/etc/default/bsp-server
+# Run as the dedicated "bsp" system user created by the package postinst;
+# HOME is needed for the registry cache under ~/.cache/bsp.
+User=bsp
+Group=bsp
+Environment=HOME=/var/lib/bsp
 ExecStart=/usr/bin/bsp server $BSP_SERVER_OPTS
 Restart=on-failure
 RestartSec=5

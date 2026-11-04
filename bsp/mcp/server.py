@@ -21,13 +21,16 @@ from __future__ import annotations
 import argparse
 import contextlib
 import functools
+import inspect
 import io
+import ipaddress
 import json
 import logging
 import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -36,24 +39,36 @@ from typing import Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 try:  # mcp >= 2.0
+    from mcp.server.mcpserver import Context
     from mcp.server.mcpserver import MCPServer as _ServerClass
     from mcp.server.mcpserver.exceptions import ToolError
     _MCP_V2 = True
 except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import Context  # type: ignore
     from mcp.server.fastmcp import FastMCP as _ServerClass  # type: ignore
     from mcp.server.fastmcp.exceptions import ToolError  # type: ignore
     _MCP_V2 = False
 
+import anyio
 from mcp.types import ToolAnnotations
 
 from bsp.mcp import jobs as jobs_mod
 from bsp.mcp import pins as pins_mod
 from bsp.mcp import triage as triage_mod
-from bsp.mcp.jobs import JobError, JobManager
+from bsp.mcp.jobs import TERMINAL_STATES, JobError, JobManager
 
 logger = logging.getLogger("bsp.mcp")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+:-]{0,127}$")
+HOSTNAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+TEST_SUITE_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+NOTIFY_ROUTE_RE = re.compile(r"^[A-Za-z0-9._:@/-]{1,128}$")
+
+#: wait_job: default and maximum server-side wait, progress cadence.
+WAIT_DEFAULT_MAX_S = 900
+WAIT_MAX_ENV = "BSP_MCP_WAIT_MAX_S"
+WAIT_PROGRESS_INTERVAL_S = 15
+WAIT_LOG_TAIL_LINES = 15
 
 
 def _server_types():
@@ -89,12 +104,56 @@ TREE_MODES = ["default", "full", "compact"]
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3,
                    "NEGLIGIBLE": 4, "UNKNOWN": 5}
 
+TEST_REPORT_FILES = {"html": "direct-test-report.html",
+                     "json": "direct-test-summary.json"}
+TEST_REPORT_MAX_FILE_BYTES = 2 * 1024 * 1024
+TEST_REPORT_EXCERPT_LINES = 20
+TEST_REPORT_EXCERPT_BYTES = 4096
+
+
+def _path_under_roots(path: Path, roots: List[Path]) -> bool:
+    """True when *path* resolves to a location under one of *roots*."""
+    resolved = Path(path).resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(Path(root).resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _case_log_excerpt(log_path: Optional[str], roots: List[Path]) -> Optional[str]:
+    """
+    Last lines of a test case log, or None when the path is missing,
+    unreadable or outside *roots*. The content is untrusted device output
+    and is returned as data only.
+    """
+    if not log_path:
+        return None
+    path = Path(log_path)
+    if not _path_under_roots(path, roots):
+        return None
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    excerpt = "\n".join(lines[-TEST_REPORT_EXCERPT_LINES:])
+    if len(excerpt) > TEST_REPORT_EXCERPT_BYTES:
+        excerpt = excerpt[-TEST_REPORT_EXCERPT_BYTES:]
+    return excerpt
+
 INSTRUCTIONS = """\
 This server drives the BSP (Board Support Package) build workflow.
 
 * Builds, scans and HIL tests run as background jobs: start_build/start_scan/
-  start_hil_test return a job id immediately — poll job_status (and job_log)
-  until the job reaches a terminal state. Builds can take hours.
+  start_hil_test return a job id immediately. Builds can take hours — prefer
+  wait_job(job_id) over polling job_status in a loop: it blocks server-side
+  until the job is terminal (or its timeout passes) and returns the summary
+  plus a short log tail. When a completion webhook is configured
+  (BSP_MCP_NOTIFY_URL) you can also just end your turn after starting a job:
+  the server pushes a notification when the job finishes. Every start_* tool
+  accepts optional notify_agent/notify_session to route that notification.
 * When a build job fails, call analyze_build_failure(job_id) FIRST: it
   classifies the failure (network, fetch, compile, ...) and gives a fix hint
   and the bitbake task log path (readable via read_task_log).
@@ -139,6 +198,19 @@ def make_tool_annotations(
 def _tool_errors(func):
     """Convert actionable exceptions to ToolError so the model sees them."""
 
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except ToolError:
+                raise
+            except (ValueError, LookupError, PermissionError, FileNotFoundError,
+                    JobError) as exc:
+                raise ToolError(str(exc)) from exc
+
+        return async_wrapper
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -179,6 +251,80 @@ def validate_free_value(value: str, what: str) -> str:
             f"Invalid {what} '{value}': must be non-empty, must not start "
             "with '-' and must not contain control characters"
         )
+    return value
+
+
+def validate_test_suite(value: str) -> str:
+    """Validate an agent-supplied test-suite name (``--test-suite``)."""
+    if (not isinstance(value, str) or value.startswith("-")
+            or not TEST_SUITE_RE.match(value)):
+        raise ValueError(
+            f"Invalid test suite '{value}': must match {TEST_SUITE_RE.pattern} "
+            "and must not start with '-'"
+        )
+    return value
+
+
+def validate_notify_route(value: str, what: str) -> str:
+    """Validate a notify_agent/notify_session routing id."""
+    if not isinstance(value, str) or not NOTIFY_ROUTE_RE.fullmatch(value):
+        raise ValueError(
+            f"Invalid {what} '{value}': must match {NOTIFY_ROUTE_RE.pattern}"
+        )
+    return value
+
+
+def notify_routing_extra(
+    notify_agent: Optional[str],
+    notify_session: Optional[str],
+    extra: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, str]]:
+    """Merge validated per-job notification routing into a job's extra dict."""
+    merged = dict(extra or {})
+    if notify_agent is not None:
+        merged["notify_agent"] = validate_notify_route(notify_agent, "notify_agent")
+    if notify_session is not None:
+        merged["notify_session"] = validate_notify_route(notify_session,
+                                                         "notify_session")
+    return merged or None
+
+
+def wait_max_s() -> int:
+    """Upper clamp for wait_job's timeout_s (env: BSP_MCP_WAIT_MAX_S)."""
+    try:
+        value = int(os.environ.get(WAIT_MAX_ENV, ""))
+    except ValueError:
+        return WAIT_DEFAULT_MAX_S
+    return max(1, value)
+
+
+def validate_ssh_host(value: str) -> str:
+    """
+    Validate an agent-supplied SSH host (IP address or hostname).
+
+    The value may originate from a device's serial console, so it is treated
+    as hostile: only literal IPv4/IPv6 addresses or plain hostnames pass.
+    This rules out option injection ('-oProxyCommand=...'), 'user@host'
+    forms, spaces and embedded ports.
+    """
+    if isinstance(value, str) and value:
+        try:
+            ipaddress.ip_address(value)
+            return value
+        except ValueError:
+            pass
+        if HOSTNAME_RE.match(value):
+            return value
+    raise ValueError(
+        f"Invalid ssh_host '{value}': must be an IPv4/IPv6 address or a "
+        f"hostname matching {HOSTNAME_RE.pattern}"
+    )
+
+
+def validate_ssh_port(value: int) -> int:
+    """Validate an agent-supplied SSH port (1..65535)."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+        raise ValueError(f"Invalid ssh_port '{value}': must be an integer in 1..65535")
     return value
 
 
@@ -486,6 +632,57 @@ def build_server(ctx: ServerContext):
                 ) from exc
         return buf.getvalue()
 
+    @tool(read_only_ann,
+          "List artifacts available on remote cloud storage (Azure Blob or "
+          "AWS S3) for a BSP without downloading them. Supply either "
+          "bsp_name OR both device and release. The remote prefix is "
+          "resolved exactly like start_gather, so this shows what a gather "
+          "would download. date overrides the {date} prefix placeholder "
+          "(YYYY-MM-DD, defaults to today). Credentials come from the "
+          "registry/environment, never from tool arguments.")
+    def list_remote_artifacts(
+        bsp_name: Optional[str] = None,
+        device: Optional[str] = None,
+        release: Optional[str] = None,
+        features: Optional[List[str]] = None,
+        provider: Optional[str] = None,
+        container: Optional[str] = None,
+        prefix: Optional[str] = None,
+        date: Optional[str] = None,
+    ) -> Dict:
+        # Validates names and bsp_name/device exclusivity.
+        selection_args(bsp_name, device, release, features)
+        if provider is not None and provider not in DEPLOY_PROVIDERS:
+            raise ValueError(f"provider must be one of {DEPLOY_PROVIDERS}")
+        overrides: Dict = {}
+        if provider:
+            overrides["provider"] = provider
+        if container:
+            overrides["container"] = validate_name(container, "container")
+        if prefix:
+            overrides["prefix"] = validate_free_value(prefix, "prefix")
+        if date:
+            validate_free_value(date, "date")
+        mgr = ctx.manager
+        with _capture() as buf:
+            try:
+                if bsp_name:
+                    return mgr.list_remote_artifacts_bsp(
+                        bsp_name,
+                        deploy_overrides=overrides or None,
+                        date_override=date,
+                    )
+                return mgr.list_remote_artifacts_by_components(
+                    device, release, features or [],
+                    deploy_overrides=overrides or None,
+                    date_override=date,
+                )
+            except SystemExit as exc:
+                raise ValueError(
+                    "Listing remote artifacts failed: "
+                    + (buf.getvalue().strip() or str(exc))
+                ) from exc
+
     # -- Jobs -----------------------------------------------------------
 
     @tool(job_ann,
@@ -502,6 +699,8 @@ def build_server(ctx: ServerContext):
         target: Optional[str] = None,
         checkout_only: bool = False,
         clean: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_build")
         sel = selection_args(bsp_name, device, release, features)
@@ -513,7 +712,9 @@ def build_server(ctx: ServerContext):
         if clean:
             cmd.append("--clean")
         kind = "checkout" if checkout_only else "build"
-        job = ctx.jobs.start(kind, bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start(kind, bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -528,6 +729,8 @@ def build_server(ctx: ServerContext):
         severity: str = "HIGH",
         fail_on: str = "CRITICAL",
         tool: str = "trivy",
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_scan")
         if severity not in SCAN_SEVERITIES:
@@ -544,29 +747,61 @@ def build_server(ctx: ServerContext):
             "--output-dir", "{job_dir}/reports",
         ]
         job = ctx.jobs.start("scan", bsp_name or f"{device}/{release}", cmd,
-                             extra={"reports_dir": "{job_dir}/reports"})
+                             extra=notify_routing_extra(
+                                 notify_agent, notify_session,
+                                 {"reports_dir": "{job_dir}/reports"}))
         return job.summary()
 
     @tool(job_ann,
           "Start a hardware-in-the-loop test run as a background job "
           "(always waits for the result inside the job). Tokens are never "
-          "passed as arguments; they stay in the registry as $ENV{...}.")
+          "passed as arguments; they stay in the registry as $ENV{...}. "
+          "ssh_host/ssh_port override the registry's testing.direct.transport "
+          "for this run (e.g. the DUT's current DHCP address). For direct "
+          "backends the test suites come from the registry's "
+          "testing.direct.definitions and/or the LAVA job referenced by "
+          "testing.direct.lava_job; test_suites restricts the run to the "
+          "named suites. Direct backends write their JSON/HTML/PDF reports "
+          "to a per-job directory; call test_report when the job is "
+          "terminal for the structured result.")
     def start_hil_test(
         bsp_name: Optional[str] = None,
         device: Optional[str] = None,
         release: Optional[str] = None,
         features: Optional[List[str]] = None,
         backend: str = "lava",
+        ssh_host: Optional[str] = None,
+        ssh_port: Optional[int] = None,
+        test_suites: Optional[List[str]] = None,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_hil_test")
         if backend not in TEST_BACKENDS:
             raise ValueError(f"backend must be one of {TEST_BACKENDS}")
+        if (ssh_host is not None or ssh_port is not None) and \
+                backend not in ("direct-ssh", "direct-serial"):
+            raise ValueError("ssh_host/ssh_port only apply to direct-ssh and direct-serial")
         sel = selection_args(bsp_name, device, release, features)
         cmd = ctx.cli_command() + ["test"] + sel + ["--backend", backend, "--wait"]
         lava_server = os.environ.get("BSP_MCP_LAVA_SERVER")
         if backend == "lava" and lava_server:
             cmd += ["--lava-server", lava_server]
-        job = ctx.jobs.start("test", bsp_name or f"{device}/{release}", cmd)
+        extra = {}
+        if backend in ("direct-local", "direct-ssh", "direct-serial"):
+            cmd += ["--direct-output-dir", "{job_dir}/test-results"]
+            extra["reports_dir"] = "{job_dir}/test-results"
+        for suite in test_suites or []:
+            cmd += ["--test-suite", validate_test_suite(suite)]
+        if ssh_host is not None:
+            cmd += ["--ssh-host", validate_ssh_host(ssh_host)]
+            extra["ssh_host"] = ssh_host
+        if ssh_port is not None:
+            cmd += ["--ssh-port", str(validate_ssh_port(ssh_port))]
+            extra["ssh_port"] = str(ssh_port)
+        job = ctx.jobs.start("test", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session, extra))
         return job.summary()
 
     @tool(job_ann,
@@ -578,11 +813,15 @@ def build_server(ctx: ServerContext):
         device: Optional[str] = None,
         release: Optional[str] = None,
         features: Optional[List[str]] = None,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_fetch")
         sel = selection_args(bsp_name, device, release, features)
         cmd = ctx.cli_command() + ["fetch"] + sel
-        job = ctx.jobs.start("fetch", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("fetch", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -599,6 +838,8 @@ def build_server(ctx: ServerContext):
         container: Optional[str] = None,
         prefix: Optional[str] = None,
         dry_run: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_deploy")
         if provider is not None and provider not in DEPLOY_PROVIDERS:
@@ -613,7 +854,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--prefix", validate_free_value(prefix, "prefix")]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("deploy", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("deploy", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -632,6 +875,8 @@ def build_server(ctx: ServerContext):
         prefix: Optional[str] = None,
         dest_dir: Optional[str] = None,
         dry_run: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_gather")
         if provider is not None and provider not in DEPLOY_PROVIDERS:
@@ -648,7 +893,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--dest-dir", validate_free_value(dest_dir, "dest_dir")]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("gather", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("gather", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(destructive_ann,
@@ -665,6 +912,8 @@ def build_server(ctx: ServerContext):
         image_path: Optional[str] = None,
         flash_tool: Optional[str] = None,
         dry_run: bool = True,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_flash")
         if flash_tool is not None and flash_tool not in FLASH_TOOLS:
@@ -679,7 +928,9 @@ def build_server(ctx: ServerContext):
             cmd += ["--tool", flash_tool]
         if dry_run:
             cmd.append("--dry-run")
-        job = ctx.jobs.start("flash", bsp_name or f"{device}/{release}", cmd)
+        job = ctx.jobs.start("flash", bsp_name or f"{device}/{release}", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(job_ann,
@@ -689,6 +940,8 @@ def build_server(ctx: ServerContext):
     def start_container_build(
         container_name: Optional[str] = None,
         no_cache: bool = False,
+        notify_agent: Optional[str] = None,
+        notify_session: Optional[str] = None,
     ) -> Dict:
         ctx.require_writable("start_container_build")
         cmd = ctx.cli_command() + ["containers", "build"]
@@ -696,12 +949,59 @@ def build_server(ctx: ServerContext):
             cmd.append(validate_name(container_name, "container_name"))
         if no_cache:
             cmd.append("--docker-no-cache")
-        job = ctx.jobs.start("container_build", container_name or "all", cmd)
+        job = ctx.jobs.start("container_build", container_name or "all", cmd,
+                             extra=notify_routing_extra(notify_agent,
+                                                        notify_session))
         return job.summary()
 
     @tool(read_only_ann, "Get the current status and summary of a job.")
     def job_status(job_id: str) -> Dict:
         return ctx.jobs.get(job_id).summary()
+
+    @tool(read_only_ann,
+          "Wait for a background job to finish (server-side, no polling). "
+          "Returns as soon as the job is terminal or after timeout_s. "
+          "Prefer this over repeated job_status calls.")
+    async def wait_job(job_id: str, timeout_s: int = 300,
+                       mcp_context: Context = None) -> Dict:
+        ctx.jobs.get(job_id)  # validate the id before waiting
+        timeout = max(1, min(int(timeout_s), wait_max_s()))
+        start = time.monotonic()
+        deadline = start + timeout
+        # Wait in short chunks so streamable-HTTP connections stay alive via
+        # progress notifications; the wait itself is condition-based, never a
+        # busy poll. Missing progress support must not break the tool.
+        terminal = ctx.jobs.wait(job_id, timeout=0)
+        while not terminal:
+            chunk = min(WAIT_PROGRESS_INTERVAL_S, deadline - time.monotonic())
+            if chunk <= 0:
+                break
+            terminal = await anyio.to_thread.run_sync(
+                functools.partial(ctx.jobs.wait, job_id, timeout=chunk))
+            if terminal:
+                break
+            if mcp_context is not None:
+                elapsed = time.monotonic() - start
+                with contextlib.suppress(Exception):
+                    await mcp_context.report_progress(
+                        min(elapsed, timeout), timeout,
+                        f"waited {elapsed:.0f}s; job {job_id} is "
+                        f"{ctx.jobs.get(job_id).state}")
+        job = ctx.jobs.get(job_id)
+        result = job.summary()
+        result["waited_s"] = round(time.monotonic() - start, 3)
+        result["terminal"] = job.state in TERMINAL_STATES
+        try:
+            result["log_tail"] = ctx.jobs.read_log(job_id,
+                                                   tail=WAIT_LOG_TAIL_LINES)
+        except JobError:
+            result["log_tail"] = ""
+        result["hint"] = (
+            "job finished" if result["terminal"] else
+            "still running; call wait_job again or end your turn and wait "
+            "for the completion notification"
+        )
+        return result
 
     @tool(read_only_ann, "List all known jobs (including finished and lost ones).")
     def list_jobs() -> List[Dict]:
@@ -806,6 +1106,146 @@ def build_server(ctx: ServerContext):
             "findings": findings,
             "sbom_files": sorted(sboms),
         }
+
+    def _finished_test_job(job_id: str):
+        """Return (job, reports_dir) for a terminal test job, or raise."""
+        job = ctx.jobs.get(job_id)
+        if job.kind != "test":
+            raise JobError(f"Job {job_id} is a '{job.kind}' job, not a test job")
+        if job.state not in TERMINAL_STATES:
+            raise JobError(
+                f"Job {job_id} is still running; call test_report when "
+                "job_status is terminal"
+            )
+        reports_dir = Path(job.extra.get("reports_dir")
+                           or (Path(job.job_dir) / "test-results"))
+        return job, reports_dir
+
+    @tool(read_only_ann,
+          "Structured result of a finished HIL test job: totals, per-suite "
+          "and per-case results, failures with short log excerpts, and the "
+          "paths of the HTML/PDF report on the bench. Call after job_status "
+          "is terminal.")
+    def test_report(job_id: str, include_cases: bool = True,
+                    max_cases: int = 200) -> Dict:
+        job, reports_dir = _finished_test_job(job_id)
+        summary_path = reports_dir / TEST_REPORT_FILES["json"]
+        if not summary_path.is_file():
+            raise JobError(
+                f"Job {job_id} has no test summary ({summary_path}): "
+                "the run failed before tests started; see job_log"
+            )
+        data = json.loads(summary_path.read_text(errors="replace"))
+        roots = [Path(job.job_dir)] + ctx.allowed_roots
+        totals = {"suites": 0, "cases": 0, "pass": 0, "fail": 0,
+                  "skip": 0, "unknown": 0, "duration_s": 0.0}
+        suites_out: List[Dict] = []
+        failures: List[Dict] = []
+        truncated = False
+        case_budget = max(0, int(max_cases))
+        for suite in data.get("suites") or []:
+            totals["suites"] += 1
+            try:
+                totals["duration_s"] += float(suite.get("duration") or 0)
+            except (TypeError, ValueError):
+                pass
+            suite_out = {
+                "name": suite.get("name"),
+                "status": suite.get("status"),
+                "duration_s": suite.get("duration"),
+                "cases": [],
+            }
+            for case in suite.get("cases") or []:
+                signals = case.get("lava_signals") or []
+                if signals:
+                    entries = [
+                        {
+                            "name": sig.get("test_case_id") or case.get("name"),
+                            "result": (sig.get("result") or "unknown").lower(),
+                            "measurement": sig.get("measurement"),
+                            "units": sig.get("units"),
+                            "requirement_id": sig.get("requirement_id") or None,
+                            "timed_out": bool(case.get("timed_out")),
+                        }
+                        for sig in signals
+                    ]
+                else:
+                    entries = [{
+                        "name": case.get("name"),
+                        "result": (case.get("status") or "unknown").lower(),
+                        "measurement": None,
+                        "units": None,
+                        "requirement_id": None,
+                        "timed_out": bool(case.get("timed_out")),
+                    }]
+                for entry in entries:
+                    totals["cases"] += 1
+                    result = entry["result"]
+                    totals[result if result in ("pass", "fail", "skip")
+                           else "unknown"] += 1
+                    if result == "fail":
+                        failures.append({
+                            "suite": suite.get("name"),
+                            "case": entry["name"],
+                            "result": result,
+                            "log_excerpt": _case_log_excerpt(
+                                case.get("log_path"), roots),
+                        })
+                    if include_cases:
+                        if case_budget > 0:
+                            suite_out["cases"].append(entry)
+                            case_budget -= 1
+                        else:
+                            truncated = True
+            suites_out.append(suite_out)
+        totals["duration_s"] = round(totals["duration_s"], 3)
+        pdf_path = reports_dir / "direct-test-report.pdf"
+        return {
+            "job_id": job_id,
+            "job_state": job.state,
+            "passed": bool(data.get("passed")),
+            "label": data.get("label"),
+            "backend": data.get("backend"),
+            "ssh_host": job.extra.get("ssh_host"),
+            "totals": totals,
+            "suites": suites_out,
+            "failures": failures,
+            "report_files": {
+                "json": str(summary_path),
+                "html": str(reports_dir / TEST_REPORT_FILES["html"]),
+                "pdf": str(pdf_path) if pdf_path.is_file() else None,
+            },
+            "truncated": truncated,
+        }
+
+    @tool(read_only_ann,
+          "Raw content of a finished HIL test job's report file: kind='html' "
+          "for direct-test-report.html, kind='json' for "
+          "direct-test-summary.json. Capped at 2 MB; only paths under the "
+          "allowed roots are readable.")
+    def test_report_file(job_id: str, kind: str = "html") -> str:
+        job, reports_dir = _finished_test_job(job_id)
+        if kind not in TEST_REPORT_FILES:
+            raise ValueError(
+                f"kind must be one of {sorted(TEST_REPORT_FILES)}")
+        path = reports_dir / TEST_REPORT_FILES[kind]
+        roots = [Path(job.job_dir)] + ctx.allowed_roots
+        if not _path_under_roots(path, roots):
+            raise PermissionError(
+                f"Path '{path.resolve()}' is outside the allowed roots: "
+                + ", ".join(str(r) for r in roots)
+            )
+        if not path.is_file():
+            raise JobError(
+                f"Job {job_id} has no {TEST_REPORT_FILES[kind]} ({path}): "
+                "the run failed before tests started; see job_log"
+            )
+        if path.stat().st_size > TEST_REPORT_MAX_FILE_BYTES:
+            raise JobError(
+                f"{path} exceeds the {TEST_REPORT_MAX_FILE_BYTES // (1024 * 1024)} MB "
+                "limit for test_report_file"
+            )
+        return path.read_text(errors="replace")
 
     # -- Maintenance ------------------------------------------------------
 

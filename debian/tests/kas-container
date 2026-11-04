@@ -1,0 +1,6 @@
+#!/bin/sh
+# autopkgtest: the installed package must provide a working kas-container.
+set -eu
+
+command -v kas-container
+kas-container --version

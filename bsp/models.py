@@ -997,6 +997,20 @@ class DirectTestConfig:
     Attributes:
         definitions: One or more test-definition sources to execute. All matched
                      definition files are executed in order.
+        lava_job: Optional path to a LAVA job YAML (or ``.j2``/``.jinja2``
+                  Jinja2 template). Every ``actions[].test.definitions[]``
+                  entry of the job becomes one test-definition source, exactly
+                  like ``--test-job-path`` on the CLI: entries with a
+                  ``repository`` are cloned from git, entries without one are
+                  resolved relative to the job file. Relative paths are
+                  resolved against the registry root directory. The job's
+                  sources are appended after ``definitions``. A
+                  ``--test-job-path`` given on the command line replaces
+                  ``lava_job`` for that run.
+        suites: Optional subset of job/definition entry names to run (matched
+                against ``actions[].test.definitions[].name`` or the source
+                ``name``). Empty means all. ``--test-suite`` on the command
+                line replaces this list.
         transport: Local or SSH transport settings.
         timeout: Per-step timeout in seconds (default: 1800).
         output_dir: Optional output directory for logs/reports.
@@ -1004,6 +1018,8 @@ class DirectTestConfig:
                              in a suite after a failing step.
     """
     definitions: List[TestDefinitionSource] = field(default_factory=empty_list)
+    lava_job: str = ""
+    suites: List[str] = field(default_factory=empty_list)
     transport: Optional[DirectTransportConfig] = None
     timeout: int = 1800
     output_dir: str = ""

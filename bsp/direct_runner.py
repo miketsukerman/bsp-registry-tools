@@ -28,6 +28,11 @@ from .requirements_catalog import (
 from .resolver import ResolvedConfig
 
 
+# Default of DirectTestConfig.timeout; a registry value equal to it is treated
+# as "not explicitly set" when deciding whether a lava_job timeout applies.
+_DEFAULT_DIRECT_TIMEOUT = DirectTestConfig().timeout
+
+
 _HTML_REPORT_TEMPLATE = """\
 {%- macro test_case_cell(row) -%}
 <td class="req-case">{% if row.description %}<details class="cell-fold"><summary>{{ row.test_case_id }}</summary><div class="cell-body"><div{% if row.description_source == 'derived' %} class="desc-derived"{% endif %}>{{ row.description }}</div>{% if row.verifies %}<div class="desc-extra">Verifies: {{ row.verifies }}</div>{% endif %}{% if row.remarks %}<div class="desc-extra">Remarks: {{ row.remarks }}</div>{% endif %}</div></details>{% else %}{{ row.test_case_id }}{% endif %}{{ log_fold(row) }}</td>
@@ -942,6 +947,9 @@ class DirectTestRunner:
         suites: List[DirectTestSuiteResult] = []
 
         suite_filter = self._suite_filter(overrides)
+        if suite_filter is None:
+            # cfg.suites carries the effective registry default (testing.direct.suites).
+            suite_filter = self._names_to_filter(cfg.suites)
         available_names: List[str] = []
         selected_any = False
 
@@ -1102,13 +1110,124 @@ class DirectTestRunner:
                 f"Failed to render Jinja2 job template '{template_path}': {exc}"
             ) from exc
 
+    def _sources_from_lava_job(
+        self,
+        job_path: Path,
+        resolved: Optional["ResolvedConfig"],
+        extra_params: Dict[str, str],
+    ) -> Tuple[List[TestDefinitionSource], List[str], Optional[int]]:
+        """Parse a local LAVA job YAML into test-definition sources.
+
+        One :class:`TestDefinitionSource` is created per
+        ``actions[].test.definitions[]`` entry:
+
+        * entries with ``from: git`` and a ``repository`` URL are cloned from
+          that remote repository (ref = branch/revision in the entry);
+        * entries without a repository are resolved relative to the job
+          file's parent directory (local fallback).
+
+        ``.j2``/``.jinja2`` files are rendered as Jinja2 templates first.
+
+        Returns ``(sources, suite_names, timeout_seconds)`` where
+        *suite_names* lists every named entry (unfiltered) and
+        *timeout_seconds* is the job's ``timeout.minutes`` converted to
+        seconds, or ``None`` when absent.
+        """
+        try:
+            text = job_path.read_text(encoding="utf-8")
+            suffix = job_path.suffix.lower()
+            if suffix in (".jinja2", ".j2"):
+                text = self._render_job_template(text, job_path, resolved, extra_params)
+            raw = yaml.safe_load(text) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise RuntimeError(
+                f"Failed to read LAVA job '{job_path}': {exc}"
+            ) from exc
+
+        sources: List[TestDefinitionSource] = []
+        suite_names: List[str] = []
+        timeout_seconds: Optional[int] = None
+        for action in raw.get("actions", []):
+            if not isinstance(action, dict):
+                continue
+            test_block = action.get("test")
+            if not isinstance(test_block, dict):
+                continue
+            timeout_block = test_block.get("timeout")
+            if isinstance(timeout_block, dict):
+                minutes = timeout_block.get("minutes")
+                if minutes is not None:
+                    try:
+                        seconds = int(minutes) * 60
+                    except (TypeError, ValueError):
+                        seconds = None
+                    if seconds is not None and seconds > 0:
+                        timeout_seconds = max(timeout_seconds or 0, seconds)
+            for test_def in test_block.get("definitions", []):
+                if not isinstance(test_def, dict):
+                    continue
+                path = test_def.get("path")
+                if not path:
+                    continue
+                repository = test_def.get("repository")
+                from_type = test_def.get("from", "git" if repository else "")
+                entry_name = str(test_def.get("name") or "")
+                if entry_name:
+                    suite_names.append(entry_name)
+                params_raw = test_def.get("parameters", {})
+                entry_params: Dict[str, str] = (
+                    {str(k): str(v) for k, v in params_raw.items()}
+                    if isinstance(params_raw, dict)
+                    else {}
+                )
+                merged_params = dict(extra_params)
+                merged_params.update(entry_params)
+                if from_type == "git" and repository:
+                    branch = test_def.get("branch", "")
+                    revision = test_def.get("revision", "")
+                    ref = revision or branch or ""
+                    sources.append(
+                        TestDefinitionSource(
+                            repo_url=str(repository),
+                            ref=ref,
+                            paths=[str(path)],
+                            params=merged_params,
+                            name=entry_name,
+                        )
+                    )
+                else:
+                    sources.append(
+                        TestDefinitionSource(
+                            local_dir=str(job_path.parent),
+                            paths=[str(path)],
+                            params=merged_params,
+                            name=entry_name,
+                        )
+                    )
+        return sources, suite_names, timeout_seconds
+
+    @staticmethod
+    def _names_to_filter(names: Optional[List[str]]) -> Optional[Set[str]]:
+        """Normalize a list of suite names into a filter set (``None`` = all)."""
+        if not names:
+            return None
+        cleaned = {str(name).strip() for name in names if str(name).strip()}
+        return cleaned or None
+
     @staticmethod
     def _suite_filter(overrides: Optional[DirectRunOverrides]) -> Optional[Set[str]]:
         """Return the set of requested suite names, or ``None`` when unfiltered."""
-        if not overrides or not overrides.suites:
+        if not overrides:
             return None
-        names = {str(name).strip() for name in overrides.suites if str(name).strip()}
-        return names or None
+        return DirectTestRunner._names_to_filter(overrides.suites)
+
+    def _preset_label(self, resolved: Optional["ResolvedConfig"]) -> str:
+        """Return a ``" (preset: device/release)"`` suffix for error messages."""
+        if resolved is None:
+            return ""
+        info = self._extract_preset_info(resolved)
+        ids = "/".join(v for v in (info.get("device"), info.get("release")) if v)
+        return f" (preset: {ids})" if ids else ""
 
     @staticmethod
     def _no_matching_suites_message(suite_filter: Set[str], available: List[str]) -> str:
@@ -1176,94 +1295,62 @@ class DirectTestRunner:
 
         job_timeout_seconds: Optional[int] = None
         suite_filter = self._suite_filter(overrides)
+        if suite_filter is None:
+            # testing.direct.suites is the registry default; --test-suite
+            # replaces it entirely.
+            suite_filter = self._names_to_filter(base.suites)
         job_suite_names: List[str] = []
-        job_definitions_added = False
-        # Each --test-job-path is a local LAVA job YAML file.  We parse the
-        # file and create one TestDefinitionSource per test-definition entry:
-        #   * entries with `from: git` and a `repository` URL are cloned from
-        #     that remote repository (ref = branch/revision in the entry);
-        #   * entries without a repository are resolved relative to the job
-        #     file's parent directory (local fallback).
-        if overrides and overrides.local_job_paths:
-            extra_params: Dict[str, str] = {}
-            if overrides.params:
-                extra_params = {k: str(v) for k, v in overrides.params.items()}
+        job_sources: List[TestDefinitionSource] = []
+        extra_params: Dict[str, str] = {}
+        if overrides and overrides.params:
+            extra_params = {k: str(v) for k, v in overrides.params.items()}
+        used_cli_job = bool(overrides and overrides.local_job_paths)
+        # Each LAVA job file (from --test-job-path or testing.direct.lava_job)
+        # is parsed into one TestDefinitionSource per test-definition entry;
+        # see _sources_from_lava_job. A CLI --test-job-path replaces the
+        # registry's lava_job for the run.
+        if used_cli_job:
             for job_path in overrides.local_job_paths:
                 abs_job = Path(job_path).expanduser().resolve()
                 if not abs_job.is_file():
                     raise RuntimeError(
                         f"Local test-definition file does not exist: '{abs_job}'."
                     )
-                try:
-                    text = abs_job.read_text(encoding="utf-8")
-                    suffix = abs_job.suffix.lower()
-                    if suffix in (".jinja2", ".j2"):
-                        text = self._render_job_template(text, abs_job, resolved, extra_params)
-                    raw = yaml.safe_load(text) or {}
-                except (OSError, yaml.YAMLError) as exc:
-                    raise RuntimeError(
-                        f"Failed to read LAVA job '{abs_job}': {exc}"
-                    ) from exc
-                for action in raw.get("actions", []):
-                    if not isinstance(action, dict):
-                        continue
-                    test_block = action.get("test")
-                    if not isinstance(test_block, dict):
-                        continue
-                    timeout_block = test_block.get("timeout")
-                    if isinstance(timeout_block, dict):
-                        minutes = timeout_block.get("minutes")
-                        if minutes is not None:
-                            try:
-                                seconds = int(minutes) * 60
-                            except (TypeError, ValueError):
-                                seconds = None
-                            if seconds is not None and seconds > 0:
-                                job_timeout_seconds = max(job_timeout_seconds or 0, seconds)
-                    for test_def in test_block.get("definitions", []):
-                        if not isinstance(test_def, dict):
-                            continue
-                        path = test_def.get("path")
-                        if not path:
-                            continue
-                        repository = test_def.get("repository")
-                        from_type = test_def.get("from", "git" if repository else "")
-                        entry_name = str(test_def.get("name") or "")
-                        if entry_name:
-                            job_suite_names.append(entry_name)
-                        if suite_filter is not None and entry_name not in suite_filter:
-                            continue
-                        params_raw = test_def.get("parameters", {})
-                        entry_params: Dict[str, str] = (
-                            {str(k): str(v) for k, v in params_raw.items()}
-                            if isinstance(params_raw, dict)
-                            else {}
-                        )
-                        merged_params = dict(extra_params)
-                        merged_params.update(entry_params)
-                        job_definitions_added = True
-                        if from_type == "git" and repository:
-                            branch = test_def.get("branch", "")
-                            revision = test_def.get("revision", "")
-                            ref = revision or branch or ""
-                            definitions.append(
-                                TestDefinitionSource(
-                                    repo_url=str(repository),
-                                    ref=ref,
-                                    paths=[str(path)],
-                                    params=merged_params,
-                                    name=entry_name,
-                                )
-                            )
-                        else:
-                            definitions.append(
-                                TestDefinitionSource(
-                                    local_dir=str(abs_job.parent),
-                                    paths=[str(path)],
-                                    params=merged_params,
-                                    name=entry_name,
-                                )
-                            )
+                sources, names, timeout_seconds = self._sources_from_lava_job(
+                    abs_job, resolved, extra_params
+                )
+                job_sources.extend(sources)
+                job_suite_names.extend(names)
+                if timeout_seconds is not None:
+                    job_timeout_seconds = max(job_timeout_seconds or 0, timeout_seconds)
+        elif base.lava_job:
+            job_file = Path(base.lava_job).expanduser()
+            if not job_file.is_absolute():
+                job_file = (self.config_path.parent / job_file).resolve()
+            if not job_file.is_file():
+                raise RuntimeError(
+                    f"testing.direct.lava_job file does not exist: '{job_file}'"
+                    f"{self._preset_label(resolved)}."
+                )
+            sources, names, timeout_seconds = self._sources_from_lava_job(
+                job_file, resolved, extra_params
+            )
+            if not sources:
+                raise RuntimeError(
+                    f"testing.direct.lava_job '{job_file}' contains no test "
+                    "definitions (actions[].test.definitions[])."
+                )
+            job_sources.extend(sources)
+            job_suite_names.extend(names)
+            if timeout_seconds is not None:
+                job_timeout_seconds = timeout_seconds
+
+        # Job-derived sources come after any explicit registry definitions.
+        definitions.extend(job_sources)
+        if suite_filter is not None:
+            job_definitions_added = any(s.name in suite_filter for s in job_sources)
+        else:
+            job_definitions_added = bool(job_sources)
 
         if suite_filter is not None and job_suite_names and not job_definitions_added:
             raise RuntimeError(self._no_matching_suites_message(suite_filter, job_suite_names))
@@ -1309,15 +1396,23 @@ class DirectTestRunner:
         timeout = base.timeout
         if overrides and overrides.timeout is not None:
             timeout = int(overrides.timeout)
-        elif overrides and overrides.local_job_paths and job_timeout_seconds is not None:
+        elif used_cli_job and job_timeout_seconds is not None:
+            timeout = job_timeout_seconds
+        elif job_timeout_seconds is not None and base.timeout == _DEFAULT_DIRECT_TIMEOUT:
+            # The registry lava_job's timeout.minutes applies only when
+            # neither testing.direct.timeout nor --direct-timeout is set.
             timeout = job_timeout_seconds
 
         output_dir = base.output_dir
         if overrides and overrides.output_dir is not None:
             output_dir = overrides.output_dir
 
+        suites = list(overrides.suites) if (overrides and overrides.suites) else list(base.suites)
+
         return DirectTestConfig(
             definitions=definitions,
+            lava_job=base.lava_job,
+            suites=suites,
             transport=transport,
             timeout=timeout,
             output_dir=output_dir,

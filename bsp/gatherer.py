@@ -108,6 +108,53 @@ class ArtifactGatherer:
         )
         return prefix.strip("/")
 
+    def list_remote(
+        self,
+        device: str = "",
+        release: str = "",
+        distro: str = "",
+        vendor: str = "",
+        date_override: Optional[str] = None,
+    ) -> Dict:
+        """
+        List artifacts available on the remote storage without downloading.
+
+        The remote prefix is resolved with the same template logic as
+        :meth:`gather`, so the listing shows exactly what a subsequent
+        gather would download.
+
+        Args:
+            device: Device slug (used for prefix expansion).
+            release: Release slug.
+            distro: Effective distro slug.
+            vendor: Board vendor slug.
+            date_override: Override for the ``{date}`` placeholder in the
+                           prefix template (``YYYY-MM-DD``).  Defaults to
+                           today's date when ``None``.
+
+        Returns:
+            Dict with keys ``prefix`` (resolved remote prefix) and
+            ``artifacts`` (one dict per object with ``path``, ``name``,
+            ``size``, ``last_modified`` and ``etag``).
+        """
+        prefix = self.compose_remote_prefix(
+            device=device,
+            release=release,
+            distro=distro,
+            vendor=vendor,
+            date_override=date_override,
+        )
+        entries = self.backend.list_artifacts_detailed(prefix)
+        artifacts = [
+            {**entry, "name": entry["path"].split("/")[-1]}
+            for entry in entries
+        ]
+        self.logger.info(
+            "Found %d artifact(s) under remote prefix '%s'",
+            len(artifacts), prefix,
+        )
+        return {"prefix": prefix, "artifacts": artifacts}
+
     def gather(
         self,
         dest_dir: str,
