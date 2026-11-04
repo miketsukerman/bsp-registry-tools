@@ -71,6 +71,39 @@ class _FakeBackend(CloudStorageBackend):
 
 
 # =============================================================================
+# ArtifactGatherer.list_remote tests
+# =============================================================================
+
+
+class TestArtifactGathererListRemote:
+    def test_list_remote_returns_prefix_and_artifacts(self):
+        backend = _FakeBackend()
+        backend.blobs["raspberrypi/rpi5/scarthgap/2024-01-15/image.wic.gz"] = b"x"
+        backend.blobs["raspberrypi/rpi5/scarthgap/2024-01-15/manifest.json"] = b"{}"
+        backend.blobs["other/prefix/file.bin"] = b"y"
+        gatherer = ArtifactGatherer(
+            DeployConfig(prefix="{vendor}/{device}/{release}/{date}"), backend
+        )
+        listing = gatherer.list_remote(
+            device="rpi5",
+            release="scarthgap",
+            vendor="raspberrypi",
+            date_override="2024-01-15",
+        )
+        assert listing["prefix"] == "raspberrypi/rpi5/scarthgap/2024-01-15"
+        names = {a["name"] for a in listing["artifacts"]}
+        assert names == {"image.wic.gz", "manifest.json"}
+        for entry in listing["artifacts"]:
+            assert set(entry) >= {"path", "name", "size", "last_modified", "etag"}
+
+    def test_list_remote_empty(self):
+        backend = _FakeBackend()
+        gatherer = ArtifactGatherer(DeployConfig(), backend)
+        listing = gatherer.list_remote(device="rpi5", release="scarthgap")
+        assert listing["artifacts"] == []
+
+
+# =============================================================================
 # GatherResult tests
 # =============================================================================
 
@@ -600,6 +633,38 @@ class TestCliGatherArguments:
                 cli_main()
                 mock_mgr.gather_by_components.assert_called_once()
 
+    def test_gather_list_flag_bsp_name(self, tmp_path):
+        """--list routes to list_remote_artifacts_bsp instead of gather_bsp."""
+        reg = tmp_path / "bsp-registry.yaml"
+        reg.write_text("specification:\n  version: '2.0'\nregistry:\n  devices: []\n  releases: []\n")
+        with patch("sys.argv", ["bsp", "--registry", str(reg), "gather", "my-preset", "--list", "--date", "2024-01-15"]):
+            with patch("bsp.cli.BspManager") as MockBspMgr:
+                mock_mgr = MockBspMgr.return_value
+                mock_mgr.list_remote_artifacts_bsp.return_value = {"prefix": "p", "artifacts": []}
+                from bsp.cli import main as cli_main
+                cli_main()
+                mock_mgr.gather_bsp.assert_not_called()
+                mock_mgr.list_remote_artifacts_bsp.assert_called_once()
+                args, kwargs = mock_mgr.list_remote_artifacts_bsp.call_args
+                assert args[0] == "my-preset"
+                assert kwargs.get("date_override") == "2024-01-15"
+
+    def test_gather_list_flag_components(self, tmp_path):
+        """--list with --device/--release routes to list_remote_artifacts_by_components."""
+        reg = tmp_path / "bsp-registry.yaml"
+        reg.write_text("specification:\n  version: '2.0'\nregistry:\n  devices: []\n  releases: []\n")
+        with patch("sys.argv", ["bsp", "--registry", str(reg), "gather", "--device", "rpi5", "--release", "scarthgap", "--list", "--container", "my-container"]):
+            with patch("bsp.cli.BspManager") as MockBspMgr:
+                mock_mgr = MockBspMgr.return_value
+                mock_mgr.list_remote_artifacts_by_components.return_value = {"prefix": "p", "artifacts": []}
+                from bsp.cli import main as cli_main
+                cli_main()
+                mock_mgr.gather_by_components.assert_not_called()
+                mock_mgr.list_remote_artifacts_by_components.assert_called_once()
+                args, kwargs = mock_mgr.list_remote_artifacts_by_components.call_args
+                assert args[0] == "rpi5" and args[1] == "scarthgap"
+                assert kwargs.get("deploy_overrides") == {"container": "my-container"}
+
 
 # =============================================================================
 # BspManager gather methods (mocked backend)
@@ -818,6 +883,56 @@ class TestBspManagerGather:
                 result = mgr.gather_bsp("rpi5-scarthgap", dry_run=True)
 
         assert isinstance(result, GatherResult)
+
+
+# =============================================================================
+# BspManager remote artifact listing tests
+# =============================================================================
+
+
+class TestBspManagerListRemoteArtifacts:
+    def test_list_remote_artifacts_bsp(self, gather_registry_file, capsys):
+        from bsp import BspManager
+        mgr = BspManager(config_path=str(gather_registry_file))
+        mgr.initialize()
+
+        entries = [
+            {
+                "path": "raspberrypi/rpi5/scarthgap/2024-01-15/image.wic.gz",
+                "size": 2048,
+                "last_modified": "2024-01-15T10:00:00+00:00",
+                "etag": "abc",
+            },
+        ]
+        with patch("bsp.bsp_manager.create_backend") as mock_factory:
+            mock_backend = MagicMock()
+            mock_backend.list_artifacts_detailed.return_value = entries
+            mock_factory.return_value = mock_backend
+            listing = mgr.list_remote_artifacts_bsp(
+                "rpi5-scarthgap", date_override="2024-01-15"
+            )
+
+        assert listing["prefix"] == "raspberrypi/rpi5/scarthgap/2024-01-15"
+        assert listing["provider"] == "azure"
+        assert listing["container"] == "bsp-artifacts"
+        assert listing["artifacts"][0]["name"] == "image.wic.gz"
+        out = capsys.readouterr().out
+        assert "image.wic.gz" in out
+        assert "1 artifact(s) found" in out
+
+    def test_list_remote_artifacts_by_components_empty(self, gather_registry_file, capsys):
+        from bsp import BspManager
+        mgr = BspManager(config_path=str(gather_registry_file))
+        mgr.initialize()
+
+        with patch("bsp.bsp_manager.create_backend") as mock_factory:
+            mock_backend = MagicMock()
+            mock_backend.list_artifacts_detailed.return_value = []
+            mock_factory.return_value = mock_backend
+            listing = mgr.list_remote_artifacts_by_components("rpi5", "scarthgap")
+
+        assert listing["artifacts"] == []
+        assert "(none)" in capsys.readouterr().out
 
 
 # =============================================================================

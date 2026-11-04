@@ -18,7 +18,7 @@ from dataclasses import replace, fields as dataclass_fields
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from .deployer import ArtifactDeployer, DeployResult
+from .deployer import ArtifactDeployer, DeployResult, human_size
 from .environment import EnvironmentManager
 from .exceptions import COLORAMA_AVAILABLE
 from .flasher import FlashResult, ImageFlasher
@@ -3157,6 +3157,55 @@ class BspManager:
     # Gather (download artifacts from cloud storage)
     # ------------------------------------------------------------------
 
+    def _create_gather_backend(self, deploy_cfg: DeployConfig, dry_run: bool = False):
+        """
+        Create the cloud storage backend for gather/list operations.
+
+        Args:
+            deploy_cfg: Effective deploy configuration (provider, container,
+                        account/bucket settings).
+            dry_run: Passed through to the backend so it can skip real
+                     cloud calls.
+
+        Returns:
+            Initialized :class:`~bsp.storage.base.CloudStorageBackend`.
+            Exits the process with an error message when the configuration
+            is incomplete or the backend cannot be created.
+        """
+        # Determine container/bucket name
+        container_or_bucket = deploy_cfg.container or deploy_cfg.bucket
+        if not container_or_bucket and not dry_run:
+            logging.error(
+                "No storage container/bucket configured for gather. "
+                "Set 'deploy.container' in the registry or pass --container/--bucket."
+            )
+            sys.exit(1)
+
+        # Build provider-specific kwargs
+        provider = deploy_cfg.provider
+        if provider == "azure":
+            backend_kwargs: Dict = {
+                "container_name": container_or_bucket or "bsp-artifacts",
+                "account_url": deploy_cfg.account_url,
+                "dry_run": dry_run,
+            }
+        elif provider == "aws":
+            backend_kwargs = {
+                "bucket_name": container_or_bucket or "bsp-artifacts",
+                "region": deploy_cfg.region,
+                "profile": deploy_cfg.profile,
+                "dry_run": dry_run,
+            }
+        else:
+            logging.error("Unsupported gather provider: %s", provider)
+            sys.exit(1)
+
+        try:
+            return create_backend(provider, **backend_kwargs)
+        except (ImportError, ValueError) as exc:
+            logging.error("Failed to initialize storage backend: %s", exc)
+            sys.exit(1)
+
     def _gather_resolved(
         self,
         resolved: ResolvedConfig,
@@ -3204,40 +3253,7 @@ class BspManager:
             downloaded artifact.
         """
         deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
-
-        # Determine container/bucket name
-        container_or_bucket = deploy_cfg.container or deploy_cfg.bucket
-        if not container_or_bucket and not dry_run:
-            logging.error(
-                "No storage container/bucket configured for gather. "
-                "Set 'deploy.container' in the registry or pass --container/--bucket."
-            )
-            sys.exit(1)
-
-        # Build provider-specific kwargs
-        provider = deploy_cfg.provider
-        if provider == "azure":
-            backend_kwargs: Dict = {
-                "container_name": container_or_bucket or "bsp-artifacts",
-                "account_url": deploy_cfg.account_url,
-                "dry_run": dry_run,
-            }
-        elif provider == "aws":
-            backend_kwargs = {
-                "bucket_name": container_or_bucket or "bsp-artifacts",
-                "region": deploy_cfg.region,
-                "profile": deploy_cfg.profile,
-                "dry_run": dry_run,
-            }
-        else:
-            logging.error("Unsupported gather provider: %s", provider)
-            sys.exit(1)
-
-        try:
-            backend = create_backend(provider, **backend_kwargs)
-        except (ImportError, ValueError) as exc:
-            logging.error("Failed to initialize storage backend: %s", exc)
-            sys.exit(1)
+        backend = self._create_gather_backend(deploy_cfg, dry_run=dry_run)
 
         if dest_dir is not None:
             effective_dest = dest_dir
@@ -3281,7 +3297,7 @@ class BspManager:
             for local_path in result.artifacts:
                 print(f"  {local_path.name}")
         else:
-            print(f"No artifacts found to gather from '{provider}' storage.")
+            print(f"No artifacts found to gather from '{deploy_cfg.provider}' storage.")
 
         if result.cache_artifacts:
             cache_action = "[dry-run] Would restore" if dry_run else "Restored"
@@ -3386,6 +3402,122 @@ class BspManager:
             gather_cache=gather_cache,
             cache_downloads_dest=cache_downloads_dest,
             cache_sstate_dest=cache_sstate_dest,
+        )
+
+    def _list_remote_artifacts_resolved(
+        self,
+        resolved: ResolvedConfig,
+        preset: Optional[BspPreset] = None,
+        deploy_overrides: Optional[Dict] = None,
+        date_override: Optional[str] = None,
+    ) -> Dict:
+        """
+        List artifacts on remote storage for a resolved configuration.
+
+        The effective :class:`~bsp.models.DeployConfig` and remote prefix are
+        resolved exactly like :meth:`_gather_resolved`, so the listing shows
+        what a subsequent ``gather`` would download.
+
+        Args:
+            resolved: Resolved build configuration.
+            preset: Optional BSP preset whose ``deploy`` block is applied on
+                    top of the global deploy config before CLI overrides.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            date_override: Override for the ``{date}`` prefix placeholder
+                           (``YYYY-MM-DD``).
+
+        Returns:
+            Dict with keys ``provider``, ``container``, ``prefix`` and
+            ``artifacts`` (one dict per remote object with ``path``, ``name``,
+            ``size``, ``last_modified`` and ``etag``).
+        """
+        deploy_cfg = self._resolve_deploy_config(resolved, preset=preset, deploy_overrides=deploy_overrides)
+        backend = self._create_gather_backend(deploy_cfg)
+
+        gatherer = ArtifactGatherer(deploy_cfg, backend)
+        listing = gatherer.list_remote(
+            device=resolved.device.slug,
+            release=resolved.release.slug,
+            distro=resolved.effective_distro or "",
+            vendor=resolved.device.vendor,
+            date_override=date_override,
+        )
+        listing["provider"] = deploy_cfg.provider
+        listing["container"] = deploy_cfg.container or deploy_cfg.bucket
+
+        artifacts = listing["artifacts"]
+        print(
+            f"\nRemote artifacts under '{listing['prefix']}' "
+            f"({listing['provider']}:{listing['container']}):"
+        )
+        if artifacts:
+            for entry in artifacts:
+                size = human_size(entry["size"]) if entry.get("size") is not None else "-"
+                modified = entry.get("last_modified") or "-"
+                print(f"  {size:>10}  {modified:<25}  {entry['name']}")
+            print(f"\n{len(artifacts)} artifact(s) found.")
+        else:
+            print("  (none)")
+
+        return listing
+
+    def list_remote_artifacts_bsp(
+        self,
+        bsp_name: str,
+        deploy_overrides: Optional[Dict] = None,
+        date_override: Optional[str] = None,
+    ) -> Dict:
+        """
+        List remote storage artifacts for a BSP preset.
+
+        Args:
+            bsp_name: Name of the BSP preset.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            Listing dict (see :meth:`_list_remote_artifacts_resolved`).
+        """
+        logging.info("Listing remote artifacts for BSP preset: %s", bsp_name)
+        resolved, preset, _, reg_model, reg_resolver, reg_path = self._resolve_preset_multi(bsp_name)
+        with self._use_registry_context(reg_model, reg_resolver, reg_path):
+            return self._list_remote_artifacts_resolved(
+                resolved,
+                preset=preset,
+                deploy_overrides=deploy_overrides,
+                date_override=date_override,
+            )
+
+    def list_remote_artifacts_by_components(
+        self,
+        device_slug: str,
+        release_slug: str,
+        feature_slugs: Optional[List[str]] = None,
+        deploy_overrides: Optional[Dict] = None,
+        date_override: Optional[str] = None,
+    ) -> Dict:
+        """
+        List remote storage artifacts by device, release, and features.
+
+        Args:
+            device_slug: Device slug.
+            release_slug: Release slug.
+            feature_slugs: Optional list of feature slugs.
+            deploy_overrides: CLI-level overrides for the deploy configuration.
+            date_override: Override for the ``{date}`` prefix placeholder.
+
+        Returns:
+            Listing dict (see :meth:`_list_remote_artifacts_resolved`).
+        """
+        logging.info(
+            "Listing remote artifacts for device=%s release=%s features=%s",
+            device_slug, release_slug, feature_slugs or [],
+        )
+        resolved = self.resolver.resolve(device_slug, release_slug, feature_slugs)
+        return self._list_remote_artifacts_resolved(
+            resolved,
+            deploy_overrides=deploy_overrides,
+            date_override=date_override,
         )
 
     # ------------------------------------------------------------------

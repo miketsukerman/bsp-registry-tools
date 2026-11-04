@@ -1340,7 +1340,7 @@ def main() -> int:
         # ----------------------------------------------------------------
         gather_parser = subparsers.add_parser(
             "gather",
-            help="Download BSP build artifacts from cloud storage"
+            help="Download (or list with --list) BSP build artifacts from cloud storage"
         )
         gather_parser.add_argument(
             "bsp_name",
@@ -1416,6 +1416,16 @@ def main() -> int:
             help=(
                 "Date override for the {date} placeholder in the prefix template "
                 "(YYYY-MM-DD). Defaults to today's date."
+            )
+        )
+        gather_parser.add_argument(
+            "--list",
+            action="store_true",
+            dest="gather_list",
+            default=False,
+            help=(
+                "List artifacts available on the remote storage for the "
+                "selected BSP instead of downloading them."
             )
         )
         gather_parser.add_argument(
@@ -2375,10 +2385,30 @@ def main() -> int:
             cache_downloads_dest = getattr(args, "cache_downloads_dest", None)
             cache_sstate_dest = getattr(args, "cache_sstate_dest", None)
             gather_overrides = _collect_gather_overrides(args)
+            gather_list = getattr(args, "gather_list", False)
 
             if _check_exclusive(bsp_name, device, release, gather_parser):
                 return 1
-            if bsp_name:
+            if gather_list:
+                if bsp_name:
+                    bsp_mgr.list_remote_artifacts_bsp(
+                        bsp_name,
+                        deploy_overrides=gather_overrides,
+                        date_override=date_override,
+                    )
+                elif device and release:
+                    bsp_mgr.list_remote_artifacts_by_components(
+                        device, release, features,
+                        deploy_overrides=gather_overrides,
+                        date_override=date_override,
+                    )
+                else:
+                    logging.error(
+                        "Specify either a BSP preset name or both --device and --release."
+                    )
+                    gather_parser.print_help()
+                    return 1
+            elif bsp_name:
                 bsp_mgr.gather_bsp(
                     bsp_name,
                     dest_dir=dest_dir,

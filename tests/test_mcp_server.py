@@ -394,6 +394,67 @@ class TestStartBuildTool:
         assert not calls
 
 
+class TestListRemoteArtifactsTool:
+    """Argument forwarding and validation for list_remote_artifacts."""
+
+    @pytest.fixture
+    def server_and_manager(self, tmp_path):
+        from unittest.mock import MagicMock
+        from bsp.mcp.server import ServerContext, build_server
+
+        registry = tmp_path / "bsp-registry.yml"
+        registry.write_text("registry: {}\n")
+        ctx = ServerContext(registry=str(registry),
+                            state_dir=str(tmp_path / "state"))
+        manager = MagicMock()
+        listing = {"prefix": "p", "provider": "azure",
+                   "container": "c", "artifacts": []}
+        manager.list_remote_artifacts_bsp.return_value = listing
+        manager.list_remote_artifacts_by_components.return_value = listing
+        ctx._manager = manager
+        return build_server(ctx), manager
+
+    async def test_bsp_name_and_overrides_forwarded(self, server_and_manager):
+        server, manager = server_and_manager
+        await server.call_tool("list_remote_artifacts", {
+            "bsp_name": "demo-bsp", "container": "my-container",
+            "prefix": "{device}/{date}", "date": "2024-01-15",
+        })
+        args, kwargs = manager.list_remote_artifacts_bsp.call_args
+        assert args[0] == "demo-bsp"
+        assert kwargs["deploy_overrides"] == {
+            "container": "my-container", "prefix": "{device}/{date}",
+        }
+        assert kwargs["date_override"] == "2024-01-15"
+
+    async def test_components_forwarded(self, server_and_manager):
+        server, manager = server_and_manager
+        await server.call_tool("list_remote_artifacts", {
+            "device": "rpi5", "release": "scarthgap", "features": ["wifi"],
+        })
+        args, kwargs = manager.list_remote_artifacts_by_components.call_args
+        assert args[:3] == ("rpi5", "scarthgap", ["wifi"])
+        assert kwargs["deploy_overrides"] is None
+
+    async def test_bad_provider_rejected(self, server_and_manager):
+        from bsp.mcp.server import ToolError
+        server, manager = server_and_manager
+        with pytest.raises(ToolError, match="provider must be one of"):
+            await server.call_tool("list_remote_artifacts", {
+                "bsp_name": "demo-bsp", "provider": "gcp",
+            })
+        manager.list_remote_artifacts_bsp.assert_not_called()
+
+    async def test_container_injection_rejected(self, server_and_manager):
+        from bsp.mcp.server import ToolError
+        server, manager = server_and_manager
+        with pytest.raises(ToolError, match="Invalid container"):
+            await server.call_tool("list_remote_artifacts", {
+                "bsp_name": "demo-bsp", "container": "--evil",
+            })
+        manager.list_remote_artifacts_bsp.assert_not_called()
+
+
 class TestStartHilTestSshOverrides:
     """ssh_host/ssh_port forwarding and validation in start_hil_test."""
 
